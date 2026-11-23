@@ -86,7 +86,95 @@ pub fn is_newer_version(remote: &str, current: &str) -> bool {
     parse_version(remote) > parse_version(current)
 }
 
-/// Fetches the latest release from the repository and parses release metadata.
+/// Queries Android's `Build.SUPPORTED_ABIS` via JNI, falling back to compile-time `target_arch`.
+fn device_abis() -> Vec<String> {
+    #[cfg(target_os = "android")]
+    {
+        let found: Option<Vec<String>> = crate::platform::with_context(|env, _activity| {
+            let build_cls = env.find_class("android/os/Build")?;
+            let abis_obj = env
+                .get_static_field(&build_cls, "SUPPORTED_ABIS", "[Ljava/lang/String;")?
+                .l()?;
+            if abis_obj.is_null() {
+                return Ok(Vec::new());
+            }
+            let arr: jni::objects::JObjectArray<'_> = abis_obj.into();
+            let len = env.get_array_length(&arr)?;
+            let mut out = Vec::with_capacity(len.max(0) as usize);
+            for i in 0..len {
+                let elem = env.get_object_array_element(&arr, i)?;
+                if !elem.is_null() {
+                    let s: jni::objects::JString<'_> = elem.into();
+                    if let Ok(java_str) = env.get_string(&s) {
+                        out.push(String::from(java_str).to_ascii_lowercase());
+                    }
+                }
+            }
+            Ok(out)
+        });
+        if let Some(abis) = found
+            && !abis.is_empty()
+        {
+            return abis;
+        }
+    }
+    if cfg!(target_arch = "aarch64") {
+        vec!["arm64-v8a".into(), "armeabi-v7a".into()]
+    } else if cfg!(target_arch = "arm") {
+        vec!["armeabi-v7a".into()]
+    } else if cfg!(target_arch = "x86_64") {
+        vec!["x86_64".into(), "x86".into()]
+    } else if cfg!(target_arch = "x86") {
+        vec!["x86".into()]
+    } else {
+        vec!["universal".into()]
+    }
+}
+
+/// Scores a release `.apk` asset filename against the current device's supported ABIs.
+/// Returns `0` for any APK targeting an incompatible ABI so wrong-ABI APKs are never offered.
+pub fn score_apk_for_abis(asset_name: &str, abis: &[String]) -> u32 {
+    let lower = asset_name.to_ascii_lowercase();
+    if !lower.ends_with(".apk") {
+        return 0;
+    }
+    let has_arm64 = lower.contains("arm64-v8a") || lower.contains("arm64") || lower.contains("aarch64");
+    let has_armv7 = lower.contains("armeabi-v7a") || lower.contains("armv7") || lower.contains("armeabi");
+    let has_x86_64 = lower.contains("x86_64") || lower.contains("amd64");
+    let has_x86 = !has_x86_64 && (lower.contains("-x86") || lower.contains("_x86") || lower.contains(".x86"));
+    let is_universal = lower.contains("universal");
+    let has_any_abi = has_arm64 || has_armv7 || has_x86_64 || has_x86;
+
+    if is_universal {
+        // Universal APK merges arm64-v8a + armeabi-v7a; preferred over a secondary ABI fallback,
+        // while an exact primary ABI build (`100`) always wins.
+        let arm_or_generic = abis.iter().any(|a| a.contains("arm")) || abis.iter().any(|a| a == "universal");
+        return if arm_or_generic { 50 } else { 0 };
+    }
+    if !has_any_abi {
+        return 10;
+    }
+    for (idx, abi) in abis.iter().enumerate() {
+        let matched = match abi.as_str() {
+            "arm64-v8a" | "aarch64" => has_arm64,
+            "armeabi-v7a" | "armeabi" | "armv7" => has_armv7,
+            "x86_64" | "amd64" => has_x86_64,
+            "x86" | "i686" => has_x86,
+            _ => false,
+        };
+        if matched {
+            return if idx == 0 {
+                100
+            } else {
+                30u32.saturating_sub((idx as u32) * 5)
+            };
+        }
+    }
+    0
+}
+
+/// Fetches the latest published GitHub Release (never drafts or prereleases) and selects
+/// the best ABI-compatible APK asset for this device.
 pub fn check_for_update() -> Result<Option<ReleaseInfo>, String> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
     let resp = ureq::get(&url)
@@ -100,6 +188,10 @@ pub fn check_for_update() -> Result<Option<ReleaseInfo>, String> {
         .into_json()
         .map_err(|e| format!("Invalid release JSON response: {e}"))?;
 
+    if val["draft"].as_bool() == Some(true) || val["prerelease"].as_bool() == Some(true) {
+        return Ok(None);
+    }
+
     let tag = val["tag_name"].as_str().unwrap_or("").trim().to_owned();
     let name = val["name"].as_str().unwrap_or(&tag).trim().to_owned();
     let changelog = val["body"]
@@ -109,43 +201,38 @@ pub fn check_for_update() -> Result<Option<ReleaseInfo>, String> {
         .to_owned();
 
     let remote_ver = tag.trim_start_matches('v').trim_start_matches('V');
-    if !is_newer_version(remote_ver, CURRENT_VERSION) {
+    if remote_ver.is_empty() || !is_newer_version(remote_ver, CURRENT_VERSION) {
         return Ok(None);
     }
 
+    let abis = device_abis();
     let mut download_url = None;
-    let mut asset_name = format!("volt-plus-{tag}.apk");
+    let mut asset_name = String::new();
     let mut size_bytes = 0u64;
 
     if let Some(assets) = val["assets"].as_array() {
-        let preferred_abi = if cfg!(target_arch = "aarch64") {
-            "arm64-v8a"
-        } else if cfg!(target_arch = "arm") {
-            "armeabi-v7a"
-        } else {
-            "universal"
-        };
-        let mut best_score = 0u8;
+        let mut best_score = 0u32;
         for asset in assets {
             let a_name = asset["name"].as_str().unwrap_or("");
-            if !a_name.ends_with(".apk") {
+            let Some(a_url) = asset["browser_download_url"].as_str() else {
+                continue;
+            };
+            if !a_url.starts_with(&format!("https://github.com/{REPO}/")) {
                 continue;
             }
-            let lower = a_name.to_ascii_lowercase();
-            let score = if lower.contains(preferred_abi) {
-                3
-            } else if lower.contains("universal") {
-                2
-            } else {
-                1
-            };
+            let score = score_apk_for_abis(a_name, &abis);
             if score > best_score {
                 best_score = score;
                 asset_name = a_name.to_owned();
-                download_url = asset["browser_download_url"].as_str().map(str::to_owned);
+                download_url = Some(a_url.to_owned());
                 size_bytes = asset["size"].as_u64().unwrap_or(0);
             }
         }
+    }
+
+    // Do not show an update prompt if the release has no compatible APK asset for this device.
+    if download_url.is_none() {
+        return Ok(None);
     }
 
     Ok(Some(ReleaseInfo {

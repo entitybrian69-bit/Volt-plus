@@ -4401,7 +4401,7 @@ impl OptionsUi {
         }
         let (left, top, width, row_h) = Self::touch_picker_geometry(size);
         let nav_y = top + row_h * 8.0 + 6.0;
-        (left - 6.0..left + width + 6.0).contains(&x) && (top - 6.0..nav_y + 22.0).contains(&y)
+        (left - 6.0..left + width + 6.0).contains(&x) && (top - 6.0..nav_y + 26.0).contains(&y)
     }
     /// Called for touch releases and virtual-mouse clicks, not physical mouse
     /// presses; binding follows the normal save path.
@@ -5007,7 +5007,12 @@ impl OptionsUi {
                 VoltHorizonAction::ButtonClick => events.push(Event::ButtonClick),
                 VoltHorizonAction::Changed => events.push(Event::Changed),
                 VoltHorizonAction::Extras => {}
-                VoltHorizonAction::OpenPage(page) => self.push(page),
+                VoltHorizonAction::OpenPage(page) => {
+                    if page == Page::ShaderPacks {
+                        events.push(Event::ListShaderPacks);
+                    }
+                    self.push(page);
+                }
                 VoltHorizonAction::BindKey(name) => self.selected_key = Some(name),
                 VoltHorizonAction::Done => events.extend(self.back(s)),
             }

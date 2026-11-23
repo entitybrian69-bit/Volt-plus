@@ -29,6 +29,8 @@ const VERSION: &str = "1.0.1";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Where the button on the card leads.
 const DOWNLOAD_URL: &str = "https://github.com/entitybrian69-bit/volt-plus";
+/// Official Volt+ Discord invite link shown in Rich Presence.
+const DISCORD_URL: &str = "https://discord.gg/WsBxGsKyhU";
 /// The logo the phone's card shows: a picture address Discord fetches itself.
 const LOGO_URL: &str = "https://raw.githubusercontent.com/entitybrian69-bit/volt-plus/android/packaging/android/res/drawable-nodpi/launcher_icon.png";
 /// The Rich Presence assets the card draws, by the names they must be uploaded under in the
@@ -323,7 +325,10 @@ fn activity(status: Status, since: Option<u64>, session: u64) -> Option<Value> {
         "details": short(&details),
         "state": short(&state),
         "assets": assets,
-        "buttons": [{"label": format!("Get {PRODUCT}"), "url": DOWNLOAD_URL}],
+        "buttons": [
+            {"label": format!("Get {PRODUCT}"), "url": DOWNLOAD_URL},
+            {"label": "Join Discord", "url": DISCORD_URL},
+        ],
     });
     if start > 0 {
         a["timestamps"] = json!({"start": start});
@@ -355,7 +360,10 @@ fn platform_activity(status: Status, since: Option<u64>, session: u64) -> Option
             "large_text": format!("{PRODUCT} {VERSION}"),
             "large_url": DOWNLOAD_URL,
         },
-        "buttons": [{"label": format!("Get {PRODUCT}"), "url": DOWNLOAD_URL}],
+        "buttons": [
+            {"label": format!("Get {PRODUCT}"), "url": DOWNLOAD_URL},
+            {"label": "Join Discord", "url": DISCORD_URL},
+        ],
     });
     if start > 0 {
         a["timestamps"] = json!({"start": start});
@@ -758,6 +766,7 @@ mod tests {
         assert_eq!(card["details_url"], DOWNLOAD_URL);
         assert_eq!(card["state_url"], DOWNLOAD_URL);
         assert_eq!(card["buttons"][0]["url"], DOWNLOAD_URL);
+        assert_eq!(card["buttons"][1]["url"], DISCORD_URL);
         assert_eq!(platform_activity(Status::Off, None, 900), None);
         // Both transports agree on the words.
         let desktop = activity(

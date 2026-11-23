@@ -456,21 +456,6 @@ pub fn slider_ext(
     }
     let (track, handle) = slider_sprites_ext(hover, active, focused, can_change_value, dragging);
     nine_slice(batch, atlas, track, x, y, w, 20.0, u32::MAX);
-    // Volt Plus: the part of the track behind the handle fills with the copper accent,
-    // so a slider reads brown where the reference layout showed violet.
-    if active && w > 8.0 {
-        let filled = (value.clamp(0.0, 1.0) * (w - 8.0)).floor();
-        if filled >= 1.0 {
-            batch.fill(
-                atlas,
-                x + 4.0,
-                y + 9.0,
-                filled,
-                3.0,
-                crate::hud::rgb(horizon_theme::warm::ACCENT, 240),
-            );
-        }
-    }
     nine_slice(
         batch,
         atlas,

@@ -48,8 +48,8 @@ fn component(name: &str) -> io::Result<()> {
 }
 
 pub fn folder_id(profile: u32, folder: &str) -> String {
-    if folder == "reports" {
-        "reports".into()
+    if matches!(folder, "reports" | "recordings") {
+        folder.into()
     } else {
         format!("p{profile}/{folder}")
     }
@@ -78,6 +78,8 @@ fn resolve(home: &Path, id: &str) -> io::Result<Document> {
     let first = parts.next().ok_or_else(invalid)?;
     let (base, label, reports) = if first == "reports" {
         (home.join("performance"), "Reports", true)
+    } else if first == "recordings" {
+        (home.join("recordings"), "Recordings", false)
     } else {
         let number = first.strip_prefix('p').ok_or_else(invalid)?;
         let profile: u32 = number.parse().map_err(|_| invalid())?;
@@ -94,6 +96,7 @@ fn resolve(home: &Path, id: &str) -> io::Result<Document> {
             Some("mods") => ("horizon-mods", "Mods"),
             Some("packs") => ("resourcepacks", "Resource Packs"),
             Some("shaders") => ("shaderpacks", "Shader Packs"),
+            Some("controls") => ("controls", "Controls"),
             Some("worlds") => ("saves", "Worlds"),
             Some("configuration") => ("", "Configuration"),
             _ => return Err(invalid()),
@@ -165,6 +168,7 @@ fn row(home: &Path, id: &str) -> io::Result<Value> {
         match doc.path.extension().and_then(|s| s.to_str()) {
             Some("jsonl") => "application/x-ndjson",
             Some("zip" | "hmod" | "hnmod" | "jar" | "hshader") => "application/zip",
+            Some("mp4") => "video/mp4",
             Some("png") => "image/png",
             Some("json") => "application/json",
             Some("txt" | "wgsl" | "glsl" | "fsh" | "vsh" | "toml") => "text/plain",
@@ -200,6 +204,8 @@ pub fn children(home: &Path, id: &str) -> io::Result<Vec<Value>> {
             "mods",
             "packs",
             "shaders",
+            "controls",
+            "recordings",
             "worlds",
             "configuration",
             "reports",
@@ -292,7 +298,7 @@ pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
             if id != ROOT {
                 let mut parts = id.split('/');
                 let first = parts.next().ok_or_else(invalid)?;
-                let mut current = if first == "reports" {
+                let mut current = if matches!(first, "reports" | "recordings") {
                     first.into()
                 } else {
                     format!("{first}/{}", parts.next().ok_or_else(invalid)?)
@@ -314,18 +320,24 @@ pub fn call(home: &Path, op: &str, id: &str, arg: &str) -> io::Result<Value> {
             component(arg)?;
             let (child, target_path) = if id == ROOT {
                 let p = profile(home);
-                let folder = if op == "mkdir" {
-                    "worlds"
-                } else if arg.ends_with(".hmod") || arg.ends_with(".hnmod") || arg.ends_with(".jar") {
-                    "mods"
-                } else if arg.ends_with(".hshader") {
-                    "shaders"
-                } else if arg.ends_with(".zip") {
-                    "packs"
+                let child_id = if op != "mkdir" && arg.ends_with(".mp4") {
+                    format!("recordings/{arg}")
                 } else {
-                    "worlds"
+                    let folder = if op == "mkdir" {
+                        "worlds"
+                    } else if arg.ends_with(".hmod") || arg.ends_with(".hnmod") || arg.ends_with(".jar") {
+                        "mods"
+                    } else if arg.ends_with(".hshader") {
+                        "shaders"
+                    } else if arg.ends_with(".json") {
+                        "controls"
+                    } else if arg.ends_with(".zip") {
+                        "packs"
+                    } else {
+                        "worlds"
+                    };
+                    format!("p{p}/{folder}/{arg}")
                 };
-                let child_id = format!("p{p}/{folder}/{arg}");
                 let target = resolve(home, &child_id)?;
                 (child_id, target.path)
             } else {
@@ -464,7 +476,7 @@ mod tests {
         ));
         fs::create_dir_all(&home).unwrap();
         let roots = children(&home, ROOT).unwrap();
-        assert_eq!(roots.len(), 6);
+        assert_eq!(roots.len(), 8);
         assert_eq!(roots[0]["document_id"], "p0/mods");
         for id in [
             "../tokens",

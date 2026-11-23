@@ -15138,22 +15138,14 @@ impl Game<'_> {
             }
             let in_menu = self.pad_in_menu();
             let waiting_for_key = self.screen == Screen::Options && self.options_waiting_for_key();
-            let hud_in_menu = in_menu && !waiting_for_key;
-            // The key picker keeps menu mode on so the virtual mouse still moves.
             self.pad.touch.in_menu = in_menu;
             self.pad.touch.in_inventory =
                 matches!(self.screen, Screen::Inventory | Screen::Creative);
             self.pad.touch.goy_rendered_by_ui = true;
-            if !waiting_for_key && (in_menu || !self.ui.hide_gui)
+            if !in_menu
+                && !waiting_for_key
+                && !self.ui.hide_gui
                 && (self.player.is_some() || self.settings.keypad.enabled)
-                && (!hud_in_menu
-                    || self.android_inventory_controls()
-                    || self.pad.touch.in_inventory
-                    || self.pad.touch.settings.layouts[self.pad.touch.settings.mode.index()]
-                        .iter()
-                        .any(|p| p.visible_in_menu)
-                    || (0..self.pad.touch.settings.custom_buttons.len())
-                        .any(|i| self.pad.touch.custom_visible_for_state(i, hud_in_menu)))
             {
                 self.pad.touch.context_use =
                     self.pad.touch.settings.contextual_interact && self.touch_context_use();
@@ -15165,12 +15157,16 @@ impl Game<'_> {
                 self.pad.touch.break_progress = self.touch_mining_progress();
                 self.pad.touch.draw(&mut hud, &self.gui.atlas);
             }
-            if !waiting_for_key && !self.settings.keypad.enabled && (in_menu || !self.ui.hide_gui) {
+            if !in_menu
+                && !waiting_for_key
+                && !self.settings.keypad.enabled
+                && !self.ui.hide_gui
+            {
                 horizon_client::touch_ui::draw_goy_hud(
                     &self.pad.touch,
                     &mut hud,
                     &self.gui.atlas,
-                    hud_in_menu,
+                    false,
                     self.pad.touch_ui.virtual_mouse,
                 );
             }
@@ -16370,6 +16366,9 @@ impl ApplicationHandler for Game<'_> {
                     return;
                 }
                 crate::touch_input(false);
+                if let Some(saved) = self.pad.physical_cursor.take() {
+                    self.cursor = saved;
+                }
                 if let Some(b) = self.gui_scale() {
                     let sens = f64::from(
                         self.pad
@@ -16383,6 +16382,7 @@ impl ApplicationHandler for Game<'_> {
                     let ny = (f64::from(self.cursor.1) + y * sens / f64::from(b.scale))
                         .clamp(0.0, f64::from((b.height - 1.0).max(0.0))) as f32;
                     self.cursor = (nx, ny);
+                    self.pad.physical_cursor = Some(self.cursor);
                 }
                 self.android_sync_pointer();
                 self.last_input = Instant::now();
@@ -16707,7 +16707,10 @@ impl Game<'_> {
                 return;
             };
             self.pad.touch.viewport(size.width, size.height);
-            if self.screen == Screen::Options && self.options_waiting_for_key() {
+            if self.screen == Screen::Options
+                && self.options_waiting_for_key()
+                && !self.pad.touch_ui.virtual_mouse
+            {
                 let b = HudBatch::new([size.width, size.height]);
                 let at = [
                     touch.location.x as f32 / b.scale,
@@ -16770,6 +16773,7 @@ impl Game<'_> {
                 }
             }
             if touch.phase == TouchPhase::Cancelled {
+                self.pad.hotbar_finger = None;
                 self.pad.touch.clear();
                 return;
             }
@@ -16778,90 +16782,44 @@ impl Game<'_> {
                 touch.location.y as f32 / size.height.max(1) as f32,
             ];
             let in_menu = self.pad_in_menu();
-            // The key picker keeps menu mode on: the virtual mouse has to keep
-            // moving over it, or a touchscreen cannot reach the grid at all.
+            // Gameplay controls never render in menus, so menu touches always go straight to the menu.
             self.pad.touch.in_menu = in_menu;
             self.pad.touch.in_inventory =
                 matches!(self.screen, Screen::Inventory | Screen::Creative);
             let touch_controls_hidden = !crate::touch_visible()
                 && self.pad.touch.hud_opacity_scale <= 0.01
                 && self.pad.touch.editor.is_none();
-            if in_menu
-                && self.pad.touch.consume_ignored(
-                    touch.id,
-                    matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled),
-                )
-            {
-                return;
+            if in_menu {
+                self.pad.hotbar_finger = None;
             }
-            let menu_custom_hit = !touch_controls_hidden
-                && in_menu
-                && !self.settings.keypad.enabled
-                && (self.pad.touch.owns_pointer(touch.id)
-                    || (touch.phase == TouchPhase::Started
-                        && self.pad.touch.custom_at(overlay_point).is_some()));
-            let inventory_control = !touch_controls_hidden
-                && (self.android_inventory_controls() || self.pad.touch.in_menu)
-                && (self.pad.touch.owns_pointer(touch.id)
-                    || (touch.phase == TouchPhase::Started
-                        && self.pad.touch.control_at_point(overlay_point)));
-            if inventory_control
-                && touch.phase == TouchPhase::Started
-                && self.pad.touch.custom_at(overlay_point).is_none()
-                && self.pad.touch.control_at(overlay_point)
-                    == Some(horizon_client::touch::Control::Sneak)
-            {
-                self.pad.touch.inventory_shift ^= true;
-                self.audio.play_button_click();
-                self.android_touch_haptic(10);
-                self.pad.touch.ignore(touch.id);
-                return;
-            }
-            if (menu_custom_hit || inventory_control)
-                && self.pad.touch.menu_update(
-                    touch.id,
-                    overlay_point,
-                    touch.phase == TouchPhase::Started,
-                    matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled),
-                )
-            {
-                self.android_custom_events();
-                if std::mem::take(&mut self.pad.touch.clicked) {
-                    self.audio.play_button_click();
-                }
-                return;
-            }
-            if inventory_control
-                && touch.phase == TouchPhase::Started
-                && self.pad.touch.custom_at(overlay_point).is_none()
-                && let Some(control) = self.pad.touch.control_at(overlay_point)
-                && !matches!(
-                    control,
-                    horizon_client::touch::Control::Debug
-                        | horizon_client::touch::Control::Settings
-                        | horizon_client::touch::Control::Perspective
-                )
-            {
-                self.pad.touch.ignore(touch.id);
-                if matches!(
-                    control,
-                    horizon_client::touch::Control::Inventory
-                        | horizon_client::touch::Control::Pause
-                ) && let Err(error) = self.pad_back()
-                {
-                    log::warn!("Touch inventory close: {error}");
-                }
-                return;
-            }
-            if !self.pad_in_menu() || (inventory_control && self.android_inventory_controls()) {
+            if !self.pad_in_menu() {
                 if touch_controls_hidden
                     || (!crate::touch_visible() && !self.settings.keypad.enabled)
                 {
                     return;
                 }
                 self.pad.in_use = true;
-                if !self.pad_in_menu() && !self.captured && self.focused {
+                if !self.captured && self.focused {
                     self.capture(true);
+                }
+                if self.pad.hotbar_finger == Some(touch.id) {
+                    if matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled) {
+                        self.pad.hotbar_finger = None;
+                        return;
+                    }
+                    let batch = HudBatch::new([size.width, size.height]);
+                    let point = [
+                        touch.location.x as f32 / batch.scale,
+                        touch.location.y as f32 / batch.scale,
+                    ];
+                    let clamped = [point[0], point[1].max(batch.height - 20.0).min(batch.height - 1.0)];
+                    if point[1] >= batch.height - 32.0
+                        && let Some(slot) =
+                            horizon_client::touch::hotbar_slot(batch.width, batch.height, clamped)
+                    {
+                        self.selected = slot;
+                    }
+                    return;
                 }
                 if touch.phase == TouchPhase::Started {
                     let batch = HudBatch::new([size.width, size.height]);
@@ -16871,13 +16829,11 @@ impl Game<'_> {
                     ];
                     if let Some(slot) =
                         horizon_client::touch::hotbar_slot(batch.width, batch.height, point)
-                        && !self.pad.touch.control_at_point([
-                            touch.location.x as f32 / size.width.max(1) as f32,
-                            touch.location.y as f32 / size.height.max(1) as f32,
-                        ])
+                        && !self.pad.touch.control_at_point(overlay_point)
+                        && self.pad.touch.custom_at(overlay_point).is_none()
                     {
                         self.selected = slot;
-                        self.pad.touch.ignore(touch.id);
+                        self.pad.hotbar_finger = Some(touch.id);
                         return;
                     }
                 }
@@ -17418,21 +17374,36 @@ impl Game<'_> {
                         self.capture(false);
                     }
                 }
-                WindowEvent::CursorMoved { position, .. } => {
+                WindowEvent::CursorMoved {
+                    device_id,
+                    position,
+                } => {
+                    #[cfg(target_os = "android")]
+                    let native_pointer = winit::platform::android::native_pointer_device(device_id);
                     #[cfg(target_os = "android")]
                     {
                         if self.captured && self.screen == Screen::Playing {
                             return Ok(());
                         }
-                        if horizon_client::android_runtime::note_input(
-                            horizon_client::android_gamepad::InputMode::KeyboardMouse,
-                        ) {
-                            crate::touch_input(false);
+                        if native_pointer {
+                            if horizon_client::android_runtime::note_input(
+                                horizon_client::android_gamepad::InputMode::KeyboardMouse,
+                            ) {
+                                crate::touch_input(false);
+                            }
+                        } else if !self.pad.touch_ui.virtual_mouse
+                            && self.pad.physical_cursor.is_none()
+                        {
+                            self.pad.physical_cursor = Some(self.cursor);
                         }
                     }
                     if let Some(r) = &self.renderer {
                         let b = HudBatch::new([r.config.width, r.config.height]);
                         self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
+                        #[cfg(target_os = "android")]
+                        if native_pointer {
+                            self.pad.physical_cursor = Some(self.cursor);
+                        }
                         if self.dialog_open() {
                             self.dialog_drag();
                         }

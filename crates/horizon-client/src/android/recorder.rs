@@ -251,11 +251,10 @@ pub fn start() {
     };
     let frames = settings.frames() as i32;
     let audio = settings.audio as i32;
-    // A raw recording with no audio needs no screen capture at all: the game copies each
-    // frame, before its HUD, into the encoder's own surface. The controls stay on screen and
-    // the video has the game alone. Anything else (audio, or the controls wanted in the
-    // video) records the display, as before.
-    if !settings.record_controls && audio == 0 {
+    // When `record_controls` is enabled (and no audio source is selected), the engine copies
+    // each raw 3D gameplay frame before the HUD/controls into the encoder's surface: the player
+    // keeps seeing everything including controls on screen while the video records raw gameplay.
+    if settings.record_controls && audio == 0 {
         start_engine(width, height, frames);
         return;
     }

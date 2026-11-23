@@ -1036,10 +1036,7 @@ impl TouchControls {
                     committed: false,
                 },
             };
-            if let Some(c) = control
-                && c != Control::Move
-                && self.placement(c).swipeable
-            {
+            if let Some(c) = control && c != Control::Move {
                 self.builtin_swipe_ctrl.insert(id, c);
             }
             self.fingers.insert(id, (role, point));
@@ -1052,33 +1049,39 @@ impl TouchControls {
             }
             return [0.0; 2];
         }
-        // Built-in Swipe-Through: release a swipeable control when sliding off it,
-        // and activate any swipeable built-in control when a moving finger slides over it.
+        // Built-in Swipe-Through: release a built-in control when sliding off it onto
+        // another control (or off a swipeable/non-passthrough control), and activate any
+        // control slid onto from another control (or any `swipeable` control).
         if !self.in_menu {
+            let started_on_ctrl = self.builtin_swipe_ctrl.contains_key(&id);
             let hit_ctrl = self.control_at(point);
             if let Some(old_c) = self.builtin_swipe_ctrl.get(&id).copied()
                 && hit_ctrl != Some(old_c)
             {
-                self.builtin_swipe_ctrl.remove(&id);
-                if let Some((role, _)) = self.fingers.get_mut(&id)
-                    && matches!(role, Role::Button(_) | Role::Shield)
-                {
-                    *role = if self.passthrough_fingers.contains(&id) {
-                        Role::Look {
-                            start: point,
-                            since: Instant::now(),
-                            dragged: true,
-                            held_use: false,
-                            committed: false,
-                        }
-                    } else {
-                        Role::Ignore
-                    };
+                let old_p = self.placement(old_c);
+                let switched = hit_ctrl.is_some_and(|c| c != Control::Move);
+                if switched || old_p.swipeable || (!old_p.passthrough && !old_p.toggleable) {
+                    self.builtin_swipe_ctrl.remove(&id);
+                    if let Some((role, _)) = self.fingers.get_mut(&id)
+                        && matches!(role, Role::Button(_) | Role::Shield)
+                    {
+                        *role = if self.passthrough_fingers.contains(&id) {
+                            Role::Look {
+                                start: point,
+                                since: Instant::now(),
+                                dragged: true,
+                                held_use: false,
+                                committed: false,
+                            }
+                        } else {
+                            Role::Ignore
+                        };
+                    }
                 }
             }
             if let Some(c) = hit_ctrl
                 && c != Control::Move
-                && self.placement(c).swipeable
+                && (started_on_ctrl || self.placement(c).swipeable)
                 && self.builtin_swipe_ctrl.get(&id) != Some(&c)
                 && !self
                     .fingers

@@ -1656,8 +1656,10 @@ impl Game<'_> {
     fn android_updater_modal_active() -> Option<crate::updater::UpdateStatus> {
         let status = crate::updater::get_status();
         match &status {
-            crate::updater::UpdateStatus::Available(_)
-            | crate::updater::UpdateStatus::Downloading { .. }
+            crate::updater::UpdateStatus::Available(info) if info.download_url.is_some() => {
+                Some(status)
+            }
+            crate::updater::UpdateStatus::Downloading { .. }
             | crate::updater::UpdateStatus::Downloaded { .. } => Some(status),
             crate::updater::UpdateStatus::Error(_) if crate::updater::last_release_info().is_some() => {
                 Some(status)

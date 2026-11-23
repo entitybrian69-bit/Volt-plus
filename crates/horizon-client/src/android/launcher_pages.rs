@@ -411,6 +411,7 @@ pub(super) enum Action {
     ToggleControlScheme,
     SelectControlMode(horizon_client::touch::ControlStyle),
     ActivateStudioPreset(horizon_client::touch::ControlStyle, u32),
+    DeleteStudioPreset(horizon_client::touch::ControlStyle, String),
     CopyActivePreset,
     EditActivePresetMeta,
     ConfirmReplaceDuplicatePreset,
@@ -4658,7 +4659,8 @@ impl Launcher {
                 },
             );
             let text_x = badge_x + badge_w + 12.0;
-            let text_w = (content_w - badge_w - 134.0).max(80.0);
+            let btns_reserve = if meta.is_default { 134.0 } else { 216.0 };
+            let text_w = (content_w - badge_w - btns_reserve).max(70.0);
             let title = ui.fit_text(Face::SemiBold, 13.5, &meta.name, text_w);
             let desc = ui.fit_text(Face::Regular, 10.5, &meta.description, text_w);
             ui.text(Face::SemiBold, 13.5, text_x, ry + 10.0, my3_text(), &title);
@@ -4666,6 +4668,37 @@ impl Launcher {
 
             let act_rect = [content_x + content_w - 94.0, ry + 13.0, 82.0, 30.0];
             let action = Action::ActivateStudioPreset(style, idx as u32);
+            if !meta.is_default {
+                let del_rect = [content_x + content_w - 178.0, ry + 13.0, 76.0, 30.0];
+                let del_action = Action::DeleteStudioPreset(style, meta.id.clone());
+                ui.rounded(
+                    del_rect[0],
+                    del_rect[1],
+                    del_rect[2],
+                    del_rect[3],
+                    15.0,
+                    0xff4a_2028,
+                );
+                ui.border(
+                    del_rect[0],
+                    del_rect[1],
+                    del_rect[2],
+                    del_rect[3],
+                    15.0,
+                    0xffb8_4a58,
+                );
+                ui.centered_fit(
+                    Face::SemiBold,
+                    11.0,
+                    del_rect,
+                    0xffff_d7dc,
+                    "Delete",
+                );
+                if let Some(clipped) = ui.clip_rect(del_rect) {
+                    self.targets.push((clipped, del_action.clone()));
+                }
+                self.list_targets.push((del_rect, del_action));
+            }
             ui.rounded(
                 act_rect[0],
                 act_rect[1],
@@ -4681,10 +4714,20 @@ impl Launcher {
                 if active { 0xff1b_1327 } else { my3_text() },
                 if active { "Active" } else { "Use" },
             );
-            if let Some(clipped) = ui.clip_rect(card) {
-                self.targets.push((clipped, action));
+            let card_use_rect = if meta.is_default {
+                card
+            } else {
+                [card[0], card[1], (content_w - 184.0).max(40.0), card[3]]
+            };
+            if let Some(clipped) = ui.clip_rect(card_use_rect) {
+                self.targets.push((clipped, action.clone()));
             }
-            self.list_targets.push((card, action));
+            if !meta.is_default
+                && let Some(clipped) = ui.clip_rect(act_rect)
+            {
+                self.targets.push((clipped, action.clone()));
+            }
+            self.list_targets.push((act_rect, action));
         }
         ui.set_clip(None);
     }
@@ -6805,6 +6848,24 @@ impl Launcher {
                         style.label(),
                         meta.name
                     );
+                }
+            }
+            Some(Action::DeleteStudioPreset(style, id)) => {
+                let game_home = self.catalog.config.game_home(&self.home);
+                let mut touch = horizon_client::touch::Settings::load_from(
+                    &game_home.join("horizon-touch.json"),
+                );
+                match touch.delete_preset(&game_home, style, &id) {
+                    Ok(()) => {
+                        self.catalog.status = format!(
+                            "Deleted {} preset '{}'.",
+                            style.label(),
+                            id
+                        );
+                    }
+                    Err(e) => {
+                        self.catalog.status = format!("Could not delete preset: {e}");
+                    }
                 }
             }
             Some(Action::OpenControlEditor) => {

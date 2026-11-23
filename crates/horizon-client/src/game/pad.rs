@@ -44,6 +44,10 @@ pub(super) struct Pads {
     #[cfg(target_os = "android")]
     pub(super) touch_aim: Option<[f32; 2]>,
     #[cfg(target_os = "android")]
+    pub(super) hotbar_finger: Option<u64>,
+    #[cfg(target_os = "android")]
+    pub(super) physical_cursor: Option<(f32, f32)>,
+    #[cfg(target_os = "android")]
     pub(super) touch_ui: horizon_client::touch_ui::TouchUi,
     /// Splitscreen: this player's pad, read by `PadRouter` for every game, instead of the pads.
     pub(super) feed: Option<PadState>,

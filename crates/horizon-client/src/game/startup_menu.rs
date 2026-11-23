@@ -602,6 +602,8 @@ impl Loading {
         }
         self.menu.options.pack_selection = self.settings.resource_packs.clone();
         self.menu.options.pack_screen = None;
+        self.settings.shader_packs =
+            horizon_client::shader_pack_list::scan(&Game::shader_packs_dir());
         self.menu.options_open = true;
     }
 
@@ -1550,7 +1552,19 @@ impl Loading {
             return Ok(());
         }
         #[cfg(target_os = "android")]
+        if let WindowEvent::CursorMoved { device_id, .. }
+        | WindowEvent::MouseInput { device_id, .. }
+        | WindowEvent::MouseWheel { device_id, .. } = &event
+            && winit::platform::android::native_pointer_device(*device_id)
+        {
+            let _ = horizon_client::android_runtime::note_input(
+                horizon_client::android_gamepad::InputMode::KeyboardMouse,
+            );
+            crate::touch_input(false);
+        }
+        #[cfg(target_os = "android")]
         if let WindowEvent::Touch(touch) = &event {
+            crate::touch_input(true);
             self.menu.keyboard_navigation = false;
             self.menu.keyboard_focus = None;
             use horizon_client::touch_ui::{Action, Gesture, InGameMenuAction};
@@ -1569,7 +1583,7 @@ impl Loading {
                 touch.location.x as f32 / b.scale,
                 touch.location.y as f32 / b.scale,
             ];
-            if waiting_for_key {
+            if waiting_for_key && !self.menu.touch.virtual_mouse {
                 match touch.phase {
                     TouchPhase::Started => {
                         self.menu
@@ -2315,9 +2329,38 @@ impl Loading {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } if self.menu.options_open => {
-                if state == ElementState::Pressed && self.menu.options.selected_key.is_some() {
-                    let events = self.menu.options.bind_mouse(&mut self.settings, button);
-                    self.menu_option_events(events);
+                if self.menu.options.selected_key.is_some() {
+                    let size = self.menu_size();
+                    let batch = HudBatch::new(size);
+                    let pressed = state == ElementState::Pressed;
+                    let left = button == MouseButton::Left;
+                    if left && pressed {
+                        if self.menu.options.touch_key_picker_contains(
+                            (batch.width, batch.height),
+                            self.menu.cursor.0,
+                            self.menu.cursor.1,
+                        ) {
+                            self.menu.options.touch_key_picker_press(
+                                (batch.width, batch.height),
+                                self.menu.cursor.0,
+                                self.menu.cursor.1,
+                            );
+                        } else {
+                            let events = self.menu.options.bind_mouse(&mut self.settings, button);
+                            self.menu_option_events(events);
+                        }
+                    } else if left && self.menu.options.picker_armed() {
+                        let events = self.menu.options.touch_key_picker(
+                            &mut self.settings,
+                            (batch.width, batch.height),
+                            self.menu.cursor.0,
+                            self.menu.cursor.1,
+                        );
+                        self.menu_option_events(events);
+                    } else if pressed {
+                        let events = self.menu.options.bind_mouse(&mut self.settings, button);
+                        self.menu_option_events(events);
+                    }
                 } else if matches!(button, MouseButton::Left | MouseButton::Right) {
                     if state == ElementState::Pressed {
                         self.menu.dragging = button == MouseButton::Left;
@@ -2537,7 +2580,6 @@ impl Loading {
             self.menu.controls.viewport(size[0], size[1]);
             let waiting_for_key =
                 self.menu.options_open && self.menu.options.selected_key.is_some();
-            let hud_in_menu = !waiting_for_key;
             // The picker is a menu: keep the virtual mouse alive over it.
             self.menu.controls.in_menu = true;
             self.menu.controls.goy_rendered_by_ui = true;
@@ -2567,26 +2609,12 @@ impl Loading {
                     self.menu.controls.settings.virtual_mouse_pointer_scale,
                 );
             }
-            if !waiting_for_key && !is_goy
-                && (!hud_in_menu
-                    || self.menu.controls.settings.layouts
-                        [self.menu.controls.settings.mode.index()]
-                    .iter()
-                    .any(|p| p.visible_in_menu))
-            {
-                self.menu.controls.draw(batch, &gui.atlas);
-            }
-            if !waiting_for_key { horizon_client::touch_ui::draw_goy_hud(
-                &self.menu.controls,
-                batch,
-                &gui.atlas,
-                hud_in_menu,
-                self.menu.touch.virtual_mouse,
-            );
-            self.menu.touch.draw(batch, &gui.atlas, true);
-            self.menu
-                .touch
-                .draw_floating_menu(batch, &gui.atlas, &self.menu.controls.settings);
+            // Touch controls only render during gameplay, never in title/options menus.
+            if !waiting_for_key {
+                self.menu.touch.draw(batch, &gui.atlas, true);
+                self.menu
+                    .touch
+                    .draw_floating_menu(batch, &gui.atlas, &self.menu.controls.settings);
             }
         }
         self.menu

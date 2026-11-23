@@ -229,13 +229,11 @@ pub fn publish(next: Status) {
 
 /// Whether the touch controls and HUD should be kept off screen for the recording.
 ///
-/// A raw recording (`record_controls` off) normally has the engine copy HUD-free frames into
-/// the encoder's own surface, so the screen keeps its controls while the video has none: then
-/// nothing is hidden. Only the fallback — the platform recording the screen instead — has to
-/// take the overlay off the display, and [`capture_target`] is `None` exactly then.
+/// The player always keeps full visibility of controls, hand, items, and HUD on screen;
+/// raw gameplay capture (`record_controls` on with no audio) copies HUD-free frames directly
+/// into the encoder surface via [`capture_target`] without hiding anything on screen.
 pub fn hiding_controls() -> bool {
-    let (raw, status) = (!settings().record_controls, status());
-    raw && status.phase == Phase::Recording && capture_target().is_none()
+    false
 }
 
 /// The encoder's own surface while the engine records its frames: the `ANativeWindow` the

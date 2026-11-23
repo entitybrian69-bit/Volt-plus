@@ -574,11 +574,12 @@ impl TouchControls {
         }
 
         // Moving finger (`!started && !ended`): interpolate along `prev -> point` so even very fast
-        // swipes across multiple `swipeable` ("Swipe: ON") buttons trigger each button in sequence!
+        // swipes across multiple controls switch smoothly from one control to the next.
         let prev = self.custom_last_pos.insert(id, point).unwrap_or(point);
         let dist = (point[0] - prev[0]).hypot(point[1] - prev[1]);
         let steps = ((dist / 0.015).ceil() as usize).clamp(1, 12);
         let mut swiped_any = false;
+        let started_on_custom = self.custom_swipe_btn.contains_key(&id);
 
         for step in 1..=steps {
             let frac = step as f32 / steps as f32;
@@ -589,22 +590,26 @@ impl TouchControls {
             let hit = self.custom_at(sample);
             let prev_btn = self.custom_swipe_btn.get(&id).copied();
 
-            // 1. Check if the finger slid out of its previous custom button
+            // 1. Release previous custom button when sliding off it onto another button,
+            //    or when sliding into empty space if swipeable (or non-passthrough non-toggleable).
             if let Some(old_idx) = prev_btn
                 && hit != Some(old_idx)
             {
-                let old_swipeable = self.custom_placement(old_idx).swipeable;
+                let old_placement = self.custom_placement(old_idx);
                 let new_swipeable = hit.is_some_and(|idx| self.custom_placement(idx).swipeable);
-                if old_swipeable || new_swipeable {
+                let switched_to_other = hit.is_some();
+                let left_non_passthrough = !old_placement.passthrough && !old_placement.toggleable;
+                if switched_to_other || old_placement.swipeable || new_swipeable || left_non_passthrough {
                     self.release_custom_finger_key(id);
                     self.custom_swipe_btn.remove(&id);
                     swiped_any = true;
                 }
             }
 
-            // 2. Check if the finger slid onto a `swipeable` ("Swipe: ON") custom button
+            // 2. Activate a custom button when sliding onto it (either from another control
+            //    started by this finger, or onto any button marked `swipeable`).
             if let Some(idx) = hit
-                && self.custom_placement(idx).swipeable
+                && (started_on_custom || self.custom_placement(idx).swipeable)
                 && self.custom_swipe_btn.get(&id) != Some(&idx)
             {
                 if self.custom_fingers.contains_key(&id) {

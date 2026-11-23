@@ -1083,10 +1083,97 @@ impl Settings {
                 });
             }
         }
+        // Also discover control JSON files placed directly inside `<game_home>/controls/` (SAF Controls folder).
+        let top_controls_dir = game_home.join("controls");
+        for entry in std::fs::read_dir(&top_controls_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            if !entry.file_type().is_ok_and(|t| t.is_file()) {
+                continue;
+            }
+            let file_name = entry.file_name().to_string_lossy().into_owned();
+            let Some(stem) = file_name.strip_suffix(".json") else {
+                continue;
+            };
+            let clean = Self::sanitize_profile_name(stem);
+            if clean == "default" || user_presets.iter().any(|p| p.id == clean) {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(entry.path()) else {
+                continue;
+            };
+            if let Ok(parsed) = serde_json::from_slice::<Self>(&bytes) {
+                if parsed.control_style != style {
+                    continue;
+                }
+                let name =
+                    if parsed.preset_name.trim().is_empty() || parsed.preset_name == "Default" {
+                        stem.trim().to_owned()
+                    } else {
+                        parsed.preset_name.trim().to_owned()
+                    };
+                let description = if parsed.preset_description.trim().is_empty() {
+                    format!("Custom {} layout", style.label())
+                } else {
+                    parsed.preset_description.trim().to_owned()
+                };
+                user_presets.push(PresetMeta {
+                    id: clean,
+                    name,
+                    description,
+                    system: style,
+                    is_default: false,
+                });
+            } else if style == ControlStyle::GoyControl
+                && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                && let Some(Ok(imported)) =
+                    crate::touch::java_import::convert_java_control_json(&val, &file_name)
+            {
+                let name = if imported.preset_name.trim().is_empty() {
+                    stem.trim().to_owned()
+                } else {
+                    imported.preset_name.trim().to_owned()
+                };
+                let description = if imported.preset_description.trim().is_empty() {
+                    "Imported control layout".to_owned()
+                } else {
+                    imported.preset_description.trim().to_owned()
+                };
+                user_presets.push(PresetMeta {
+                    id: clean,
+                    name,
+                    description,
+                    system: style,
+                    is_default: false,
+                });
+            }
+        }
         user_presets.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         user_presets.dedup_by(|a, b| a.id == b.id);
         out.extend(user_presets);
         out
+    }
+
+    fn find_top_control_file(
+        game_home: &std::path::Path,
+        clean_id: &str,
+    ) -> Option<(std::path::PathBuf, String)> {
+        let top_dir = game_home.join("controls");
+        for entry in std::fs::read_dir(top_dir).into_iter().flatten().flatten() {
+            if !entry.file_type().is_ok_and(|t| t.is_file()) {
+                continue;
+            }
+            let file_name = entry.file_name().to_string_lossy().into_owned();
+            let Some(stem) = file_name.strip_suffix(".json") else {
+                continue;
+            };
+            if Self::sanitize_profile_name(stem) == clean_id {
+                return Some((entry.path(), file_name));
+            }
+        }
+        None
     }
 
     /// Loads a preset for a specific control system (`MCPE` or `GoyControl`).
@@ -1111,9 +1198,89 @@ impl Settings {
             }
             loaded.sanitize();
             loaded
+        } else if let Some((top_path, file_name)) = Self::find_top_control_file(game_home, &clean)
+        {
+            if let Ok(bytes) = std::fs::read(&top_path) {
+                if let Ok(mut loaded) = serde_json::from_slice::<Self>(&bytes)
+                    && loaded.control_style == style
+                {
+                    loaded.preset_id = clean.clone();
+                    loaded.active_profile = clean;
+                    if loaded.preset_name.trim().is_empty() || loaded.preset_name == "Default" {
+                        loaded.preset_name = file_name
+                            .strip_suffix(".json")
+                            .unwrap_or(&loaded.preset_id)
+                            .to_owned();
+                    }
+                    loaded.sanitize();
+                    return loaded;
+                }
+                if style == ControlStyle::GoyControl
+                    && let Ok(val) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                    && let Some(Ok(mut imported)) =
+                        crate::touch::java_import::convert_java_control_json(&val, &file_name)
+                {
+                    imported.control_style = ControlStyle::GoyControl;
+                    imported.preset_id = clean.clone();
+                    imported.active_profile = clean;
+                    imported.sanitize();
+                    return imported;
+                }
+            }
+            Self::default_for_style(style)
         } else {
             Self::default_for_style(style)
         }
+    }
+
+    /// Deletes a user-created preset in `style` (from `controls/<style>/` or `controls/`).
+    /// Rejects deleting the protected `"default"` preset. If the deleted preset was active,
+    /// switches back to `"default"` for that control style and saves `horizon-touch.json`.
+    pub fn delete_preset(
+        &mut self,
+        game_home: &std::path::Path,
+        style: ControlStyle,
+        id: &str,
+    ) -> std::io::Result<()> {
+        let clean = Self::sanitize_profile_name(id);
+        if clean == "default" {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "The Default preset is protected and cannot be deleted",
+            ));
+        }
+        let mut removed = false;
+        let candidate = Self::system_dir(game_home, style).join(format!("{clean}.json"));
+        if candidate.is_file() {
+            std::fs::remove_file(&candidate)?;
+            removed = true;
+        }
+        if let Some((top_path, _)) = Self::find_top_control_file(game_home, &clean)
+            && top_path.is_file()
+        {
+            std::fs::remove_file(&top_path)?;
+            removed = true;
+        }
+        if !removed {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Preset not found",
+            ));
+        }
+        let active_for_style = match style {
+            ControlStyle::Mcpe => self.active_mcpe_preset == clean,
+            ControlStyle::GoyControl => self.active_goy_preset == clean,
+        };
+        if self.control_style == style && (self.preset_id == clean || active_for_style) {
+            self.select_preset(game_home, style, "default");
+        } else if active_for_style {
+            match style {
+                ControlStyle::Mcpe => self.active_mcpe_preset = default_profile_name(),
+                ControlStyle::GoyControl => self.active_goy_preset = default_profile_name(),
+            }
+            let _ = self.save_to(&game_home.join("horizon-touch.json"));
+        }
+        Ok(())
     }
 
     /// Allocates a unique user preset ID inside `controls/<style>/` that is never `"default"`.

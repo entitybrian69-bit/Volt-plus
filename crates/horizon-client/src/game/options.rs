@@ -131,6 +131,8 @@ impl Game<'_> {
         let need_packs = self.ui.options.pack_infos.is_empty() || page == Page::Packs;
         let ui = &mut self.ui.options;
         ui.open_at(!from_title && self.title.is_none(), page);
+        self.settings.shader_packs =
+            horizon_client::shader_pack_list::scan(&Self::shader_packs_dir());
         if need_languages {
             let root = self.options.resources.clone();
             ui.languages = lang::available(&[&root]);
