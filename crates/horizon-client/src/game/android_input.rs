@@ -1687,7 +1687,7 @@ impl Game<'_> {
         let (modal_r, later_r, action_r) = Self::android_updater_modal_rects(ui.w, ui.h);
         let [mx, my, mw, mh] = modal_r;
 
-        ui.rect(0.0, 0.0, ui.w, ui.h, 0x9900_0000);
+        ui.fill(0.0, 0.0, ui.w, ui.h, 0x9900_0000);
         ui.rounded(mx, my, mw, mh, 20.0, theme.bg_solid);
         ui.stroke_rounded(mx, my, mw, mh, 20.0, 1.5, theme.accent);
 

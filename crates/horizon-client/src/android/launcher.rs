@@ -262,7 +262,7 @@ impl Launcher {
         let mut wardrobe = wardrobe::Wardrobe::new(&home);
         wardrobe.open(&catalog.config.name, &catalog.config.microsoft_client_id);
         let dp_enabled = horizon_client::settings::Settings::load(
-            &catalog.config.game_dir(&home).join("options.txt"),
+            &catalog.config.game_home(&home).join("options.txt"),
         )
         .extras
         .discord_presence;
@@ -341,7 +341,7 @@ impl Launcher {
         self.launching = false;
         self.launch_pending_tick = false;
         let dp_enabled = horizon_client::settings::Settings::load(
-            &self.catalog.config.game_dir(&self.home).join("options.txt"),
+            &self.catalog.config.game_home(&self.home).join("options.txt"),
         )
         .extras
         .discord_presence;

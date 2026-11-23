@@ -21,7 +21,7 @@ pub fn install(automated: bool) {
     });
     // Bind now rather than on the first card: Discord's READY takes a moment, and the title
     // screen's card should not be the thing that pays for it.
-    if let Err(err) = crate::platform::with_context(|env, activity| {
+    if crate::platform::with_context(|env, activity| {
         let class = crate::platform::app_class(env, activity, CLASS_NAME)?;
         env.call_static_method(
             class,
@@ -30,15 +30,17 @@ pub fn install(automated: bool) {
             &[JValue::Object(activity)],
         )?;
         Ok(())
-    }) {
-        log::warn!("VoltDiscord install failed: {err:?}");
+    })
+    .is_none()
+    {
+        log::warn!("VoltDiscord install skipped or failed");
     }
 }
 
 /// One card, as the game built it. Discord's card needs the activity, the app id is the Java
 /// side's business, and the binder call is left to the main looper there.
 fn publish(card: &str) {
-    if let Err(err) = crate::platform::with_context(|env, activity| {
+    if crate::platform::with_context(|env, activity| {
         let class = crate::platform::app_class(env, activity, CLASS_NAME)?;
         let text = JObject::from(env.new_string(card)?);
         env.call_static_method(
@@ -48,18 +50,22 @@ fn publish(card: &str) {
             &[JValue::Object(activity), JValue::Object(&text)],
         )?;
         Ok(())
-    }) {
-        log::warn!("VoltDiscord publish failed: {err:?}");
+    })
+    .is_none()
+    {
+        log::warn!("VoltDiscord publish skipped or failed");
     }
 }
 
 /// Takes the card off the profile (the switch turned off, or the game is quitting).
 fn clear() {
-    if let Err(err) = crate::platform::with_context(|env, activity| {
+    if crate::platform::with_context(|env, activity| {
         let class = crate::platform::app_class(env, activity, CLASS_NAME)?;
         env.call_static_method(class, "clear", "()V", &[])?;
         Ok(())
-    }) {
-        log::warn!("VoltDiscord clear failed: {err:?}");
+    })
+    .is_none()
+    {
+        log::warn!("VoltDiscord clear skipped or failed");
     }
 }
