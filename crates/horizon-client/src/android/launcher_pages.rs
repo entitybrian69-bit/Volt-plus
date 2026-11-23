@@ -411,7 +411,7 @@ pub(super) enum Action {
     ToggleControlScheme,
     SelectControlMode(horizon_client::touch::ControlStyle),
     ActivateStudioPreset(horizon_client::touch::ControlStyle, u32),
-    DeleteStudioPreset(horizon_client::touch::ControlStyle, String),
+    DeleteStudioPreset(horizon_client::touch::ControlStyle, u32),
     CopyActivePreset,
     EditActivePresetMeta,
     ConfirmReplaceDuplicatePreset,
@@ -4670,7 +4670,7 @@ impl Launcher {
             let action = Action::ActivateStudioPreset(style, idx as u32);
             if !meta.is_default {
                 let del_rect = [content_x + content_w - 178.0, ry + 13.0, 76.0, 30.0];
-                let del_action = Action::DeleteStudioPreset(style, meta.id.clone());
+                let del_action = Action::DeleteStudioPreset(style, idx as u32);
                 ui.rounded(
                     del_rect[0],
                     del_rect[1],
@@ -6850,21 +6850,24 @@ impl Launcher {
                     );
                 }
             }
-            Some(Action::DeleteStudioPreset(style, id)) => {
+            Some(Action::DeleteStudioPreset(style, idx)) => {
                 let game_home = self.catalog.config.game_home(&self.home);
                 let mut touch = horizon_client::touch::Settings::load_from(
                     &game_home.join("horizon-touch.json"),
                 );
-                match touch.delete_preset(&game_home, style, &id) {
-                    Ok(()) => {
-                        self.catalog.status = format!(
-                            "Deleted {} preset '{}'.",
-                            style.label(),
-                            id
-                        );
-                    }
-                    Err(e) => {
-                        self.catalog.status = format!("Could not delete preset: {e}");
+                let presets = horizon_client::touch::Settings::list_presets(&game_home, style);
+                if let Some(meta) = presets.get(idx as usize) {
+                    match touch.delete_preset(&game_home, style, &meta.id) {
+                        Ok(()) => {
+                            self.catalog.status = format!(
+                                "Deleted {} preset '{}'.",
+                                style.label(),
+                                meta.name
+                            );
+                        }
+                        Err(e) => {
+                            self.catalog.status = format!("Could not delete preset: {e}");
+                        }
                     }
                 }
             }
