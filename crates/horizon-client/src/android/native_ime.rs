@@ -264,7 +264,32 @@ impl Ui {
         }
         Ok(())
     }
+    fn hide_system_pointer(&self, env: &mut JNIEnv<'_>) {
+        let res = (|| -> jni::errors::Result<()> {
+            let icon = env
+                .call_static_method(
+                    "android/view/PointerIcon",
+                    "getSystemIcon",
+                    "(Landroid/content/Context;I)Landroid/view/PointerIcon;",
+                    &[JValue::Object(self.activity.as_obj()), JValue::Int(0)],
+                )?
+                .l()?;
+            if !icon.is_null() {
+                env.call_method(
+                    &self.native,
+                    "setPointerIcon",
+                    "(Landroid/view/PointerIcon;)V",
+                    &[JValue::Object(&icon)],
+                )?;
+            }
+            Ok(())
+        })();
+        if res.is_err() {
+            let _ = env.exception_clear();
+        }
+    }
     fn apply_screen(&self, env: &mut JNIEnv<'_>, immersive: bool) -> jni::errors::Result<()> {
+        self.hide_system_pointer(env);
         let window = env
             .call_method(&self.activity, "getWindow", "()Landroid/view/Window;", &[])?
             .l()?;
@@ -688,6 +713,7 @@ impl Ui {
                 winit::platform::android::set_native_content_insets(safe);
             }
             Command::Capture(capture) => {
+                self.hide_system_pointer(env);
                 if capture {
                     env.call_method(&self.edit, "clearFocus", "()V", &[])?;
                     env.call_method(&self.native, "setFocusable", "(Z)V", &[JValue::Bool(1)])?;

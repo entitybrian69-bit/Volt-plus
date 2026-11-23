@@ -904,26 +904,26 @@ impl VoltVideoUi {
 
         let (header_title, rows, _) = self.build_list_rows(s, &geom, &search.value, scroll_draw);
 
-        // Backdrop scrim (keeps world/menu background subtly tinted dark violet-slate)
+        // Backdrop scrim (keeps world/menu background subtly tinted lighter violet-slate)
         ui::menu_background(batch, atlas, 0.0, 0.0, w, h, in_world);
-        let scrim_a = if in_world { 92.0 } else { 116.0 } * (0.35 + 0.65 * open_p);
-        batch.fill(atlas, 0.0, 0.0, w, h, rgba(10, 9, 16, scrim_a.round() as u8));
+        let scrim_a = if in_world { 74.0 } else { 96.0 } * (0.35 + 0.65 * open_p);
+        batch.fill(atlas, 0.0, 0.0, w, h, rgba(18, 17, 28, scrim_a.round() as u8));
 
         let side_dx = (1.0 - open_p) * -10.0;
         let main_dy = (1.0 - open_p) * 6.0;
         let ui_alpha = 0.25 + 0.75 * open_p;
 
-        // Palette (Photo 2)
-        let panel_bg = with_alpha(rgba(18, 17, 26, 212), ui_alpha);
-        let bar_bg = with_alpha(rgba(16, 15, 24, 226), ui_alpha);
-        let border_subtle = with_alpha(rgba(255, 255, 255, 40), ui_alpha);
+        // Volt Graphics palette — lighter frosted slate surfaces for higher clarity
+        let panel_bg = with_alpha(rgba(34, 32, 48, 224), ui_alpha);
+        let bar_bg = with_alpha(rgba(42, 40, 60, 232), ui_alpha);
+        let border_subtle = with_alpha(rgba(255, 255, 255, 58), ui_alpha);
         let border_strong = with_alpha(rgba(255, 255, 255, 232), ui_alpha);
         let accent = with_alpha(rgba(116, 92, 235, 255), ui_alpha);
         let accent_hi = with_alpha(rgba(140, 118, 248, 255), ui_alpha);
         let accent_edge = with_alpha(rgba(180, 164, 255, 210), ui_alpha);
-        let text_primary = with_alpha(rgba(245, 244, 252, 255), ui_alpha);
-        let text_muted = with_alpha(rgba(176, 174, 192, 255), ui_alpha);
-        let text_dim = with_alpha(rgba(120, 118, 136, 255), ui_alpha);
+        let text_primary = with_alpha(rgba(248, 247, 255, 255), ui_alpha);
+        let text_muted = with_alpha(rgba(188, 186, 206, 255), ui_alpha);
+        let text_dim = with_alpha(rgba(136, 134, 154, 255), ui_alpha);
 
         // 1. Left Sidebar Brand ("Volt" / "Graphics")
         let bx = geom.side_x + side_dx;
@@ -1001,7 +1001,7 @@ impl VoltVideoUi {
             };
             if fill_a > 0.01 {
                 let fill = if selected {
-                    with_alpha(rgba(36, 33, 52, 225), ui_alpha)
+                    with_alpha(rgba(60, 56, 86, 235), ui_alpha)
                 } else {
                     with_alpha(rgba(255, 255, 255, (fill_a * 255.0) as u8), ui_alpha)
                 };
@@ -1164,8 +1164,8 @@ impl VoltVideoUi {
                     }
 
                     // Row card plate
-                    let idle_fill = with_alpha(rgba(255, 255, 255, 8), content_alpha);
-                    let active_fill = with_alpha(rgba(255, 255, 255, 28), content_alpha);
+                    let idle_fill = with_alpha(rgba(255, 255, 255, 20), content_alpha);
+                    let active_fill = with_alpha(rgba(255, 255, 255, 44), content_alpha);
                     let row_bg = lerp_color(idle_fill, active_fill, hl);
                     batch.fill(atlas, rect.x, dy, rect.w, rect.h, row_bg);
 
@@ -1261,7 +1261,7 @@ impl VoltVideoUi {
                         let pill_h = 16.0;
 
                         let pill_bg = with_alpha(
-                            rgba(16, 15, 24, (140.0 + 45.0 * hl) as u8),
+                            rgba(46, 43, 68, (175.0 + 45.0 * hl) as u8),
                             content_alpha,
                         );
                         batch.fill(atlas, pill_x, pill_y, pill_w, pill_h, pill_bg);

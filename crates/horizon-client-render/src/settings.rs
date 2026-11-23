@@ -213,7 +213,7 @@ impl Default for Settings {
             fov: 70.0,
             render_distance: 12,
             simulation_distance: 12,
-            sensitivity: 0.5,
+            sensitivity: if cfg!(target_os = "android") { 0.3 } else { 0.5 },
             master_volume: 1.0,
             volumes: [1.0; 11],
             sound_device: String::new(),

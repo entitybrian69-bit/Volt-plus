@@ -40,17 +40,17 @@ struct Palette {
 
 fn palette(in_world: bool, ui_alpha: f32) -> Palette {
     Palette {
-        scrim: with_alpha(rgba(10, 9, 16, if in_world { 172 } else { 205 }), ui_alpha),
-        panel_bg: with_alpha(rgba(18, 17, 26, 224), ui_alpha),
-        bar_bg: with_alpha(rgba(22, 21, 32, 232), ui_alpha),
-        border_subtle: with_alpha(rgba(255, 255, 255, 26), ui_alpha),
-        border_strong: with_alpha(rgba(130, 108, 245, 220), ui_alpha),
-        accent: with_alpha(rgba(110, 88, 228, 255), ui_alpha),
-        accent_hi: with_alpha(rgba(138, 118, 248, 255), ui_alpha),
-        accent_edge: with_alpha(rgba(176, 162, 255, 255), ui_alpha),
-        text_primary: with_alpha(rgba(244, 244, 248, 255), ui_alpha),
-        text_muted: with_alpha(rgba(162, 162, 178, 255), ui_alpha),
-        text_dim: with_alpha(rgba(116, 116, 134, 255), ui_alpha),
+        scrim: with_alpha(rgba(18, 17, 28, if in_world { 136 } else { 168 }), ui_alpha),
+        panel_bg: with_alpha(rgba(34, 32, 48, 228), ui_alpha),
+        bar_bg: with_alpha(rgba(42, 40, 60, 234), ui_alpha),
+        border_subtle: with_alpha(rgba(255, 255, 255, 58), ui_alpha),
+        border_strong: with_alpha(rgba(140, 118, 248, 235), ui_alpha),
+        accent: with_alpha(rgba(116, 92, 235, 255), ui_alpha),
+        accent_hi: with_alpha(rgba(140, 118, 248, 255), ui_alpha),
+        accent_edge: with_alpha(rgba(180, 164, 255, 230), ui_alpha),
+        text_primary: with_alpha(rgba(248, 247, 255, 255), ui_alpha),
+        text_muted: with_alpha(rgba(188, 186, 206, 255), ui_alpha),
+        text_dim: with_alpha(rgba(136, 134, 154, 255), ui_alpha),
     }
 }
 
@@ -514,7 +514,7 @@ impl VoltModsUi {
             }
             let rx = rect.x + side_dx;
             if selected {
-                batch.fill(atlas, rx, rect.y, rect.w, rect.h, with_alpha(rgba(36, 33, 52, 225), ui_alpha));
+                batch.fill(atlas, rx, rect.y, rect.w, rect.h, with_alpha(rgba(60, 56, 86, 235), ui_alpha));
             } else if self.tab_hover[i] > 0.02 {
                 batch.fill(
                     atlas,
@@ -522,7 +522,7 @@ impl VoltModsUi {
                     rect.y,
                     rect.w,
                     rect.h,
-                    with_alpha(rgba(255, 255, 255, (self.tab_hover[i] * 22.0) as u8), ui_alpha),
+                    with_alpha(rgba(255, 255, 255, (self.tab_hover[i] * 34.0) as u8), ui_alpha),
                 );
             }
             let col = if selected {
@@ -556,7 +556,7 @@ impl VoltModsUi {
             fb.y,
             fb.w,
             fb.h,
-            lerp_color(pal.bar_bg, with_alpha(rgba(40, 37, 56, 235), ui_alpha), self.folder_hover),
+            lerp_color(pal.bar_bg, with_alpha(rgba(60, 56, 86, 235), ui_alpha), self.folder_hover),
         );
         draw_border(
             batch,
@@ -678,8 +678,8 @@ impl VoltModsUi {
                 continue;
             }
             let installed = &s.mods.installed[row.index];
-            let idle_fill = with_alpha(rgba(255, 255, 255, 8), content_alpha);
-            let active_fill = with_alpha(rgba(255, 255, 255, 28), content_alpha);
+            let idle_fill = with_alpha(rgba(255, 255, 255, 20), content_alpha);
+            let active_fill = with_alpha(rgba(255, 255, 255, 44), content_alpha);
             batch.fill(atlas, row.rect.x, dy, row.rect.w, row.rect.h, lerp_color(idle_fill, active_fill, hl));
             if is_focused || self.inspected == Some(row.index) {
                 batch.fill(atlas, row.rect.x, dy + 3.0, 2.0, row.rect.h - 6.0, with_alpha(pal.accent_hi, content_alpha));
@@ -1563,7 +1563,7 @@ impl VoltHorizonUi {
             }
             let rx = rect.x + side_dx;
             if selected {
-                batch.fill(atlas, rx, rect.y, rect.w, rect.h, with_alpha(rgba(36, 33, 52, 225), ui_alpha));
+                batch.fill(atlas, rx, rect.y, rect.w, rect.h, with_alpha(rgba(60, 56, 86, 235), ui_alpha));
             } else if self.tab_hover[i] > 0.02 {
                 batch.fill(
                     atlas,
@@ -1571,7 +1571,7 @@ impl VoltHorizonUi {
                     rect.y,
                     rect.w,
                     rect.h,
-                    with_alpha(rgba(255, 255, 255, (self.tab_hover[i] * 22.0) as u8), ui_alpha),
+                    with_alpha(rgba(255, 255, 255, (self.tab_hover[i] * 34.0) as u8), ui_alpha),
                 );
             }
             let col = if selected {
@@ -1678,8 +1678,8 @@ impl VoltHorizonUi {
                     if !visible {
                         continue;
                     }
-                    let idle_fill = with_alpha(rgba(255, 255, 255, 8), content_alpha);
-                    let active_fill = with_alpha(rgba(255, 255, 255, 28), content_alpha);
+                    let idle_fill = with_alpha(rgba(255, 255, 255, 20), content_alpha);
+                    let active_fill = with_alpha(rgba(255, 255, 255, 44), content_alpha);
                     batch.fill(atlas, rect.x, dy, rect.w, rect.h, lerp_color(idle_fill, active_fill, hl));
                     if is_selected || is_focused {
                         batch.fill(atlas, rect.x, dy + 3.0, 2.0, rect.h - 6.0, with_alpha(pal.accent_hi, content_alpha));
@@ -1710,7 +1710,7 @@ impl VoltHorizonUi {
                         pill_y,
                         pill_w,
                         pill_h,
-                        with_alpha(rgba(16, 15, 24, (140.0 + 45.0 * hl) as u8), content_alpha),
+                        with_alpha(rgba(46, 43, 68, (175.0 + 45.0 * hl) as u8), content_alpha),
                     );
                     draw_border(
                         batch,
@@ -1722,7 +1722,7 @@ impl VoltHorizonUi {
                         if is_focused || is_hovered || is_selected {
                             with_alpha(pal.border_strong, content_alpha)
                         } else {
-                            with_alpha(rgba(255, 255, 255, 28), content_alpha)
+                            with_alpha(rgba(255, 255, 255, 58), content_alpha)
                         },
                     );
                     if !is_page {

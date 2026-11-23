@@ -15128,7 +15128,7 @@ impl Game<'_> {
             // Draw the virtual mouse pointer directly above the vanilla game/menu GUI layer
             // and strictly underneath our touch controls and floating menu overlays.
             #[cfg(target_os = "android")]
-            if self.pad.touch_ui.virtual_mouse && crate::touch_visible() {
+            if self.pad.touch_ui.virtual_mouse || (!self.captured && crate::keyboard_mouse_input()) {
                 horizon_client::touch_ui::draw_pointer(
                     &mut hud,
                     &self.gui.atlas,
@@ -16344,18 +16344,49 @@ impl ApplicationHandler for Game<'_> {
                 if crate::keyboard_mouse_input() && self.captured && !self.os_mouse_captured {
                     self.os_mouse_captured = crate::platform::capture_mouse(true);
                 }
-                let otg_boost = 2.6
-                    * f64::from(
+                let otg_boost = f64::from(
+                    self.pad
+                        .touch
+                        .settings
+                        .virtual_mouse_sensitivity
+                        .clamp(0.25, 4.0),
+                );
+                (x * otg_boost, y * otg_boost)
+            };
+            self.mouse.on_move(0.0, 0.0, x, y, true, true);
+            self.last_input = Instant::now();
+        } else if cfg!(target_os = "android")
+            && self.pending_save.is_none()
+            && !self.captured
+            && self.focused
+            && !self.options.offscreen
+            && let DeviceEvent::MouseMotion { delta: (x, y) } = event
+        {
+            #[cfg(target_os = "android")]
+            {
+                if !horizon_client::android_runtime::note_input(
+                    horizon_client::android_gamepad::InputMode::KeyboardMouse,
+                ) {
+                    return;
+                }
+                crate::touch_input(false);
+                if let Some(b) = self.gui_scale() {
+                    let sens = f64::from(
                         self.pad
                             .touch
                             .settings
                             .virtual_mouse_sensitivity
                             .clamp(0.25, 4.0),
                     );
-                (x * otg_boost, y * otg_boost)
-            };
-            self.mouse.on_move(0.0, 0.0, x, y, true, true);
-            self.last_input = Instant::now();
+                    let nx = (f64::from(self.cursor.0) + x * sens / f64::from(b.scale))
+                        .clamp(0.0, f64::from((b.width - 1.0).max(0.0))) as f32;
+                    let ny = (f64::from(self.cursor.1) + y * sens / f64::from(b.scale))
+                        .clamp(0.0, f64::from((b.height - 1.0).max(0.0))) as f32;
+                    self.cursor = (nx, ny);
+                }
+                self.android_sync_pointer();
+                self.last_input = Instant::now();
+            }
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
@@ -17388,6 +17419,17 @@ impl Game<'_> {
                     }
                 }
                 WindowEvent::CursorMoved { position, .. } => {
+                    #[cfg(target_os = "android")]
+                    {
+                        if self.captured && self.screen == Screen::Playing {
+                            return Ok(());
+                        }
+                        if horizon_client::android_runtime::note_input(
+                            horizon_client::android_gamepad::InputMode::KeyboardMouse,
+                        ) {
+                            crate::touch_input(false);
+                        }
+                    }
                     if let Some(r) = &self.renderer {
                         let b = HudBatch::new([r.config.width, r.config.height]);
                         self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);

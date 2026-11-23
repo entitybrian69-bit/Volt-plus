@@ -862,7 +862,7 @@ impl Settings {
         } else {
             32.0
         };
-        self.custom_buttons.truncate(32);
+        self.custom_buttons.truncate(256);
         for button in &mut self.custom_buttons {
             if button.key.is_empty() {
                 button.key = "key.keyboard.unknown".into();

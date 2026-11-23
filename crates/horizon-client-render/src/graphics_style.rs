@@ -62,9 +62,9 @@ pub const STYLE: Style = Style {
     header_height: 16.0,
     band: 33.0,
     title_color: u32::MAX,
-    // Volt Plus's copper section headings, the launcher dashboard's accent.
-    header_color: opaque(0xc9, 0x8b, 0x57),
-    description_color: opaque(170, 170, 170),
+    // Volt Plus: lighter Volt Graphics violet section headings & muted text.
+    header_color: opaque(180, 164, 255),
+    description_color: opaque(196, 194, 214),
     cost_colors: [
         opaque(120, 200, 120),
         opaque(170, 220, 120),
@@ -95,15 +95,22 @@ impl Style {
         let (w, h) = (batch.width, batch.height);
         ui::menu_background(batch, atlas, 0.0, 0.0, w, h, in_world);
         ui::list_background(batch, atlas, top, bottom, in_world);
-        // Thin warm rules in place of the violet chrome: one under the title band, one
-        // above the buttons, and a hairline down the list's left edge.
+        // Volt Graphics frosted slate veil + violet chrome rules.
+        batch.fill(
+            atlas,
+            0.0,
+            0.0,
+            w,
+            h,
+            crate::hud::rgba(22, 21, 34, if in_world { 112 } else { 142 }),
+        );
         batch.fill(
             atlas,
             0.0,
             top,
             w,
             1.0,
-            crate::hud::rgb(horizon_theme::warm::ACCENT, 150),
+            crate::hud::rgba(140, 118, 248, 210),
         );
         batch.fill(
             atlas,
@@ -111,7 +118,7 @@ impl Style {
             bottom - 1.0,
             w,
             1.0,
-            crate::hud::rgb(horizon_theme::warm::RULE, 210),
+            crate::hud::rgba(255, 255, 255, 62),
         );
         batch.fill(
             atlas,
@@ -119,7 +126,7 @@ impl Style {
             top + 1.0,
             2.0,
             (bottom - top - 2.0).max(0.0),
-            crate::hud::rgb(horizon_theme::warm::ACCENT_DEEP, 110),
+            crate::hud::rgba(116, 92, 235, 165),
         );
     }
     pub fn frame(
@@ -139,6 +146,33 @@ impl Style {
     pub fn header(&self, batch: &mut HudBatch, atlas: &HudAtlas, text: &Text, x: f32, y: f32) {
         batch.text_styled(atlas, text, x, y + 4.0, self.header_color, true);
     }
+    pub fn done_button(
+        &self,
+        batch: &mut HudBatch,
+        atlas: &HudAtlas,
+        (x, y, w): (f32, f32, f32),
+        label: &Text,
+        hover: bool,
+    ) {
+        let fill = if hover {
+            crate::hud::rgba(140, 118, 248, 255)
+        } else {
+            crate::hud::rgba(116, 92, 235, 255)
+        };
+        batch.fill(atlas, x, y, w, 20.0, fill);
+        batch.fill(atlas, x, y, w, 1.0, crate::hud::rgba(180, 164, 255, 225));
+        ui::centered_text(
+            batch,
+            atlas,
+            label,
+            x + 2.0,
+            y + 6.0,
+            w - 4.0,
+            crate::hud::rgba(248, 247, 255, 255),
+        );
+        crate::widgets::record(&label.plain(), [x, y, w, 20.0], true);
+        crate::widgets::widget_cursor(hover, true);
+    }
     pub fn button(
         &self,
         batch: &mut HudBatch,
@@ -149,6 +183,29 @@ impl Style {
         active: bool,
     ) {
         ui::button(batch, atlas, x, y, w, 20.0, label, active, hover);
+        let fill = if !active {
+            crate::hud::rgba(34, 32, 48, 232)
+        } else if hover {
+            crate::hud::rgba(68, 63, 98, 245)
+        } else {
+            crate::hud::rgba(46, 43, 66, 238)
+        };
+        let edge = if active && hover {
+            crate::hud::rgba(140, 118, 248, 255)
+        } else {
+            crate::hud::rgba(255, 255, 255, 62)
+        };
+        batch.fill(atlas, x, y, w, 20.0, fill);
+        batch.fill(atlas, x, y, w, 1.0, edge);
+        batch.fill(atlas, x, y + 19.0, w, 1.0, edge);
+        batch.fill(atlas, x, y, 1.0, 20.0, edge);
+        batch.fill(atlas, x + w - 1.0, y, 1.0, 20.0, edge);
+        let tc = if active {
+            crate::hud::rgba(248, 247, 255, 255)
+        } else {
+            crate::hud::rgba(176, 174, 196, 255)
+        };
+        ui::centered_text(batch, atlas, label, x + 2.0, y + 6.0, w - 4.0, tc);
     }
     pub fn slider(
         &self,
@@ -161,17 +218,17 @@ impl Style {
         active: bool,
         dragging: bool,
     ) {
-        ui::slider(
+        self.slider_ext(
             batch,
             atlas,
-            x,
-            y,
-            w,
+            (x, y, w),
             label,
             value,
-            hover && active,
+            hover,
+            false,
+            false,
             active,
-            dragging && active,
+            dragging,
         );
     }
     pub fn slider_ext(
@@ -201,6 +258,39 @@ impl Style {
             active,
             dragging && active,
         );
+        let fill = if !active {
+            crate::hud::rgba(34, 32, 48, 232)
+        } else if hover || dragging {
+            crate::hud::rgba(68, 63, 98, 245)
+        } else {
+            crate::hud::rgba(46, 43, 66, 238)
+        };
+        let edge = if active && (hover || dragging || focused) {
+            crate::hud::rgba(140, 118, 248, 255)
+        } else {
+            crate::hud::rgba(255, 255, 255, 62)
+        };
+        batch.fill(atlas, x, y, w, 20.0, fill);
+        batch.fill(atlas, x, y, w, 1.0, edge);
+        batch.fill(atlas, x, y + 19.0, w, 1.0, edge);
+        batch.fill(atlas, x, y, 1.0, 20.0, edge);
+        batch.fill(atlas, x + w - 1.0, y, 1.0, 20.0, edge);
+        let track_w = (w - 8.0).max(4.0);
+        let track_y = y + 14.0;
+        let t = value.clamp(0.0, 1.0);
+        batch.fill(atlas, x + 4.0, track_y, track_w, 2.0, crate::hud::rgba(255, 255, 255, 58));
+        let filled = (t * track_w).floor();
+        if filled >= 1.0 {
+            batch.fill(atlas, x + 4.0, track_y, filled, 2.0, crate::hud::rgba(116, 92, 235, 255));
+        }
+        let knob_x = x + 4.0 + (t * track_w).floor();
+        batch.fill(atlas, knob_x - 1.0, track_y - 2.0, 4.0, 6.0, crate::hud::rgba(255, 255, 255, 255));
+        let tc = if active {
+            crate::hud::rgba(248, 247, 255, 255)
+        } else {
+            crate::hud::rgba(176, 174, 196, 255)
+        };
+        ui::centered_text(batch, atlas, label, x + 2.0, y + 4.0, w - 4.0, tc);
     }
     /// The cost tag and the description beside a control, wrapped to two lines.
     pub fn description(

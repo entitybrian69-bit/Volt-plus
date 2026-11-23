@@ -190,7 +190,7 @@ static TABLE: LazyLock<Vec<Def>> = LazyLock::new(|| {
         b("darkMojangStudiosBackground", false),
         b("hideLightningFlashes", false),
         b("hideSplashTexts", false),
-        u("mouseSensitivity", 0.5),
+        u("mouseSensitivity", if cfg!(target_os = "android") { 0.3 } else { 0.5 }),
         u("damageTiltStrength", 1.0),
         b("highContrast", false),
         b("highContrastBlockOutline", false),

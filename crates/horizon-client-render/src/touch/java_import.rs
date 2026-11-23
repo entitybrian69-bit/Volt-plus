@@ -79,7 +79,7 @@ fn build_placement(
     p.width_ratio = width_ratio;
     p.height_ratio = height_ratio;
     p.opacity = opacity.clamp(0.0, 1.0);
-    p.shape = if roundness > 0.5 { 1 } else { 0 };
+    p.shape = if roundness > 0.5 { 0 } else { 1 };
     p.roundness = roundness.clamp(0.0, 50.0);
     p.stroke_roundness = p.roundness;
     p.stroke_size = stroke_size.clamp(0.0, 8.0);
@@ -98,27 +98,23 @@ fn build_placement(
     p
 }
 
-fn base_java_settings(style_name: String, desc: String, has_joystick: bool) -> Settings {
+fn base_java_settings(style_name: String, desc: String) -> Settings {
     let mut s = Settings::default_for_style(ControlStyle::GoyControl);
     s.control_style = ControlStyle::GoyControl;
     s.preset_name = style_name;
     s.preset_description = desc;
     s.custom_buttons.clear();
-    // Hide Horizon's built-in GoyControl buttons so only the imported Pojav/Zalith
-    // layout buttons (plus touch camera drag) appear.
+    // Hide every Horizon built-in control (including `Control::Move` joystick/D-pad)
+    // whenever controls are imported from PojavLauncher or Zalith Launcher so the
+    // imported layout stands alone without an overlapping touch joystick.
     for m in 0..3 {
         for c in Control::ALL {
             s.layouts[m][c as usize].use_goy_style = true;
-            s.layouts[m][c as usize].visible_in_game = has_joystick && c == Control::Move;
+            s.layouts[m][c as usize].visible_in_game = false;
             s.layouts[m][c as usize].visible_in_menu = false;
         }
     }
-    for vis in &mut s.button_visibility {
-        *vis = 0;
-    }
-    if has_joystick {
-        s.button_visibility[Control::Move as usize] = 1;
-    }
+    s.button_visibility = [2; 14];
     s
 }
 
@@ -354,7 +350,6 @@ fn import_pojav(value: &Value, file_name: &str) -> Result<Settings, String> {
     let mut s = base_java_settings(
         preset_name,
         "Imported PojavLauncher control layout".to_owned(),
-        has_joystick,
     );
 
     if let Some(list) = value["mControlDataList"].as_array() {
@@ -476,7 +471,6 @@ fn import_zalith(value: &Value, file_name: &str) -> Result<Settings, String> {
     let mut s = base_java_settings(
         preset_name.chars().take(48).collect(),
         preset_desc.chars().take(120).collect(),
-        has_joystick,
     );
 
     let Some(layers) = value["layers"].as_array() else {
@@ -542,12 +536,18 @@ fn import_zalith(value: &Value, file_name: &str) -> Result<Settings, String> {
 
             let style_id = b["buttonStyle"].as_str().unwrap_or("");
             let style = styles.get(style_id).copied().unwrap_or_default();
-            let vis = b["visibilityType"].as_str().unwrap_or(layer_vis);
-            let (in_game, in_menu) = match vis {
+            let layer_vis_pair = match layer_vis {
                 "in_game" => (true, false),
                 "in_menu" => (false, true),
                 _ => (true, true),
             };
+            let btn_vis_pair = match b["visibilityType"].as_str().unwrap_or(layer_vis) {
+                "in_game" => (true, false),
+                "in_menu" => (false, true),
+                _ => (true, true),
+            };
+            let in_game = layer_vis_pair.0 && btn_vis_pair.0;
+            let in_menu = layer_vis_pair.1 && btn_vis_pair.1;
             let is_swipe = b["isSwipple"].as_bool().unwrap_or(false);
             let passthrough = b["isPenetrable"].as_bool().unwrap_or(false);
             let is_toggle = b["isToggleable"].as_bool().unwrap_or(false);
@@ -739,8 +739,11 @@ mod tests {
             ],
             "editorVersion": 11
         });
-        let s = convert_java_control_json(&json, "mb0v28Uu.json").unwrap().unwrap();
+        let mut s = convert_java_control_json(&json, "mb0v28Uu.json").unwrap().unwrap();
+        s.sanitize();
         assert_eq!(s.preset_name, "PvP Layout");
+        assert_eq!(s.button_visibility[Control::Move as usize], 2);
+        assert!(!s.layouts[0][Control::Move as usize].visible_in_game);
         assert_eq!(s.custom_buttons.len(), 2);
         assert_eq!(s.custom_buttons[0].key, "action:horizon.switch_layer:layer_a,layer_b");
         assert!(!s.custom_buttons[0].hidden);
@@ -749,5 +752,34 @@ mod tests {
         assert_eq!(s.custom_buttons[1].key, "key.keyboard.space");
         assert!(s.custom_buttons[1].layouts[0].swipeable);
         assert!(s.custom_buttons[1].layouts[0].passthrough);
+    }
+
+    #[test]
+    fn suppresses_joystick_and_preserves_over_32_buttons_on_sanitize() {
+        let buttons: Vec<Value> = (0..40)
+            .map(|i| {
+                serde_json::json!({
+                    "name": format!("B{i}"),
+                    "keycodes": [65 + (i % 26)],
+                    "dynamicX": "100",
+                    "dynamicY": "100",
+                    "width": 40.0,
+                    "height": 40.0,
+                    "cornerRadius": 12.0
+                })
+            })
+            .collect();
+        let json = serde_json::json!({
+            "scaledAt": 100.0,
+            "mJoystickDataList": [{ "dynamicX": "50", "dynamicY": "50" }],
+            "mControlDataList": buttons
+        });
+        let mut s = convert_java_control_json(&json, "big.json").unwrap().unwrap();
+        s.sanitize();
+        assert_eq!(s.custom_buttons.len(), 40);
+        assert_eq!(s.button_visibility[Control::Move as usize], 2);
+        assert!(!s.layouts[0][Control::Move as usize].visible_in_game);
+        assert_eq!(s.custom_buttons[0].layouts[0].shape, 0);
+        assert_eq!(s.custom_buttons[39].key, "key.keyboard.n");
     }
 }

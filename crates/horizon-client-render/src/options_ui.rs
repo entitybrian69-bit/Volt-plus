@@ -2,14 +2,13 @@
 //! Controls, Key Binds, Mouse Settings, Chat Settings, Accessibility,
 //! Language and Resource Packs, laid out like vanilla's HeaderAndFooter /
 //! OptionsList screens and drawn with the shared widgets.
-use horizon_theme::warm;
 use std::time::Instant;
 
 pub use crate::settings::Opt;
 
 use crate::{
     gamepad::{self, GlyphStyle},
-    hud::{HudAtlas, HudBatch, rgb, rgba},
+    hud::{HudAtlas, HudBatch, rgba},
     keybinds::{self, CATEGORIES, KeyBinds, MAPPINGS},
     lang::{self, LanguageInfo},
     settings::{SOUND_SOURCES, Settings},
@@ -1830,20 +1829,23 @@ impl Default for OptionsUi {
         }
     }
 }
-/// Volt Plus: the options screens wear the control hub's glass instead of vanilla's stone.
-///
-/// Vanilla still draws the widget underneath (so the screen reader records the same
-/// labels, sliders and rows as before); this plate is drawn over it, which is why it is
-/// nearly opaque: nothing of the stone sprite comes through, and the whole screen reads as
-/// one piece with the overlay. Only this module calls these.
-const GLASS_PLATE: u32 = 0xF217_1419;
-const GLASS_PLATE_HOVER: u32 = 0xFA26_2050;
-const GLASS_PLATE_OFF: u32 = 0xF212_1016;
-const GLASS_EDGE: u32 = 0x33FF_FFFF;
-const GLASS_EDGE_HOVER: u32 = 0xFFA9_8BFF;
-const GLASS_ACCENT: u32 = 0xFF7C_5CFF;
-const GLASS_TEXT: u32 = 0xFFF4_F2F8;
-const GLASS_MUTED: u32 = 0xFFA6_A3B4;
+/// Volt Plus: all Volt+ Settings screens share the brighter Volt Graphics frosted slate &
+/// violet theme (ABGR layout matching `crate::hud::rgba(r, g, b, a)`), while `Page::Main`
+/// remains classic vanilla.
+const fn volt_rgba(r: u8, g: u8, b: u8, a: u8) -> u32 {
+    ((a as u32) << 24) | ((b as u32) << 16) | ((g as u32) << 8) | (r as u32)
+}
+
+const GLASS_PLATE: u32 = volt_rgba(46, 43, 66, 238);
+const GLASS_PLATE_HOVER: u32 = volt_rgba(68, 63, 98, 245);
+const GLASS_PLATE_OFF: u32 = volt_rgba(34, 32, 48, 232);
+const GLASS_EDGE: u32 = volt_rgba(255, 255, 255, 62);
+const GLASS_EDGE_HOVER: u32 = volt_rgba(140, 118, 248, 255);
+const GLASS_ACCENT: u32 = volt_rgba(116, 92, 235, 255);
+const GLASS_ACCENT_HI: u32 = volt_rgba(140, 118, 248, 255);
+const GLASS_ACCENT_EDGE: u32 = volt_rgba(180, 164, 255, 225);
+const GLASS_TEXT: u32 = volt_rgba(248, 247, 255, 255);
+const GLASS_MUTED: u32 = volt_rgba(182, 180, 200, 255);
 
 fn glass_plate(
     batch: &mut HudBatch,
@@ -1908,7 +1910,7 @@ fn glass_slider(
     let track_w = (w - 8.0).max(4.0);
     let track_y = y + h - 6.0;
     let t = value.clamp(0.0, 1.0);
-    batch.fill(atlas, x + 4.0, track_y, track_w, 2.0, 0x33FF_FFFF);
+    batch.fill(atlas, x + 4.0, track_y, track_w, 2.0, crate::hud::rgba(255, 255, 255, 58));
     let filled = (t * track_w).floor();
     if filled >= 1.0 {
         batch.fill(atlas, x + 4.0, track_y, filled, 2.0, GLASS_ACCENT);
@@ -4004,23 +4006,30 @@ impl OptionsUi {
                     | Page::Graphics
                     | Page::GraphicsAdvanced
                     | Page::GraphicsHdr
+                    | Page::HdrCalibration
+                    | Page::ShaderPacks
+                    | Page::ShaderOptions
+                    | Page::NativePackOptions(_)
+                    | Page::Controller
+                    | Page::PadBinds
+                    | Page::Extras
+                    | Page::Agent
+                    | Page::Touch
                     | Page::KeyBinds
             );
             match &wd.kind {
                 WKind::Button { label, active, act } => {
                     let label = fitted.as_ref().map_or(label, |f| &f.0);
                     if restyled_plate && *act == Act::Done {
-                        // Volt Plus: the restyled legacy pages' Done action is a flat
-                        // copper plate rather than a vanilla sprite.
                         let plate = if !*active {
-                            crate::hud::rgb(horizon_theme::warm::BORDER, 230)
+                            GLASS_PLATE_OFF
                         } else if hover {
-                            crate::hud::rgb(horizon_theme::warm::ACCENT_HI, 255)
+                            GLASS_ACCENT_HI
                         } else {
-                            crate::hud::rgb(horizon_theme::warm::ACCENT, 255)
+                            GLASS_ACCENT
                         };
                         batch.fill(atlas, wd.x, wd.y, wd.w, wd.h, plate);
-                        batch.fill(atlas, wd.x, wd.y, wd.w, 1.0, crate::hud::rgb(horizon_theme::warm::ACCENT_HI, 255));
+                        batch.fill(atlas, wd.x, wd.y, wd.w, 1.0, GLASS_ACCENT_EDGE);
                         ui::centered_text(
                             batch,
                             atlas,
@@ -4028,7 +4037,7 @@ impl OptionsUi {
                             wd.x + 2.0,
                             wd.y + 6.0,
                             wd.w - 4.0,
-                            crate::hud::rgb(horizon_theme::warm::ON_ACCENT, 255),
+                            GLASS_TEXT,
                         );
                     } else {
                         ui::button(batch, atlas, wd.x, wd.y, wd.w, wd.h, label, *active, hover);
@@ -4079,6 +4088,7 @@ impl OptionsUi {
                     let label = fitted.as_ref().map_or(label, |f| &f.0);
                     let held = self.shader_dragging.as_ref().filter(|(n, _)| n == name);
                     let dragging = held.is_some();
+                    let shown = held.map_or(*value, |h| h.1);
                     ui::slider(
                         batch,
                         atlas,
@@ -4086,11 +4096,25 @@ impl OptionsUi {
                         wd.y,
                         wd.w,
                         label,
-                        held.map_or(*value, |h| h.1),
+                        shown,
                         hover || dragging,
                         true,
                         dragging,
                     );
+                    if restyled_plate {
+                        glass_slider(
+                            batch,
+                            atlas,
+                            wd.x,
+                            wd.y,
+                            wd.w,
+                            wd.h,
+                            label,
+                            shown,
+                            hover || dragging,
+                            true,
+                        );
+                    }
                 }
                 WKind::Text {
                     text,
@@ -4224,8 +4248,8 @@ impl OptionsUi {
         }
     }
 
-    /// The reference layout's warm chrome on the restyled pages: a thin copper rule under
-    /// the title, another above the footer, and a quiet warm rail down the left edge.
+    /// Volt Graphics chrome on Volt+ Settings sub-pages: a thin violet rule under
+    /// the title, a subtle white rule above the footer, and a violet rail down the left edge.
     fn draw_warm_chrome(&self, batch: &mut HudBatch, atlas: &HudAtlas) {
         let page = self.page();
         let restyled = matches!(
@@ -4234,21 +4258,30 @@ impl OptionsUi {
                 | Page::Graphics
                 | Page::GraphicsAdvanced
                 | Page::GraphicsHdr
+                | Page::HdrCalibration
+                | Page::ShaderPacks
+                | Page::ShaderOptions
+                | Page::NativePackOptions(_)
+                | Page::Controller
+                | Page::PadBinds
+                | Page::Extras
+                | Page::Agent
+                | Page::Touch
                 | Page::KeyBinds
         );
         if !restyled {
             return;
         }
         let (w, h) = (batch.width, batch.height);
-        batch.fill(atlas, 0.0, 31.0, w, 1.0, rgb(warm::ACCENT, 165));
-        batch.fill(atlas, 0.0, h - 32.0, w, 1.0, rgb(warm::RULE, 210));
+        batch.fill(atlas, 0.0, 31.0, w, 1.0, rgba(140, 118, 248, 210));
+        batch.fill(atlas, 0.0, h - 32.0, w, 1.0, rgba(255, 255, 255, 62));
         batch.fill(
             atlas,
             0.0,
             32.0,
             2.0,
             (h - 64.0).max(0.0),
-            rgb(warm::ACCENT_DEEP, 105),
+            rgba(116, 92, 235, 165),
         );
     }
     fn touch_picker_geometry(size: (f32, f32)) -> (f32, f32, f32, f32) {
@@ -4277,24 +4310,22 @@ impl OptionsUi {
         if self.selected_key.is_none() { return; }
         let size = (batch.width, batch.height);
         let (left, top, width, row_h) = Self::touch_picker_geometry(size);
-        batch.fill(atlas, 0.0, 0.0, size.0, size.1, rgba(10, 7, 5, 200));
+        batch.fill(atlas, 0.0, 0.0, size.0, size.1, rgba(18, 17, 28, 185));
         let grid_h = row_h * 8.0;
         let nav_y = top + grid_h + 6.0;
-        // The warm brown plate of the reference layout: one copper hairline
-        // round the grid, a dark seat under it.
         batch.fill(
             atlas,
             left - 5.0,
             top - 5.0,
             width + 10.0,
             grid_h + 6.0 + 32.0,
-            rgb(warm::SURFACE_DIM, 236),
+            rgba(34, 32, 48, 240),
         );
         for (x, y, w, h) in [
             (left - 5.0, top - 5.0, width + 10.0, 1.0),
             (left - 5.0, nav_y + 24.0, width + 10.0, 1.0),
         ] {
-            batch.fill(atlas, x, y, w, h, rgb(warm::ACCENT, 200));
+            batch.fill(atlas, x, y, w, h, GLASS_ACCENT_HI);
         }
         let heading = Text::literal("Tap a key to bind it").with_color(text::YELLOW);
         batch.text_styled(atlas, &heading, (size.0 - atlas.font.width_text(&heading)) * 0.5, 12.0, u32::MAX, true);
@@ -4310,16 +4341,18 @@ impl OptionsUi {
             let w = (cell_w - 2.0).max(6.0);
             let h = (row_h - 2.0).max(6.0);
             ui::button(batch, atlas, x + 1.0, y + 1.0, w, h, &label, true, held);
+            glass_button(batch, atlas, x + 1.0, y + 1.0, w, h, &label, true, held);
             if held {
-                // Minecraft's pressed plate plus the reference accent: the
-                // cell sinks a pixel and takes a copper edge.
-                batch.fill(atlas, x + 1.0, y + h - 1.0, w, 2.0, rgb(warm::ACCENT, 235));
-                batch.fill(atlas, x + 1.0, y + 1.0, w, 1.0, rgb(warm::ON_ACCENT, 160));
+                batch.fill(atlas, x + 1.0, y + h - 1.0, w, 2.0, GLASS_ACCENT);
+                batch.fill(atlas, x + 1.0, y + 1.0, w, 1.0, GLASS_ACCENT_EDGE);
             }
         }
         ui::button(batch, atlas, left, nav_y, width * 0.28, 20.0, &Text::literal("< Previous"), page > 0, false);
+        glass_button(batch, atlas, left, nav_y, width * 0.28, 20.0, &Text::literal("< Previous"), page > 0, false);
         ui::button(batch, atlas, left + width * 0.36, nav_y, width * 0.28, 20.0, &Text::literal("Cancel"), true, false);
+        glass_button(batch, atlas, left + width * 0.36, nav_y, width * 0.28, 20.0, &Text::literal("Cancel"), true, false);
         ui::button(batch, atlas, left + width * 0.72, nav_y, width * 0.28, 20.0, &Text::literal("Next >"), page + 1 < pages, false);
+        glass_button(batch, atlas, left + width * 0.72, nav_y, width * 0.28, 20.0, &Text::literal("Next >"), page + 1 < pages, false);
         if nav_y + 34.0 < size.1 {
             let count =
                 Text::literal(format!("{} / {}  •  {} keys", page + 1, pages.max(1), keys.len()));
@@ -4328,7 +4361,7 @@ impl OptionsUi {
                 &count,
                 left + width - atlas.font.width_text(&count),
                 nav_y + 25.0,
-                rgb(warm::ACCENT_HI, 220),
+                GLASS_ACCENT_HI,
                 false,
             );
             let hint = Text::literal("A mouse button outside the grid binds it");
@@ -4337,7 +4370,7 @@ impl OptionsUi {
                 &hint,
                 left,
                 nav_y + 25.0,
-                rgb(warm::TEXT_MUTED, 255),
+                GLASS_MUTED,
                 false,
             );
         }

@@ -2559,7 +2559,7 @@ impl Loading {
             self.menu
                 .touch
                 .sync_viewport_cursor(&mut self.menu.cursor, [batch.width, batch.height]);
-            if self.menu.touch.virtual_mouse {
+            if self.menu.touch.virtual_mouse || crate::keyboard_mouse_input() {
                 horizon_client::touch_ui::draw_pointer(
                     batch,
                     &gui.atlas,

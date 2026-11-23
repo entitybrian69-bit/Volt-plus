@@ -1093,14 +1093,24 @@ impl GraphicsUi {
                         Action::OpenSimple => "Simple...",
                         _ => "Done",
                     };
-                    STYLE.button(
-                        batch,
-                        atlas,
-                        (wd.x, wd.y, wd.w),
-                        &Text::literal(lang::get(label)),
-                        hover,
-                        true,
-                    );
+                    if matches!(action, Action::Done) {
+                        STYLE.done_button(
+                            batch,
+                            atlas,
+                            (wd.x, wd.y, wd.w),
+                            &Text::literal(lang::get(label)),
+                            hover,
+                        );
+                    } else {
+                        STYLE.button(
+                            batch,
+                            atlas,
+                            (wd.x, wd.y, wd.w),
+                            &Text::literal(lang::get(label)),
+                            hover,
+                            true,
+                        );
+                    }
                 }
             }
         }

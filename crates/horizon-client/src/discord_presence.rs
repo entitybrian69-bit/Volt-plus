@@ -30,7 +30,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Where the button on the card leads.
 const DOWNLOAD_URL: &str = "https://github.com/entitybrian69-bit/volt-plus";
 /// The logo the phone's card shows: a picture address Discord fetches itself.
-const LOGO_URL: &str = "https://raw.githubusercontent.com/entitybrian69-bit/volt-plus/main/packaging/android/res/drawable-nodpi/launcher_icon.png";
+const LOGO_URL: &str = "https://raw.githubusercontent.com/entitybrian69-bit/volt-plus/android/packaging/android/res/drawable-nodpi/launcher_icon.png";
 /// The Rich Presence assets the card draws, by the names they must be uploaded under in the
 /// developer portal: the square logo, and one 512x512 picture a dimension.
 const LOGO_ASSET: &str = "volt";
