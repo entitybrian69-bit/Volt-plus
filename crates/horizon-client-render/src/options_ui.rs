@@ -4340,18 +4340,14 @@ impl OptionsUi {
             let held = self.touch_key_pressed == Some(i);
             let w = (cell_w - 2.0).max(6.0);
             let h = (row_h - 2.0).max(6.0);
-            ui::button(batch, atlas, x + 1.0, y + 1.0, w, h, &label, true, held);
             glass_button(batch, atlas, x + 1.0, y + 1.0, w, h, &label, true, held);
             if held {
                 batch.fill(atlas, x + 1.0, y + h - 1.0, w, 2.0, GLASS_ACCENT);
                 batch.fill(atlas, x + 1.0, y + 1.0, w, 1.0, GLASS_ACCENT_EDGE);
             }
         }
-        ui::button(batch, atlas, left, nav_y, width * 0.28, 20.0, &Text::literal("< Previous"), page > 0, false);
         glass_button(batch, atlas, left, nav_y, width * 0.28, 20.0, &Text::literal("< Previous"), page > 0, false);
-        ui::button(batch, atlas, left + width * 0.36, nav_y, width * 0.28, 20.0, &Text::literal("Cancel"), true, false);
         glass_button(batch, atlas, left + width * 0.36, nav_y, width * 0.28, 20.0, &Text::literal("Cancel"), true, false);
-        ui::button(batch, atlas, left + width * 0.72, nav_y, width * 0.28, 20.0, &Text::literal("Next >"), page + 1 < pages, false);
         glass_button(batch, atlas, left + width * 0.72, nav_y, width * 0.28, 20.0, &Text::literal("Next >"), page + 1 < pages, false);
         if nav_y + 34.0 < size.1 {
             let count =

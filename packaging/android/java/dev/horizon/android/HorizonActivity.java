@@ -527,21 +527,17 @@ public final class HorizonActivity extends android.app.NativeActivity {
         }
     }
 
-    public static void installApk(android.content.Context context, String apkFilePath) {
-        java.io.File file = new java.io.File(apkFilePath);
-        if (!file.exists()) return;
-        try {
-            java.lang.reflect.Method m = android.os.StrictMode.class.getMethod("disableDeathOnFileUriExposure");
-            m.invoke(null);
-        } catch (Throwable ignored) {}
-        android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+    public static void openUpdateUrl(android.content.Context context, String url) {
+        if (context == null || url == null) return;
+        String trimmed = url.trim();
+        if (!trimmed.startsWith("https://github.com/entitybrian69-bit/volt-plus/")) return;
+        android.content.Intent intent = new android.content.Intent(
+                android.content.Intent.ACTION_VIEW, android.net.Uri.parse(trimmed));
         intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-        intent.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        intent.setDataAndType(android.net.Uri.fromFile(file), "application/vnd.android.package-archive");
         try {
             context.startActivity(intent);
         } catch (Throwable error) {
-            android.util.Log.e("HorizonActivity", "Failed to launch package installer", error);
+            android.util.Log.e("HorizonActivity", "Failed to open release download page", error);
         }
     }
 }

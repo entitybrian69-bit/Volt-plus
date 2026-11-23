@@ -4,7 +4,6 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- The screen recorder: a mediaProjection capture keeps running in a foreground service. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
@@ -16,11 +15,6 @@
         <package android:name="com.discord.beta" />
         <package android:name="com.discord.alpha" />
         <package android:name="com.discord.canary" />
-        <package android:name="cocobo1.pupu.app" />
-        <package android:name="com.aliucord" />
-        <package android:name="app.revenge" />
-        <package android:name="dev.bunny" />
-        <package android:name="app.kettu" />
         <intent>
             <action android:name="com.discord.socialsdk.rpc.IDiscordRpcService" />
         </intent>
@@ -29,7 +23,7 @@
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="false" />
-    <application android:label="Volt Plus" android:appCategory="game" android:icon="@drawable/launcher_icon" android:banner="@drawable/tv_banner" android:extractNativeLibs="true" android:usesCleartextTraffic="false">
+    <application android:label="Volt Plus" android:appCategory="game" android:icon="@drawable/launcher_icon" android:banner="@drawable/tv_banner" android:allowBackup="false" android:extractNativeLibs="true" android:usesCleartextTraffic="false">
         <provider android:name="dev.horizon.android.HorizonDocumentsProvider" android:authorities="${applicationId}.documents" android:exported="true" android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS">
             <intent-filter>
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />

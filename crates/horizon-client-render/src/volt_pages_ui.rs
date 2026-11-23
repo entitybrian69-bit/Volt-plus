@@ -741,7 +741,7 @@ impl VoltModsUi {
             } else if on {
                 with_alpha(rgba(110, 88, 228, if t_hover || t_focus { 245 } else { 205 }), content_alpha)
             } else {
-                with_alpha(rgba(20, 19, 30, if t_hover || t_focus { 220 } else { 170 }), content_alpha)
+                with_alpha(rgba(46, 43, 68, if t_hover || t_focus { 225 } else { 180 }), content_alpha)
             };
             batch.fill(atlas, tr.x, dy + 2.0, tr.w, tr.h, pill_bg);
             draw_border(

@@ -43,7 +43,6 @@ pub enum UpdateStatus {
 static STATUS: Mutex<Option<UpdateStatus>> = Mutex::new(None);
 static LAST_INFO: Mutex<Option<ReleaseInfo>> = Mutex::new(None);
 static CHECKING: AtomicBool = AtomicBool::new(false);
-static DOWNLOADING: AtomicBool = AtomicBool::new(false);
 
 pub fn get_status() -> UpdateStatus {
     STATUS
@@ -188,108 +187,38 @@ pub fn check_in_background() {
         .ok();
 }
 
-/// Downloads the APK and triggers automatic install.
-pub fn download_and_install_in_background(info: ReleaseInfo, home: PathBuf) {
-    if DOWNLOADING.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    let Some(url) = info.download_url.clone() else {
-        set_status(UpdateStatus::Error("No APK asset found in release.".into()));
-        DOWNLOADING.store(false, Ordering::SeqCst);
-        return;
-    };
-
-    set_status(UpdateStatus::Downloading {
-        progress: 0.0,
-        downloaded: 0,
-        total: info.size_bytes,
-    });
-
-    std::thread::Builder::new()
-        .name("UpdateDownloader".into())
-        .spawn(move || {
-            let res = (|| -> Result<PathBuf, String> {
-                let updates_dir = home.join("updates");
-                std::fs::create_dir_all(&updates_dir).map_err(|e| e.to_string())?;
-                let apk_path = updates_dir.join(&info.asset_name);
-
-                let resp = ureq::get(&url)
-                    .set("User-Agent", &format!("VoltPlus-Android/{CURRENT_VERSION}"))
-                    .timeout(std::time::Duration::from_secs(60))
-                    .call()
-                    .map_err(|e| format!("Failed to download update: {e}"))?;
-
-                let total_len = resp
-                    .header("Content-Length")
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(info.size_bytes);
-
-                let mut reader = resp.into_reader();
-                let mut file = std::fs::File::create(&apk_path).map_err(|e| e.to_string())?;
-                let mut buffer = [0u8; 65536];
-                let mut downloaded = 0u64;
-
-                loop {
-                    use std::io::{Read, Write};
-                    let n = reader
-                        .read(&mut buffer)
-                        .map_err(|e| format!("Download error: {e}"))?;
-                    if n == 0 {
-                        break;
-                    }
-                    file.write_all(&buffer[..n])
-                        .map_err(|e| format!("Disk write error: {e}"))?;
-                    downloaded += n as u64;
-
-                    let progress = if total_len > 0 {
-                        (downloaded as f32 / total_len as f32).clamp(0.0, 1.0)
-                    } else {
-                        0.5
-                    };
-                    set_status(UpdateStatus::Downloading {
-                        progress,
-                        downloaded,
-                        total: total_len,
-                    });
-                }
-                file.sync_all().map_err(|e| e.to_string())?;
-                Ok(apk_path)
-            })();
-
-            match res {
-                Ok(apk_path) => {
-                    log::info!("Update downloaded to: {}", apk_path.display());
-                    set_status(UpdateStatus::Downloaded {
-                        path: apk_path.clone(),
-                        version: info.version.clone(),
-                    });
-                    trigger_install(&apk_path);
-                }
-                Err(err) => {
-                    log::warn!("Download error: {err}");
-                    set_status(UpdateStatus::Error(err));
-                }
-            }
-            DOWNLOADING.store(false, Ordering::SeqCst);
-        })
-        .ok();
+/// Opens the verified GitHub release download URL in the system browser.
+pub fn download_and_install_in_background(info: ReleaseInfo, _home: PathBuf) {
+    let url = info
+        .download_url
+        .filter(|u| u.starts_with(&format!("https://github.com/{REPO}/")))
+        .unwrap_or_else(|| format!("https://github.com/{REPO}/releases/latest"));
+    open_release_url(&url);
+    set_status(UpdateStatus::Dismissed);
 }
 
-/// Invokes Android package installer through JNI.
-pub fn trigger_install(apk_path: &Path) {
+/// Opens the verified release download URL in Android's browser via JNI.
+pub fn trigger_install(_apk_path: &Path) {
+    let url = last_release_info()
+        .and_then(|info| info.download_url)
+        .filter(|u| u.starts_with(&format!("https://github.com/{REPO}/")))
+        .unwrap_or_else(|| format!("https://github.com/{REPO}/releases/latest"));
+    open_release_url(&url);
+}
+
+fn open_release_url(url: &str) {
     #[cfg(target_os = "android")]
     {
         crate::platform::with_context(|env, activity| {
-            let path_str = apk_path.to_string_lossy().into_owned();
-            let j_path = env.new_string(&path_str)?;
+            let j_url = env.new_string(url)?;
             let cls = env.get_object_class(activity)?;
             let _ = env.call_static_method(
                 &cls,
-                "installApk",
+                "openUpdateUrl",
                 "(Landroid/content/Context;Ljava/lang/String;)V",
                 &[
                     jni::objects::JValue::Object(activity),
-                    jni::objects::JValue::Object(&j_path.into()),
+                    jni::objects::JValue::Object(&j_url.into()),
                 ],
             );
             Ok(())
@@ -297,7 +226,7 @@ pub fn trigger_install(apk_path: &Path) {
     }
     #[cfg(not(target_os = "android"))]
     {
-        log::info!("Triggering APK install on path: {}", apk_path.display());
+        log::info!("Opening release URL: {url}");
     }
 }
 
