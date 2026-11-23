@@ -3,7 +3,7 @@ run-name: Volt Plus · ${{ github.sha }}
 
 on:
   push:
-    branches: [android, arena/e973ac10-volt-plus, arena/d4e71eda-volt-plus, arena/8ca21133-volt-plus]
+    branches: [android, arena/e973ac10-volt-plus, arena/d4e71eda-volt-plus, arena/8ca21133-volt-plus, arena/16c8aaea-volt-plus]
   workflow_dispatch:
     inputs:
       all_abis:
@@ -21,7 +21,7 @@ concurrency:
 jobs:
   build:
     # Only trusted branches can use the permanent signing identity; never PRs.
-    if: (github.ref == 'refs/heads/android' || github.ref == 'refs/heads/arena/e973ac10-volt-plus' || github.ref == 'refs/heads/arena/d4e71eda-volt-plus' || github.ref == 'refs/heads/arena/8ca21133-volt-plus') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: (github.ref == 'refs/heads/android' || github.ref == 'refs/heads/arena/e973ac10-volt-plus' || github.ref == 'refs/heads/arena/d4e71eda-volt-plus' || github.ref == 'refs/heads/arena/8ca21133-volt-plus' || github.ref == 'refs/heads/arena/16c8aaea-volt-plus') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     strategy:
@@ -102,7 +102,7 @@ jobs:
           esac
           rustup target add "$target"
       - name: Compare signing identity and version with a previous APK
-        if: github.ref == 'refs/heads/arena/8ca21133-volt-plus'
+        if: github.ref == 'refs/heads/arena/8ca21133-volt-plus' || github.ref == 'refs/heads/arena/16c8aaea-volt-plus'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -175,7 +175,7 @@ jobs:
             --ndk-version 28.2.13676358 --build-tools-version 35.0.0 \
             --release-version-code "$((2026112100 + GITHUB_RUN_NUMBER))" 2>&1 | tee "$RUNNER_TEMP/volt-build.log"
       - name: Verify APK signing certificate
-        if: github.ref == 'refs/heads/arena/8ca21133-volt-plus'
+        if: github.ref == 'refs/heads/arena/8ca21133-volt-plus' || github.ref == 'refs/heads/arena/16c8aaea-volt-plus'
         env:
           ABI: ${{ matrix.abi }}
         run: |

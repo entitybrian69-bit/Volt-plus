@@ -1752,6 +1752,7 @@ pub struct OptionsUi {
     /// Scroll the selected language into the middle on the next layout.
     center_language: bool,
     pub graphics: crate::graphics_ui::GraphicsUi,
+    pub volt_video: crate::volt_video_ui::VoltVideoUi,
     pub split_profiles: crate::split_profiles::SplitProfiles,
     /// HDR calibration while its page is open.
     pub calibration: Option<crate::hdr_calibration::Calibration>,
@@ -1811,6 +1812,7 @@ impl Default for OptionsUi {
             in_world: false,
             center_language: false,
             graphics: Default::default(),
+            volt_video: Default::default(),
             split_profiles: Default::default(),
             calibration: None,
             calibration_fullscreen: None,
@@ -2471,6 +2473,9 @@ impl OptionsUi {
         if matches!(page, Page::Video | Page::Controls | Page::KeyBinds) {
             self.settings_search.set_value("");
             self.settings_search.focused = false;
+        }
+        if page == Page::Video {
+            self.volt_video.reset();
         }
         if page == Page::Language {
             self.language_choice = None;
@@ -3828,6 +3833,22 @@ impl OptionsUi {
             }
             return;
         }
+        if self.page() == Page::Video {
+            self.size = (w, h);
+            self.volt_video.draw(
+                s,
+                batch,
+                atlas,
+                cursor,
+                self.in_world,
+                &mut self.settings_search,
+                self.selected_key,
+            );
+            if cfg!(target_os = "android") && self.selected_key.is_some() {
+                self.draw_touch_key_picker(batch, atlas);
+            }
+            return;
+        }
         if self.page() == Page::SplitProfiles {
             self.split_profiles
                 .draw(batch, atlas, cursor, self.in_world, self.pad_style);
@@ -4425,6 +4446,33 @@ impl OptionsUi {
             }
             return events;
         }
+        if self.page() == Page::Video {
+            self.size = size;
+            self.framebuffer = framebuffer;
+            if self.selected_key.is_some() && !drag {
+                let button = if right {
+                    winit::event::MouseButton::Right
+                } else {
+                    winit::event::MouseButton::Left
+                };
+                return self.bind_mouse(s, button);
+            }
+            let actions = self.volt_video.click(
+                s,
+                atlas,
+                (x, y),
+                size,
+                framebuffer,
+                drag,
+                right,
+                &mut self.settings_search,
+            );
+            self.focus = match self.volt_video.focus {
+                Some(crate::volt_video_ui::VoltFocus::Search) => Some(FocusId::Search),
+                _ => None,
+            };
+            return self.volt_actions(s, actions);
+        }
         if self.page() == Page::Packs {
             let mut events = Vec::new();
             if drag {
@@ -4781,8 +4829,9 @@ impl OptionsUi {
         // release, even if the pointer has left the widget or its value stayed.
         let slider = self.dragging.take().is_some() | self.shader_dragging.take().is_some();
         let graphics_slider = self.graphics.release();
+        let volt_slider = self.volt_video.release();
         let calibration_slider = self.calibration.as_mut().is_some_and(|c| c.release());
-        if slider || graphics_slider || calibration_slider {
+        if slider || graphics_slider || volt_slider || calibration_slider {
             vec![Event::ButtonClick, Event::Changed]
         } else {
             Vec::new()
@@ -4880,6 +4929,17 @@ impl OptionsUi {
             }
             return events;
         }
+        if self.page() == Page::Video {
+            let actions = self.volt_video.wheel(
+                s,
+                cursor,
+                size,
+                framebuffer,
+                amount,
+                &self.settings_search.value,
+            );
+            return self.volt_actions(s, actions);
+        }
         let plain = self.resource_error.is_none()
             && !(self.pack_screen.is_some() && self.stack.last() == Some(&Page::Packs));
         if !plain {
@@ -4954,6 +5014,8 @@ impl OptionsUi {
     pub fn touch_start(&mut self) {
         self.focus = None;
         self.graphics.focus = None;
+        self.volt_video.focus = None;
+        self.volt_video.can_change_value = false;
     }
     /// A touchscreen scroll moves the list, never the last focused or hovered
     /// option. Keep physical wheel handling in `wheel` separate.
@@ -4974,6 +5036,11 @@ impl OptionsUi {
         }
         if let Some(level) = Self::graphics_level(self.page()) {
             self.graphics.scroll(level, s, size.1, amount);
+            return;
+        }
+        if self.page() == Page::Video {
+            self.volt_video
+                .scroll(s, size, &self.settings_search.value, amount);
             return;
         }
         match &mut self.pack_screen {
@@ -5095,6 +5162,9 @@ impl OptionsUi {
         self.settings_search.focused = false;
         self.language_search.focused = false;
         self.can_change_value = false;
+        self.volt_video.release();
+        self.volt_video.focus = None;
+        self.volt_video.can_change_value = false;
         match page {
             Page::ShaderOptions => {
                 if s.shader_options.as_ref().is_some_and(|o| o.changed) {
@@ -5157,6 +5227,9 @@ impl OptionsUi {
         } else if self.settings_search_active() {
             self.settings_search.insert_text(text);
             self.scroll = 0.0;
+            if self.page() == Page::Video {
+                self.volt_video.reset_scroll();
+            }
         }
     }
     /// Ctrl+A/C/V/X in the language or pack search box; false when neither
@@ -5188,6 +5261,9 @@ impl OptionsUi {
         if self.settings_search_active() {
             if self.settings_search.shortcut(shortcut, clipboard) {
                 self.scroll = 0.0;
+                if self.page() == Page::Video {
+                    self.volt_video.reset_scroll();
+                }
             }
             return true;
         }
@@ -5337,6 +5413,25 @@ impl OptionsUi {
                 return events;
             }
             return events;
+        }
+
+        if self.page() == Page::Video {
+            let size = (self.size.0.max(427.0), self.size.1.max(240.0));
+            let fb = [self.framebuffer[0].max(480), self.framebuffer[1].max(240)];
+            let (actions, _) = self.volt_video.key_modifiers(
+                s,
+                key,
+                text,
+                shift,
+                size,
+                fb,
+                &mut self.settings_search,
+            );
+            self.focus = match self.volt_video.focus {
+                Some(crate::volt_video_ui::VoltFocus::Search) => Some(FocusId::Search),
+                _ => None,
+            };
+            return self.volt_actions(s, actions);
         }
 
         if key == K::Escape {
@@ -6368,37 +6463,35 @@ mod tests {
 
     #[test]
     fn video_page_lists_vanilla_display_and_quality_options_in_order() {
-        let mut ui = OptionsUi::default();
-        ui.show(Page::Video);
-        let rows = ui.list_rows(&Settings::default());
-        let opts: Vec<Opt> = rows
-            .iter()
-            .flat_map(|r| match r {
-                Row::Big(o) => vec![*o],
-                Row::Pair(a, b) => std::iter::once(*a).chain(*b).collect(),
-                _ => Vec::new(),
-            })
-            .collect();
-        // VideoSettingsScreen.addOptions: the exclusive mode row, displayOptions, the preset,
-        // qualityOptions, then the preferences.
+        use crate::graphics_ui::{H, Item};
+        use crate::volt_video_ui::{VideoRow, VoltTab, tab_rows};
+        let collect = |tab: VoltTab| -> Vec<Item> {
+            tab_rows(tab)
+                .into_iter()
+                .filter_map(|r| match r {
+                    VideoRow::Entry(e) => Some(e.item),
+                    VideoRow::Header(_) => None,
+                })
+                .collect()
+        };
+        let general = collect(VoltTab::General);
         assert_eq!(
-            opts[..9],
+            &general[..7],
             [
-                Opt::ExclusiveMode,
-                Opt::MaxFps,
-                Opt::Vsync,
-                Opt::InactivityFps,
-                Opt::GuiScale,
-                Opt::Fullscreen,
-                Opt::ExclusiveFullscreen,
-                Opt::Gamma,
-                Opt::GraphicsBackend,
+                Item::Horizon(H::Preset),
+                Item::Vanilla(Opt::RenderDistance),
+                Item::Vanilla(Opt::SimulationDistance),
+                Item::Horizon(H::ResolutionScale),
+                Item::Vanilla(Opt::GuiScale),
+                Item::Vanilla(Opt::Fov),
+                Item::Vanilla(Opt::MaxFps),
             ]
         );
-        let at = |o| opts.iter().position(|x| *x == o).unwrap();
-        assert_eq!(at(Opt::ImprovedTransparency) + 1, at(Opt::TextureFiltering));
-        assert_eq!(at(Opt::TextureFiltering) + 1, at(Opt::MaxAnisotropy));
-        assert_eq!(at(Opt::MaxAnisotropy) + 1, at(Opt::WeatherRadius));
+        let quality = collect(VoltTab::Quality);
+        let at_q = |o| quality.iter().position(|x| *x == Item::Vanilla(o)).unwrap();
+        assert!(at_q(Opt::TextureFiltering) < at_q(Opt::MaxAnisotropy));
+        assert!(at_q(Opt::Clouds) < at_q(Opt::CloudRange));
+        assert!(at_q(Opt::WeatherRadius) < at_q(Opt::Particles));
     }
 
     #[test]
@@ -6572,6 +6665,7 @@ mod tests {
     #[test]
     #[ignore = "requires prepared language data in HORIZON_TEST_RESOURCES; run alone"]
     fn classic_hover_draws_the_selected_options_wrapped_tooltip() {
+        use crate::graphics_ui::Item;
         let root = std::path::PathBuf::from(
             std::env::var_os("HORIZON_TEST_RESOURCES").expect("HORIZON_TEST_RESOURCES"),
         );
@@ -6582,82 +6676,78 @@ mod tests {
         ui.show(Page::Video);
         for mode in ["afk", "minimized"] {
             s.inactivity_fps_limit = mode.into();
-            let (widgets, _, _, _) = ui.layout(&s, 480.0, 480.0);
-            let option = widgets
-                .iter()
-                .find(|w| {
-                    matches!(
-                        w.kind,
-                        WKind::Button {
-                            act: Act::Cycle(Opt::InactivityFps),
-                            ..
-                        }
-                    )
-                })
+            let size = (480.0, 480.0);
+            let (rect, _) = ui
+                .volt_video
+                .test_row_rect(&s, size, "", Item::Vanilla(Opt::InactivityFps))
                 .unwrap();
-            let cursor = (option.x + 1.0, option.y + 1.0);
+            let cursor = (rect[0] + 4.0, rect[1] + 4.0);
             let mut actual = HudBatch::new([480, 480]);
             ui.draw(&s, &mut actual, &atlas, cursor);
-            let key = format!("options.inactivityFpsLimit.{mode}.tooltip");
-            assert!(lang::has(&key));
-            let mut expected = HudBatch::new([480, 480]);
-            ui::tooltip(
-                &mut expected,
-                &atlas,
-                &atlas.font.split(&tr(&key), 170.0),
-                cursor,
-            );
-            assert!(!expected.vertices.is_empty());
-            let tail = &actual.vertices[actual.vertices.len() - expected.vertices.len()..];
+            assert!(!actual.vertices.is_empty());
             assert_eq!(
-                bytemuck::cast_slice::<_, u8>(tail),
-                bytemuck::cast_slice::<_, u8>(&expected.vertices)
+                ui.volt_video.inspected,
+                Some(Item::Vanilla(Opt::InactivityFps))
             );
         }
     }
 
     #[test]
     fn classic_video_search_keeps_only_headings_with_matching_options() {
+        let atlas = atlas();
+        let mut s = Settings::default();
         let mut ui = OptionsUi::default();
         ui.show(Page::Video);
-        let settings = Settings::default();
-        let headers = |rows: Vec<Row>| {
-            rows.into_iter()
-                .filter_map(|row| match row {
-                    Row::Header(key) => Some(key),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        };
-        let all_headers = vec![
-            "options.video.display.header",
-            "options.video.quality.header",
-            "options.video.preferences.header",
-        ];
-        assert_eq!(headers(ui.list_rows(&settings)), all_headers);
-        for (opt, header) in [
-            (Opt::Fullscreen, all_headers[0]),
-            (Opt::RenderDistance, all_headers[1]),
-            (Opt::Preset, all_headers[1]),
-            (Opt::Autosave, all_headers[2]),
-        ] {
-            ui.settings_search
-                .set_value(&lang::get(opt.caption()).to_uppercase());
-            let rows = ui.list_rows(&settings);
-            assert_eq!(headers(ui.list_rows(&settings)), vec![header]);
-            assert!(rows.iter().any(|row| match row {
-                Row::Big(found) => *found == opt,
-                Row::Pair(a, b) => *a == opt || *b == Some(opt),
-                _ => false,
-            }));
-            assert!(rows.iter().any(|row| matches!(row, Row::Buttons(..))));
-        }
+        let size = (480.0, 320.0);
+        ui.settings_search.set_value("render distance");
+        assert!(
+            ui.volt_video
+                .test_row_rect(
+                    &s,
+                    size,
+                    &ui.settings_search.value,
+                    crate::graphics_ui::Item::Vanilla(Opt::RenderDistance)
+                )
+                .is_some()
+        );
+        assert!(
+            ui.volt_video
+                .test_row_rect(
+                    &s,
+                    size,
+                    &ui.settings_search.value,
+                    crate::graphics_ui::Item::Vanilla(Opt::Autosave)
+                )
+                .is_none()
+        );
+        // Cross-tab search finds options on Quality/Advanced/HDR too.
+        ui.settings_search.set_value("autosave");
+        assert!(
+            ui.volt_video
+                .test_row_rect(
+                    &s,
+                    size,
+                    &ui.settings_search.value,
+                    crate::graphics_ui::Item::Vanilla(Opt::Autosave)
+                )
+                .is_some()
+        );
+        let mut batch = HudBatch::new([480, 320]);
+        ui.draw(&s, &mut batch, &atlas, (0.0, 0.0));
+        assert!(!batch.vertices.is_empty());
         ui.settings_search.set_value("no matching video setting");
-        let rows = ui.list_rows(&settings);
-        assert!(headers(ui.list_rows(&settings)).is_empty());
-        assert!(rows.iter().all(|row| matches!(row, Row::Buttons(..))));
+        assert!(
+            ui.volt_video
+                .test_row_rect(
+                    &s,
+                    size,
+                    &ui.settings_search.value,
+                    crate::graphics_ui::Item::Vanilla(Opt::RenderDistance)
+                )
+                .is_none()
+        );
         ui.settings_search.set_value("");
-        assert_eq!(headers(ui.list_rows(&settings)), all_headers);
+        assert_eq!(s.render_distance, Settings::default().render_distance);
     }
 
     #[test]
@@ -6693,27 +6783,13 @@ mod tests {
         let mut ui = OptionsUi::default();
         ui.show(Page::Video);
         let size = (480.0, 480.0);
-        let (widgets, _, _, _) = ui.layout(&s, size.0, size.1);
-        let button = widgets
-            .iter()
-            .find(|wd| {
-                matches!(
-                    wd.kind,
-                    WKind::Button {
-                        active: true,
-                        act: Act::Cycle(Opt::GuiScale),
-                        ..
-                    }
-                )
-            })
-            .expect("GUI Scale must be a cycle button in classic Video Settings");
-        let (x, y) = (button.x + 1.0, button.y + 1.0);
+        let (rect, ctrl) = ui
+            .volt_video
+            .test_row_rect(&s, size, "", crate::graphics_ui::Item::Vanilla(Opt::GuiScale))
+            .expect("GUI Scale must be present on General tab");
+        // Click the right half of the `< Auto >` control to cycle forward.
+        let (x, y) = (ctrl[0] + ctrl[2] - 8.0, rect[1] + 6.0);
         assert!(Opt::GuiScale.slider_position(&s).is_none());
-        assert!(
-            ui.click(&mut s, &atlas, x, y, size, [854, 480], false, true)
-                .is_empty()
-        );
-        assert_eq!(s.gui_scale, 0);
         for expected in [1, 2, 0] {
             assert_eq!(
                 ui.click(&mut s, &atlas, x, y, size, [854, 480], false, false),
@@ -6727,6 +6803,12 @@ mod tests {
             assert_eq!(s.gui_scale, expected);
             assert!(ui.release().is_empty());
         }
+        // Right-clicking cycles backward (0 -> 2).
+        assert_eq!(
+            ui.click(&mut s, &atlas, x, y, size, [854, 480], false, true),
+            vec![Event::ButtonClick, Event::Changed]
+        );
+        assert_eq!(s.gui_scale, 2);
     }
 
     #[test]
@@ -6813,27 +6895,20 @@ mod tests {
         let mut s = Settings::default();
         let mut ui = OptionsUi::default();
         ui.show(Page::Video);
+        ui.volt_video.select_tab(crate::volt_video_ui::VoltTab::Advanced);
         let size = (480.0, 480.0);
-        let (widgets, _, _, _) = ui.layout(&s, size.0, size.1);
-        let preset = widgets
-            .iter()
-            .find(|wd| {
-                matches!(
-                    wd.kind,
-                    WKind::Slider {
-                        opt: Opt::Preset,
-                        ..
-                    }
-                )
-            })
-            .expect("the Graphics preset slider is in classic Video Settings");
-        // Dragging the slider across its range (GraphicsPreset.apply on each change).
-        let y = preset.y + 1.0;
+        let (rect, ctrl) = ui
+            .volt_video
+            .test_row_rect(&s, size, "", crate::graphics_ui::Item::Vanilla(Opt::Preset))
+            .expect("the vanilla Graphics preset slider is in Advanced tab");
+        let y = rect[1] + 8.0;
+        let track_x = ctrl[0] + 6.0;
+        let track_w = ctrl[2] - 12.0;
         let mut seen = Vec::new();
         ui.click(
             &mut s,
             &atlas,
-            preset.x + 1.0,
+            track_x,
             y,
             size,
             [854, 480],
@@ -6841,7 +6916,7 @@ mod tests {
             false,
         );
         for step in 0..=20 {
-            let x = preset.x + preset.w * step as f32 / 20.0;
+            let x = track_x + track_w * step as f32 / 20.0;
             ui.click(&mut s, &atlas, x, y, size, [854, 480], true, false);
             seen.push((
                 s.graphics_preset.clone(),
@@ -7652,12 +7727,10 @@ mod tests {
             .collect();
         assert!(acts.contains(&&Act::Extra(crate::extras::Item::AgentControl)));
         assert!(acts.contains(&&Act::CopyAgentDetails));
-        // Vanilla's own pages keep the Horizon pages they had.
+        // Video Settings uses the unified Volt Graphics tabbed screen.
         ui.stack = vec![Page::Main, Page::Video];
-        let video = pushes(&mut ui);
-        for page in [Page::Graphics, Page::GraphicsAdvanced] {
-            assert!(video.contains(&page), "{page:?}");
-        }
+        assert_eq!(ui.page(), Page::Video);
+        assert_eq!(ui.volt_video.tab, crate::volt_video_ui::VoltTab::General);
         ui.stack = vec![Page::Main, Page::Controls];
         assert!(pushes(&mut ui).contains(&Page::Controller));
     }

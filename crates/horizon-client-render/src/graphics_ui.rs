@@ -412,7 +412,7 @@ fn extra_rows(level: Level, settings: &Settings) -> Vec<Row> {
 
 /// Whether the system set HDR up for the display, and whether the player kept it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Setup {
+pub(crate) enum Setup {
     /// The system says nothing: the player calibrates.
     Unknown,
     /// Peak Brightness and Paper White follow the system.
@@ -420,7 +420,7 @@ enum Setup {
     /// The system said, and the player changed them anyway.
     Changed,
 }
-fn setup(s: &Settings) -> Setup {
+pub(crate) fn setup(s: &Settings) -> Setup {
     setup_of(&s.horizon, crate::graphics::reported().is_some())
 }
 fn setup_of(g: &crate::graphics::Graphics, reported: bool) -> Setup {
@@ -433,7 +433,7 @@ fn setup_of(g: &crate::graphics::Graphics, reported: bool) -> Setup {
     }
 }
 /// The description beside `item` where it depends on [`setup`]; `text` otherwise.
-fn description(item: Item, s: &Settings, text: &'static str) -> &'static str {
+pub(crate) fn description(item: Item, s: &Settings, text: &'static str) -> &'static str {
     match (item, setup(s)) {
         (Item::Horizon(H::HdrCalibrate), Setup::Unknown) => {
             "Your display didn't say how bright it gets: calibrate to set it up."
@@ -713,7 +713,7 @@ fn max_workers() -> u32 {
 
 impl Item {
     /// False for a setting whose system is not in Horizon yet (`Opt::available`).
-    fn available(self) -> bool {
+    pub(crate) fn available(self) -> bool {
         !matches!(self, Item::Vanilla(o) if !o.available())
     }
     /// Why a control can't be used now, when it can't: HDR's screen opens only where
@@ -721,7 +721,7 @@ impl Item {
     /// folder, a display swapped for an SDR one: the renderer leaves HDR off there, and
     /// the saved values wait for an HDR display), and its sliders do something only
     /// while it is on.
-    fn blocked(self, s: &Settings) -> Option<&'static str> {
+    pub(crate) fn blocked(self, s: &Settings) -> Option<&'static str> {
         if !self.available() {
             return Some("This feature is not yet available in Horizon.");
         }
