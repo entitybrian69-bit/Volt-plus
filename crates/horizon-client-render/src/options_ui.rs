@@ -4009,7 +4009,7 @@ impl OptionsUi {
                     | Page::HdrCalibration
                     | Page::ShaderPacks
                     | Page::ShaderOptions
-                    | Page::NativePackOptions(_)
+                    | Page::NativePackOptions(..)
                     | Page::Controller
                     | Page::PadBinds
                     | Page::Extras
@@ -4261,7 +4261,7 @@ impl OptionsUi {
                 | Page::HdrCalibration
                 | Page::ShaderPacks
                 | Page::ShaderOptions
-                | Page::NativePackOptions(_)
+                | Page::NativePackOptions(..)
                 | Page::Controller
                 | Page::PadBinds
                 | Page::Extras
