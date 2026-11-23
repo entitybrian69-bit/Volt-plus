@@ -4820,6 +4820,28 @@ impl OptionsUi {
             _ => value,
         }
     }
+    fn volt_actions(
+        &mut self,
+        s: &mut Settings,
+        actions: Vec<crate::volt_video_ui::VoltAction>,
+    ) -> Vec<Event> {
+        use crate::volt_video_ui::VoltAction;
+        let mut events = Vec::new();
+        for action in actions {
+            match action {
+                VoltAction::ButtonClick => events.push(Event::ButtonClick),
+                VoltAction::Changed => events.push(Event::Changed),
+                VoltAction::SliderDrag => events.push(Event::SliderDrag),
+                VoltAction::BindKey(name) => self.selected_key = Some(name),
+                VoltAction::Calibrate => {
+                    self.calibration = Some(crate::hdr_calibration::Calibration::new(s));
+                    self.push(Page::HdrCalibration);
+                }
+                VoltAction::Done => events.extend(self.back(s)),
+            }
+        }
+        events
+    }
     pub fn release(&mut self) -> Vec<Event> {
         self.scrollbar_drag_y = None;
         if let Some(p) = &mut self.pack_screen {
