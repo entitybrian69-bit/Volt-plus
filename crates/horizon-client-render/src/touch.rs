@@ -204,6 +204,7 @@ pub struct TouchControls {
     pub editor: Option<editor::Editor>,
     fingers: BTreeMap<u64, (Role, [f32; 2])>,
     passthrough_fingers: BTreeSet<u64>,
+    ctrl_origin_fingers: BTreeSet<u64>,
     custom_fingers: BTreeMap<u64, Vec<String>>,
     custom_last_pos: BTreeMap<u64, [f32; 2]>,
     custom_swipe_btn: BTreeMap<u64, usize>,
@@ -254,6 +255,7 @@ impl Default for TouchControls {
             editor: None,
             fingers: BTreeMap::new(),
             passthrough_fingers: BTreeSet::new(),
+            ctrl_origin_fingers: BTreeSet::new(),
             custom_fingers: BTreeMap::new(),
             custom_last_pos: BTreeMap::new(),
             custom_swipe_btn: BTreeMap::new(),
@@ -885,6 +887,7 @@ impl TouchControls {
         }
         if ended {
             self.passthrough_fingers.remove(&id);
+            self.ctrl_origin_fingers.remove(&id);
             self.builtin_swipe_ctrl.remove(&id);
             if let Some((
                 Role::Look {
@@ -1037,6 +1040,7 @@ impl TouchControls {
                 },
             };
             if let Some(c) = control && c != Control::Move {
+                self.ctrl_origin_fingers.insert(id);
                 self.builtin_swipe_ctrl.insert(id, c);
             }
             self.fingers.insert(id, (role, point));
@@ -1052,8 +1056,11 @@ impl TouchControls {
         // Built-in Swipe-Through: release a built-in control when sliding off it onto
         // another control (or off a swipeable/non-passthrough control), and activate any
         // control slid onto from another control (or any `swipeable` control).
+        // A finger that started on a control (`ctrl_origin_fingers`) slides only between
+        // controls and NEVER rotates the camera.
         if !self.in_menu {
-            let started_on_ctrl = self.builtin_swipe_ctrl.contains_key(&id);
+            let started_on_ctrl =
+                self.ctrl_origin_fingers.contains(&id) || self.builtin_swipe_ctrl.contains_key(&id);
             let hit_ctrl = self.control_at(point);
             if let Some(old_c) = self.builtin_swipe_ctrl.get(&id).copied()
                 && hit_ctrl != Some(old_c)
@@ -1065,7 +1072,9 @@ impl TouchControls {
                     if let Some((role, _)) = self.fingers.get_mut(&id)
                         && matches!(role, Role::Button(_) | Role::Shield)
                     {
-                        *role = if self.passthrough_fingers.contains(&id) {
+                        *role = if !self.ctrl_origin_fingers.contains(&id)
+                            && self.passthrough_fingers.contains(&id)
+                        {
                             Role::Look {
                                 start: point,
                                 since: Instant::now(),
@@ -1090,7 +1099,7 @@ impl TouchControls {
             {
                 self.builtin_swipe_ctrl.insert(id, c);
                 self.clicked = true;
-                if self.placement(c).passthrough {
+                if !self.ctrl_origin_fingers.contains(&id) && self.placement(c).passthrough {
                     self.passthrough_fingers.insert(id);
                 }
                 match c {
@@ -1125,6 +1134,12 @@ impl TouchControls {
                     }
                 }
             }
+        }
+        if self.ctrl_origin_fingers.contains(&id) {
+            if let Some((_, previous)) = self.fingers.get_mut(&id) {
+                *previous = point;
+            }
+            return [0.0; 2];
         }
         let aspect = self.aspect();
         let passthrough_at_point = self.passthrough_fingers.contains(&id)
@@ -1187,6 +1202,7 @@ impl TouchControls {
         self.clear_custom();
         self.fingers.clear();
         self.passthrough_fingers.clear();
+        self.ctrl_origin_fingers.clear();
         self.builtin_swipe_ctrl.clear();
         self.latched_controls = 0;
         self.last_sneak_tap = None;

@@ -2576,6 +2576,9 @@ impl Loading {
         #[cfg(target_os = "android")]
         {
             crate::screen_record::refresh(self.menu.touch.floating_menu);
+            if let Some(renderer) = &mut self.renderer {
+                crate::screen_record::sync_capture(renderer);
+            }
             let size = self.menu_size();
             self.menu.controls.viewport(size[0], size[1]);
             let waiting_for_key =

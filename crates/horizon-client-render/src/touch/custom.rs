@@ -512,7 +512,7 @@ impl TouchControls {
         self.custom_fingers.insert(id, active);
         self.custom_events.extend(to_emit);
 
-        if placement.passthrough && !self.in_menu {
+        if placement.passthrough && !self.in_menu && !self.ctrl_origin_fingers.contains(&id) {
             self.passthrough_fingers.insert(id);
             if !self
                 .fingers
@@ -552,6 +552,7 @@ impl TouchControls {
     ) -> bool {
         if ended {
             self.custom_last_pos.remove(&id);
+            self.ctrl_origin_fingers.remove(&id);
             let had_swipe = self.custom_swipe_btn.remove(&id).is_some();
             if self.custom_fingers.contains_key(&id) {
                 self.release_custom_finger_key(id);
@@ -568,6 +569,7 @@ impl TouchControls {
         if started {
             self.custom_last_pos.insert(id, point);
             if let Some(index) = self.custom_at(point) {
+                self.ctrl_origin_fingers.insert(id);
                 return self.activate_custom_button_at(id, index, point, false);
             }
             return false;
@@ -579,7 +581,8 @@ impl TouchControls {
         let dist = (point[0] - prev[0]).hypot(point[1] - prev[1]);
         let steps = ((dist / 0.015).ceil() as usize).clamp(1, 12);
         let mut swiped_any = false;
-        let started_on_custom = self.custom_swipe_btn.contains_key(&id);
+        let started_on_custom =
+            self.ctrl_origin_fingers.contains(&id) || self.custom_swipe_btn.contains_key(&id);
 
         for step in 1..=steps {
             let frac = step as f32 / steps as f32;
@@ -621,6 +624,15 @@ impl TouchControls {
         }
 
         if self.custom_fingers.contains_key(&id) || swiped_any {
+            if self.ctrl_origin_fingers.contains(&id) {
+                if !self.in_menu
+                    && self.custom_at(point).is_none()
+                    && self.control_at(point).is_some_and(|c| c != Control::Move)
+                {
+                    return false;
+                }
+                return true;
+            }
             // If Pass-through is enabled in gameplay, allow TouchControls::update to also compute camera look delta!
             if !self.in_menu
                 && self

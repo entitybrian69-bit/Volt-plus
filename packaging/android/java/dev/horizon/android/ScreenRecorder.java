@@ -15,10 +15,66 @@ public final class ScreenRecorder {
     public static final int REQUEST_MIC = 4211;
 
     /**
-     * Where a finished recording lands: a {@code Recordings} folder at the top of shared storage,
-     * so the player finds it in Files without hunting through Movies.
+     * Where a finished recording lands in Android's shared storage: {@code Movies/VoltPlus}
+     * (Android 10+ MediaStore rejects {@code Recordings} for {@code MediaStore.Video.Media}).
      */
-    static final String FOLDER = "Recordings";
+    static final String FOLDER = android.os.Environment.DIRECTORY_MOVIES + "/VoltPlus";
+
+    static java.io.File localRecordingsFolder(android.content.Context context) {
+        java.io.File folder = new java.io.File(context.getFilesDir(), "recordings");
+        if (!folder.exists()) {
+            folder.mkdirs();
+        }
+        return folder;
+    }
+
+    /**
+     * Copies a finished recording into the app's {@code recordings/} folder so it is visible in
+     * both the Launcher File Manager and the Android Files provider in addition to the device's
+     * Movies gallery.
+     */
+    static void mirrorToLocalRecordings(
+            android.content.Context context,
+            android.net.Uri mediaUri,
+            java.io.File legacyFile,
+            String displayName) {
+        if (context == null || displayName == null || displayName.isEmpty()) {
+            return;
+        }
+        java.io.File dest = new java.io.File(localRecordingsFolder(context), displayName);
+        if (legacyFile != null && legacyFile.isFile()) {
+            if (dest.getAbsolutePath().equals(legacyFile.getAbsolutePath())) {
+                return;
+            }
+            try (java.io.FileInputStream in = new java.io.FileInputStream(legacyFile);
+                    java.io.FileOutputStream out = new java.io.FileOutputStream(dest)) {
+                byte[] buf = new byte[1 << 16];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    out.write(buf, 0, n);
+                }
+                out.flush();
+            } catch (Throwable ignored) {
+            }
+            return;
+        }
+        if (mediaUri == null) {
+            return;
+        }
+        try (java.io.InputStream in = context.getContentResolver().openInputStream(mediaUri);
+                java.io.FileOutputStream out = new java.io.FileOutputStream(dest)) {
+            if (in == null) {
+                return;
+            }
+            byte[] buf = new byte[1 << 16];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+            }
+            out.flush();
+        } catch (Throwable ignored) {
+        }
+    }
 
     static volatile String state = "idle";
     static volatile String message = "";
@@ -296,6 +352,8 @@ public final class ScreenRecorder {
         if (context == null) {
             return "";
         }
+        java.util.HashSet<String> seenNames = new java.util.HashSet<>();
+        int seen = 0;
         if (android.os.Build.VERSION.SDK_INT >= 29) {
             android.net.Uri collection =
                     android.provider.MediaStore.Video.Media.getContentUri(
@@ -307,13 +365,12 @@ public final class ScreenRecorder {
                 android.provider.MediaStore.Video.Media.DATE_ADDED,
             };
             String where =
-                    android.provider.MediaStore.Video.Media.RELATIVE_PATH
+                    "("
+                            + android.provider.MediaStore.Video.Media.RELATIVE_PATH
                             + " LIKE ? OR "
                             + android.provider.MediaStore.Video.Media.RELATIVE_PATH
-                            + " LIKE ?";
-            // Everything the recorder wrote, including recordings from before the folder
-            // moved out of Movies.
-            String[] args = {FOLDER + "%", "Movies/VoltPlus%"};
+                            + " LIKE ?)";
+            String[] args = {FOLDER + "%", "Recordings%"};
             android.database.Cursor cursor = null;
             try {
                 cursor =
@@ -325,12 +382,14 @@ public final class ScreenRecorder {
                                         args,
                                         android.provider.MediaStore.Video.Media.DATE_ADDED
                                                 + " DESC");
-                int seen = 0;
                 while (cursor != null && cursor.moveToNext() && seen < 40) {
                     long id = cursor.getLong(0);
                     String name = cursor.getString(1);
                     long size = cursor.getLong(2);
                     long added = cursor.getLong(3) * 1000L;
+                    if (name == null || name.isEmpty() || size <= 0 || !seenNames.add(name)) {
+                        continue;
+                    }
                     android.net.Uri item =
                             android.content.ContentUris.withAppendedId(collection, id);
                     out.append(name)
@@ -352,27 +411,45 @@ public final class ScreenRecorder {
                     }
                 }
             }
-            return out.toString();
         }
-        java.io.File folder = RecorderService.legacyFolder(context);
-        java.io.File[] files = folder == null ? null : folder.listFiles();
-        if (files == null) {
-            return "";
-        }
-        java.util.Arrays.sort(files, new java.util.Comparator<java.io.File>() {
-            public int compare(java.io.File a, java.io.File b) {
-                return Long.compare(b.lastModified(), a.lastModified());
+        java.io.File[] folders = {
+            localRecordingsFolder(context),
+            RecorderService.legacyFolder(context),
+        };
+        java.util.ArrayList<java.io.File> localFiles = new java.util.ArrayList<>();
+        for (java.io.File folder : folders) {
+            java.io.File[] list = folder == null ? null : folder.listFiles();
+            if (list != null) {
+                for (java.io.File f : list) {
+                    if (f.isFile() && f.length() > 0 && f.getName().endsWith(".mp4")) {
+                        localFiles.add(f);
+                    }
+                }
             }
-        });
-        for (int i = 0; i < files.length && i < 40; i++) {
-            out.append(files[i].getName())
+        }
+        java.util.Collections.sort(
+                localFiles,
+                new java.util.Comparator<java.io.File>() {
+                    public int compare(java.io.File a, java.io.File b) {
+                        return Long.compare(b.lastModified(), a.lastModified());
+                    }
+                });
+        for (java.io.File f : localFiles) {
+            if (seen >= 40) {
+                break;
+            }
+            if (!seenNames.add(f.getName())) {
+                continue;
+            }
+            out.append(f.getName())
                     .append('\t')
-                    .append(files[i].length())
+                    .append(f.length())
                     .append('\t')
-                    .append(files[i].lastModified())
+                    .append(f.lastModified())
                     .append("\tfile:")
-                    .append(files[i].getAbsolutePath())
+                    .append(f.getAbsolutePath())
                     .append('\n');
+            seen++;
         }
         return out.toString();
     }
@@ -383,9 +460,21 @@ public final class ScreenRecorder {
             return "error;nothing to play";
         }
         try {
+            android.net.Uri dataUri = android.net.Uri.parse(item);
+            if (item.startsWith("file:")) {
+                java.io.File file = new java.io.File(dataUri.getPath() == null ? "" : dataUri.getPath());
+                java.io.File localDir = localRecordingsFolder(activity);
+                if (file.getParentFile() != null
+                        && file.getParentFile().getAbsolutePath().equals(localDir.getAbsolutePath())) {
+                    dataUri =
+                            android.provider.DocumentsContract.buildDocumentUri(
+                                    activity.getPackageName() + ".documents",
+                                    "recordings/" + file.getName());
+                }
+            }
             final android.content.Intent view =
                     new android.content.Intent(android.content.Intent.ACTION_VIEW);
-            view.setDataAndType(android.net.Uri.parse(item), "video/mp4");
+            view.setDataAndType(dataUri, "video/mp4");
             view.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
             activity.runOnUiThread(
                     new Runnable() {

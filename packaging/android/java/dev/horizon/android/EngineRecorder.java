@@ -35,6 +35,7 @@ final class EngineRecorder {
     private static Thread drain;
     private static Uri target;
     private static File legacyTarget;
+    private static String displayName;
     private static ParcelFileDescriptor targetFile;
     private static int track = -1;
     private static int width;
@@ -198,9 +199,20 @@ final class EngineRecorder {
         }
         boolean finished = finishMuxer();
         long size = size();
-        String uri = target == null ? "" : target.toString();
+        Uri savedMedia = target;
+        File savedLegacy = legacyTarget;
+        String savedName = displayName;
+        String uri =
+                savedMedia != null
+                        ? savedMedia.toString()
+                        : (savedLegacy != null ? "file:" + savedLegacy.getAbsolutePath() : "");
         boolean empty = written == 0L;
         closeTarget();
+        if (!empty && appContext != null) {
+            ScreenRecorder.mirrorToLocalRecordings(appContext, savedMedia, savedLegacy, savedName);
+        }
+        legacyTarget = null;
+        displayName = null;
         synchronized (EngineRecorder.class) {
             started = false;
             stopping = false;
@@ -340,25 +352,32 @@ final class EngineRecorder {
 
     private static void openTarget(Context context) {
         String name = "VoltPlus-" + timestamp() + ".mp4";
+        displayName = name;
+        target = null;
+        legacyTarget = null;
+        targetFile = null;
         if (Build.VERSION.SDK_INT >= 29) {
-            ContentValues values = new ContentValues();
-            values.put(MediaStore.Video.Media.DISPLAY_NAME, name);
-            values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
-            values.put(MediaStore.Video.Media.RELATIVE_PATH, ScreenRecorder.FOLDER);
-            values.put(MediaStore.Video.Media.IS_PENDING, 1);
-            target =
-                    context.getContentResolver()
-                            .insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
-            if (target != null) {
-                try {
+            try {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Video.Media.DISPLAY_NAME, name);
+                values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
+                values.put(MediaStore.Video.Media.RELATIVE_PATH, ScreenRecorder.FOLDER);
+                values.put(MediaStore.Video.Media.IS_PENDING, 1);
+                target =
+                        context.getContentResolver()
+                                .insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+                if (target != null) {
                     targetFile = context.getContentResolver().openFileDescriptor(target, "rw");
-                } catch (Throwable error) {
-                    targetFile = null;
                 }
+            } catch (Throwable error) {
+                target = null;
+                targetFile = null;
             }
-            return;
+            if (targetFile != null) {
+                return;
+            }
         }
-        File folder = legacyFolder(context);
+        File folder = ScreenRecorder.localRecordingsFolder(context);
         legacyTarget = new File(folder, name);
         try {
             targetFile =
@@ -389,12 +408,20 @@ final class EngineRecorder {
         if (context == null) {
             return;
         }
-        if (target != null && written == 0L) {
-            try {
-                context.getContentResolver().delete(target, null, null);
-            } catch (Throwable ignored) {
+        if (written == 0L) {
+            if (target != null) {
+                try {
+                    context.getContentResolver().delete(target, null, null);
+                } catch (Throwable ignored) {
+                }
+                target = null;
             }
-            target = null;
+            if (legacyTarget != null) {
+                try {
+                    legacyTarget.delete();
+                } catch (Throwable ignored) {
+                }
+            }
         } else if (target != null) {
             try {
                 ContentValues values = new ContentValues();

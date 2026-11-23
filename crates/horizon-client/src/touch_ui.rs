@@ -4292,7 +4292,7 @@ impl TouchUi {
                     &mut ui,
                     cells.overlay[1],
                     "Record With Controls",
-                    "On keeps controls & HUD on screen while video saves raw gameplay",
+                    "On records gameplay + controls; off records raw gameplay only",
                     Some(settings_rec.record_controls),
                     None,
                 );

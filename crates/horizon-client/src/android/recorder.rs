@@ -251,10 +251,17 @@ pub fn start() {
     };
     let frames = settings.frames() as i32;
     let audio = settings.audio as i32;
-    // When `record_controls` is enabled (and no audio source is selected), the engine copies
-    // each raw 3D gameplay frame before the HUD/controls into the encoder's surface: the player
-    // keeps seeing everything including controls on screen while the video records raw gameplay.
-    if settings.record_controls && audio == 0 {
+    // When `record_controls` is OFF, the engine copies each raw 3D gameplay frame before the
+    // HUD/controls into `EngineRecorder`, so the player keeps seeing controls on screen while the
+    // saved MP4 contains only raw gameplay without controls.
+    if !settings.record_controls {
+        if audio != 0 {
+            let mut status = recorder::status();
+            status.phase = Phase::Unsupported;
+            status.message = "raw gameplay (controls off) supports No audio only — turn Record With Controls on to record audio".to_owned();
+            recorder::publish(status);
+            return;
+        }
         start_engine(width, height, frames);
         return;
     }

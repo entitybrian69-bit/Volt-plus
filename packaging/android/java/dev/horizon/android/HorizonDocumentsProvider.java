@@ -143,11 +143,24 @@ public final class HorizonDocumentsProvider extends DocumentsProvider {
             } else {
                 rows = new JSONArray(call(operation, id, ""));
                 if ("children".equals(operation) && "recordings".equals(id)) {
+                    java.util.HashSet<String> seenNames = new java.util.HashSet<>();
+                    for (int i = 0; i < rows.length(); i++) {
+                        JSONObject existing = rows.optJSONObject(i);
+                        if (existing != null) {
+                            String dn = existing.optString("_display_name");
+                            if (!dn.isEmpty()) {
+                                seenNames.add(dn);
+                            }
+                        }
+                    }
                     JSONArray extra = recordingRows(getContext());
                     for (int i = 0; i < extra.length(); i++) {
                         JSONObject item = extra.optJSONObject(i);
                         if (item != null) {
-                            rows.put(item);
+                            String dn = item.optString("_display_name");
+                            if (dn.isEmpty() || seenNames.add(dn)) {
+                                rows.put(item);
+                            }
                         }
                     }
                 }

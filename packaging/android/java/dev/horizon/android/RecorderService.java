@@ -88,6 +88,7 @@ public final class RecorderService extends Service {
     private MediaRecorder recorder;
     private Uri target;
     private File legacyTarget;
+    private String displayName;
     private ParcelFileDescriptor targetFile;
     private File tempVideo;
     private AudioCapture audio;
@@ -370,29 +371,39 @@ public final class RecorderService extends Service {
 
     private void openTarget() throws Exception {
         String name = "VoltPlus-" + timestamp() + ".mp4";
+        displayName = name;
+        target = null;
+        legacyTarget = null;
+        targetFile = null;
         if (Build.VERSION.SDK_INT >= 29) {
-            ContentValues values = new ContentValues();
-            values.put(MediaStore.Video.Media.DISPLAY_NAME, name);
-            values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
-            values.put(MediaStore.Video.Media.RELATIVE_PATH, ScreenRecorder.FOLDER);
-            values.put(MediaStore.Video.Media.IS_PENDING, 1);
-            target =
-                    getContentResolver()
-                            .insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
-            if (target == null) {
+            try {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Video.Media.DISPLAY_NAME, name);
+                values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
+                values.put(MediaStore.Video.Media.RELATIVE_PATH, ScreenRecorder.FOLDER);
+                values.put(MediaStore.Video.Media.IS_PENDING, 1);
+                target =
+                        getContentResolver()
+                                .insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+                if (target != null) {
+                    targetFile = getContentResolver().openFileDescriptor(target, "rw");
+                }
+            } catch (Throwable ignored) {
+                target = null;
+                targetFile = null;
+            }
+            if (targetFile != null) {
                 return;
             }
-            targetFile = getContentResolver().openFileDescriptor(target, "rw");
-        } else {
-            File folder = legacyFolder(this);
-            legacyTarget = new File(folder, name);
-            targetFile =
-                    ParcelFileDescriptor.open(
-                            legacyTarget,
-                            ParcelFileDescriptor.MODE_CREATE
-                                    | ParcelFileDescriptor.MODE_READ_WRITE
-                                    | ParcelFileDescriptor.MODE_TRUNCATE);
         }
+        File folder = ScreenRecorder.localRecordingsFolder(this);
+        legacyTarget = new File(folder, name);
+        targetFile =
+                ParcelFileDescriptor.open(
+                        legacyTarget,
+                        ParcelFileDescriptor.MODE_CREATE
+                                | ParcelFileDescriptor.MODE_READ_WRITE
+                                | ParcelFileDescriptor.MODE_TRUNCATE);
     }
 
     private String timestamp() {
@@ -546,8 +557,10 @@ public final class RecorderService extends Service {
                 getContentResolver().update(target, values, null, null);
             } catch (Throwable ignored) {
             }
+            ScreenRecorder.mirrorToLocalRecordings(this, target, legacyTarget, displayName);
             publishTarget(note);
         } else if (legacyTarget != null) {
+            ScreenRecorder.mirrorToLocalRecordings(this, null, legacyTarget, displayName);
             publishLegacy(legacyTarget, note);
         } else {
             ScreenRecorder.publish("error", "", 0L, 0L, "no file was written");
@@ -596,8 +609,10 @@ public final class RecorderService extends Service {
                 getContentResolver().update(target, values, null, null);
             } catch (Throwable ignored) {
             }
+            ScreenRecorder.mirrorToLocalRecordings(this, target, legacyTarget, displayName);
             publishTarget(note);
         } else if (legacyTarget != null) {
+            ScreenRecorder.mirrorToLocalRecordings(this, null, legacyTarget, displayName);
             publishLegacy(legacyTarget, note);
         }
     }

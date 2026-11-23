@@ -613,6 +613,7 @@ pub const FM_ROOT_DIRS: &[(&str, &str)] = &[
     ("resourcepacks", "Packs"),
     ("shaderpacks", "Shaders"),
     ("controls", "Controls"),
+    ("recordings", "Recordings"),
     ("screenshots", "Shots"),
     ("performance", "Reports"),
 ];
@@ -656,6 +657,7 @@ pub fn is_protected_root_folder(rel_path: &str) -> bool {
                 | "resourcepacks"
                 | "shaderpacks"
                 | "controls"
+                | "recordings"
                 | "screenshots"
                 | "performance"
         )
@@ -727,6 +729,8 @@ pub fn resolve_fm_path(home: &Path, profile_root: &Path, rel: &str) -> Result<Pa
     validate_entry_name(first)?;
     let mut path = if first == "performance" {
         home.join("performance")
+    } else if first == "recordings" {
+        home.join("recordings")
     } else {
         profile_root.join(first)
     };
@@ -842,6 +846,8 @@ pub fn ensure_fm_dirs(home: &Path, profile_root: &Path) {
         }
         let target = if *sub == "performance" {
             home.join("performance")
+        } else if *sub == "recordings" {
+            home.join("recordings")
         } else {
             profile_root.join(sub)
         };
@@ -873,6 +879,7 @@ pub fn classify_entry_kind(path: &Path, is_dir: bool) -> String {
         Some("hshader") => "Horizon Shader (.hshader)".into(),
         Some("zip") => "Archive / Pack (.zip)".into(),
         Some("png") => "PNG Image (.png)".into(),
+        Some("mp4") => "MP4 Video (.mp4)".into(),
         Some("json") => "JSON Config (.json)".into(),
         Some("jsonl") => "Telemetry Log (.jsonl)".into(),
         Some("toml") => "TOML Config (.toml)".into(),
@@ -971,29 +978,34 @@ pub fn list_fm_dir(
             kind_label: classify_entry_kind(&item.path(), is_dir),
         });
     }
-    if clean_rel.is_empty() && !seen_names.contains("performance") {
-        let perf_dir = home.join("performance");
-        if let Ok(smeta) = fs::symlink_metadata(&perf_dir)
-            && smeta.is_dir()
-            && !smeta.file_type().is_symlink()
-        {
-            let count = fs::read_dir(&perf_dir)
-                .map(|r| r.count() as u64)
-                .unwrap_or(0);
-            let modified_secs = smeta
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            entries.push(FmEntry {
-                name: "performance".into(),
-                rel_path: "performance".into(),
-                is_dir: true,
-                size_bytes: count,
-                modified_secs,
-                kind_label: "Folder".into(),
-            });
+    if clean_rel.is_empty() {
+        for shared_name in ["performance", "recordings"] {
+            if seen_names.contains(shared_name) {
+                continue;
+            }
+            let shared_dir = home.join(shared_name);
+            if let Ok(smeta) = fs::symlink_metadata(&shared_dir)
+                && smeta.is_dir()
+                && !smeta.file_type().is_symlink()
+            {
+                let count = fs::read_dir(&shared_dir)
+                    .map(|r| r.count() as u64)
+                    .unwrap_or(0);
+                let modified_secs = smeta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                entries.push(FmEntry {
+                    name: shared_name.into(),
+                    rel_path: shared_name.into(),
+                    is_dir: true,
+                    size_bytes: count,
+                    modified_secs,
+                    kind_label: "Folder".into(),
+                });
+            }
         }
     }
     entries.sort_by(|a, b| {

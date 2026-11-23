@@ -248,7 +248,7 @@ impl AnimState {
     }
 
     pub fn is_active(&self) -> bool {
-        if !self.intro_done || self.reveal_start.is_some_and(|t| t.elapsed().as_secs_f32() < 1.6) {
+        if !self.intro_done || self.reveal_start.is_some_and(|t| t.elapsed().as_secs_f32() < 0.35) {
             return true;
         }
         if horizon_client::ui_theme::motion::reduced_motion() {
@@ -1218,7 +1218,7 @@ impl Launcher {
             self.anim.trigger_page_transition();
         }
         let reveal = if horizon_client::ui_theme::motion::reduced_motion() { 1.0 }
-            else { self.anim.reveal_start.map_or(1.0, |t| (t.elapsed().as_secs_f32() / 1.6).min(1.0)) };
+            else { self.anim.reveal_start.map_or(1.0, |t| (t.elapsed().as_secs_f32() / 0.35).min(1.0)) };
         custom_background_poll(&self.home);
         self.targets.clear();
         SLIDER_TRACK_TARGETS.with(|t| t.borrow_mut().clear());
@@ -7438,7 +7438,9 @@ impl Launcher {
                 self.wardrobe.set_tab(cape);
                 self.catalog.scroll = 0.0;
             }
-            Some(Action::WardrobeSelect(index)) => self.wardrobe.select(index),
+            Some(Action::WardrobeSelect(index)) => self
+                .wardrobe
+                .select_and_sync(index, &self.catalog.config.microsoft_client_id),
             Some(Action::WardrobeImport) => self.wardrobe.import(),
             Some(Action::WardrobeCloud) => self
                 .wardrobe
@@ -7452,7 +7454,9 @@ impl Launcher {
                 Some(wardrobe::CloudAction::Cape(index)),
             ),
             Some(Action::WardrobeUseCloud) => self.wardrobe.use_cloud(),
-            Some(Action::WardrobeModel) => self.wardrobe.model(),
+            Some(Action::WardrobeModel) => self
+                .wardrobe
+                .model_and_sync(&self.catalog.config.microsoft_client_id),
             Some(Action::WardrobeRotate(direction)) => {
                 self.wardrobe.camera.rotate(-direction as f32 * 25.0, 0.0);
                 self.wardrobe.preview();
@@ -7463,7 +7467,9 @@ impl Launcher {
                     .zoom(if inward { 1.15 } else { 1.0 / 1.15 });
                 self.wardrobe.preview();
             }
-            Some(Action::WardrobeHideCape) => self.wardrobe.hide_cape(),
+            Some(Action::WardrobeHideCape) => self
+                .wardrobe
+                .hide_cape_and_sync(&self.catalog.config.microsoft_client_id),
             Some(Action::Search) => {
                 crate::platform::hide();
                 self.catalog.offset = 0;

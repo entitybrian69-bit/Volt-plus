@@ -24,6 +24,7 @@ use std::{
 pub(super) enum CloudAction {
     Upload,
     Cape(usize),
+    DeactivateCape,
 }
 pub(super) struct Wardrobe {
     pub root: PathBuf,
@@ -167,8 +168,12 @@ impl Wardrobe {
                         }
                     }
                     self.cache = cache;
-                    self.note =
-                        "Cloud profile synchronized. Local overrides are kept separate.".into();
+                    self.note = if activated_cape {
+                        "Cape equipped on client and Microsoft profile (visible to all players)."
+                            .into()
+                    } else {
+                        "Cloud profile synchronized (visible to all players).".into()
+                    };
                     self.preview();
                 }
                 Err(error) => self.note = error,
@@ -184,20 +189,35 @@ impl Wardrobe {
         }
         self.preview();
     }
-    pub fn select(&mut self, index: usize) {
+    pub fn select_and_sync(&mut self, index: usize, client_id: &str) {
         if self.damaged || crate::documents::busy() {
             return;
         }
-        if let Some(entry) = self.library.entries.get(index).cloned() {
-            self.note = match self
-                .library
-                .select(&self.root, &self.key, &entry.id, entry.kind)
-            {
-                Ok(()) => "Applied locally. The account's cloud profile is unchanged.".into(),
-                Err(error) => error,
-            };
-            self.selection_changed_at = Some(std::time::Instant::now());
-            self.preview();
+        let Some(entry) = self.library.entries.get(index).cloned() else {
+            return;
+        };
+        match self
+            .library
+            .select(&self.root, &self.key, &entry.id, entry.kind)
+        {
+            Ok(()) => {
+                self.selection_changed_at = Some(std::time::Instant::now());
+                self.preview();
+                if entry.kind == Kind::Skin && self.provider == Some(Provider::Microsoft) {
+                    self.cloud(client_id, Some(CloudAction::Upload));
+                } else if entry.kind == Kind::Skin && self.provider == Some(Provider::Ely) {
+                    self.note =
+                        "Equipped locally. Ely.by server skins are managed at ely.by/skins."
+                            .into();
+                } else if entry.kind == Kind::Cape && self.provider == Some(Provider::Microsoft) {
+                    self.note =
+                        "Custom cape applied locally (official Microsoft capes above sync to servers)."
+                            .into();
+                } else {
+                    self.note = "Applied locally.".into();
+                }
+            }
+            Err(error) => self.note = error,
         }
     }
     pub fn import(&mut self) {
@@ -240,6 +260,17 @@ impl Wardrobe {
         };
         self.save();
     }
+    pub fn model_and_sync(&mut self, client_id: &str) {
+        self.model();
+        let has_local_skin = self
+            .library
+            .selections
+            .get(&self.key)
+            .is_some_and(|s| s.skin.is_some());
+        if has_local_skin && self.provider == Some(Provider::Microsoft) {
+            self.cloud(client_id, Some(CloudAction::Upload));
+        }
+    }
     pub fn hide_cape(&mut self) {
         if self.damaged || crate::documents::busy() {
             return;
@@ -248,9 +279,37 @@ impl Wardrobe {
         selection.hide_cape = !selection.hide_cape;
         self.save();
     }
+    pub fn hide_cape_and_sync(&mut self, client_id: &str) {
+        if self.damaged || crate::documents::busy() {
+            return;
+        }
+        self.hide_cape();
+        let hidden = self
+            .library
+            .selections
+            .get(&self.key)
+            .is_some_and(|s| s.hide_cape);
+        if self.provider == Some(Provider::Microsoft) {
+            if hidden {
+                self.cloud(client_id, Some(CloudAction::DeactivateCape));
+            } else if let Some(idx) = self
+                .cache
+                .snapshot
+                .capes
+                .iter()
+                .position(|c| c.active)
+                .or_else(|| (!self.cache.snapshot.capes.is_empty()).then_some(0))
+            {
+                self.cloud(client_id, Some(CloudAction::Cape(idx)));
+            }
+        }
+    }
     pub fn cloud(&mut self, client_id: &str, action: Option<CloudAction>) {
         if self.worker.is_some() {
-            return;
+            if action.is_none() {
+                return;
+            }
+            self.worker = None;
         }
         let Some(provider) = self.provider else {
             self.note = "Offline appearance is local to this installation.".into();
@@ -289,7 +348,12 @@ impl Wardrobe {
         }
         let (sender, receiver) = mpsc::channel();
         self.worker = Some(receiver);
-        self.note = "Contacting account service...".into();
+        self.note = match action {
+            Some(CloudAction::Upload) => "Equipping skin on client & Microsoft server profile...".into(),
+            Some(CloudAction::Cape(_)) => "Equipping cape on client & Microsoft server profile...".into(),
+            Some(CloudAction::DeactivateCape) => "Hiding cape on client & Microsoft server profile...".into(),
+            None => "Contacting account service...".into(),
+        };
         std::thread::spawn(move || {
             let result = (|| {
                 let (account, secrets) = Login::session(&id)?
@@ -312,6 +376,9 @@ impl Wardrobe {
                     }
                     Some(CloudAction::Cape(_)) => {
                         cloud::activate_cape(&account, &secrets, cape.as_deref())?
+                    }
+                    Some(CloudAction::DeactivateCape) => {
+                        cloud::activate_cape(&account, &secrets, None)?
                     }
                     None => {}
                 }
