@@ -4977,7 +4977,7 @@ impl OptionsUi {
             match action {
                 VoltHorizonAction::ButtonClick => events.push(Event::ButtonClick),
                 VoltHorizonAction::Changed => events.push(Event::Changed),
-                VoltHorizonAction::Extras => events.push(Event::Extras),
+                VoltHorizonAction::Extras => {}
                 VoltHorizonAction::OpenPage(page) => self.push(page),
                 VoltHorizonAction::BindKey(name) => self.selected_key = Some(name),
                 VoltHorizonAction::Done => events.extend(self.back(s)),

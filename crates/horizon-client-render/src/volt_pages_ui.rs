@@ -791,7 +791,7 @@ impl VoltModsUi {
         }
 
         batch.clip_since(list_verts, clip_x0, clip_y0, clip_x1, clip_y1);
-        crate::widgets::clip_targets_since(target_mark, [clip_x0, clip_y0, clip_x1 - clip_x0, clip_y1 - clip_y0]);
+        crate::widgets::clip_targets(target_mark, lp_y, lp_y + lp.h);
 
         // Footer card
         let fc = geom.footer_card;
@@ -890,7 +890,7 @@ impl VoltModsUi {
             && pos.0 <= geom.list_panel.x + geom.list_panel.w
             && pos.1 >= lp_top
             && pos.1 < lp_bot
-            && self.scroll.press(pos.1, lp_top, lp_bot, content_h)
+            && self.scroll.press(pos, geom.scrollbar_x - 2.0, lp_top, lp_bot, content_h)
         {
             return Vec::new();
         }
@@ -1756,7 +1756,7 @@ impl VoltHorizonUi {
         }
 
         batch.clip_since(list_verts, clip_x0, clip_y0, clip_x1, clip_y1);
-        crate::widgets::clip_targets_since(target_mark, [clip_x0, clip_y0, clip_x1 - clip_x0, clip_y1 - clip_y0]);
+        crate::widgets::clip_targets(target_mark, lp_y, lp_y + lp.h);
 
         // Footer card
         let fc = geom.footer_card;
@@ -1842,7 +1842,7 @@ impl VoltHorizonUi {
             && pos.0 <= geom.list_panel.x + geom.list_panel.w
             && pos.1 >= lp_top
             && pos.1 < lp_bot
-            && self.scroll.press(pos.1, lp_top, lp_bot, content_h)
+            && self.scroll.press(pos, geom.scrollbar_x - 2.0, lp_top, lp_bot, content_h)
         {
             return Vec::new();
         }
