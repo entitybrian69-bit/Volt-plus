@@ -410,6 +410,7 @@ pub(super) enum Action {
     ButtonScaleDelta(f32),
     ToggleControlScheme,
     SelectControlMode(horizon_client::touch::ControlStyle),
+    ActivateStudioPreset(horizon_client::touch::ControlStyle, u32),
     CopyActivePreset,
     EditActivePresetMeta,
     ConfirmReplaceDuplicatePreset,
@@ -826,6 +827,7 @@ fn page_icon(page: Page) -> Icon {
         Page::Play => Icon::Play,
         Page::Mods => Icon::Mods,
         Page::Packs => Icon::Packs,
+        Page::ControlsStudio => Icon::Gamepad,
         Page::Shaders => Icon::Shaders,
         Page::Compiler => Icon::Terminal,
         Page::Installed => Icon::Installed,
@@ -1313,9 +1315,17 @@ impl Launcher {
             self.wardrobe.draw_scene(&mut ui, scene_rect);
         }
 
-        let nav_pages = [Page::Play, Page::Mods, Page::Packs, Page::Shaders,
-            Page::Installed, Page::Skins, Page::Settings];
-        let nav_w = (w - 24.0).min(660.0);
+        let nav_pages = [
+            Page::Play,
+            Page::Mods,
+            Page::Packs,
+            Page::ControlsStudio,
+            Page::Shaders,
+            Page::Installed,
+            Page::Skins,
+            Page::Settings,
+        ];
+        let nav_w = (w - 24.0).min(690.0);
         let nav_x = (w - nav_w) * 0.5;
         let nav_y = full_h - 49.0;
         let nav_h = 42.0;
@@ -1336,7 +1346,11 @@ impl Launcher {
             if item_progress <= 0.0 { continue; }
             ui.set_stagger_transition(item_progress, x, nav_y);
             let selected = *item == page;
-            let label = match item { Page::Packs => "Packs", _ => item.name() };
+            let label = match item {
+                Page::Packs => "Packs",
+                Page::ControlsStudio => "Studio",
+                _ => item.name(),
+            };
             let icon_x = x + if nav_step < 62.0 { (nav_step - 15.0) * 0.5 } else { 10.0 };
             ui.icon(page_icon(*item), icon_x, nav_y + 13.0, 15.0, my3_text());
             if nav_step >= 62.0 {
@@ -1984,6 +1998,8 @@ impl Launcher {
                 my3_muted(),
                 &fitted_page_info,
             );
+        } else if page == Page::ControlsStudio {
+            self.draw_controls_studio_page(&mut ui, content_x, content_w, h, compact, slide_y);
         } else if page == Page::Compiler {
             self.draw_compiler_page(&mut ui, content_x, content_w, h, compact, slide_y);
         } else if page == Page::Installed {
@@ -3793,7 +3809,7 @@ impl Launcher {
             my3_text(),
             "Volt Plus Update",
         );
-        let badge_text = format!("v1.0.0  →  v{}", info.version);
+        let badge_text = format!("v{}  →  v{}", crate::backend::VERSION, info.version);
         let badge_w = ui.measure(Face::SemiBold, 11.0, &badge_text) + 16.0;
         let badge_r = [title_x, head_y + 24.0, badge_w, 20.0];
         ui.rounded(
@@ -4482,6 +4498,197 @@ impl Launcher {
         );
     }
 
+    fn draw_controls_studio_page(
+        &mut self,
+        ui: &mut Ui,
+        content_x: f32,
+        content_w: f32,
+        h: f32,
+        compact: bool,
+        slide_y: f32,
+    ) {
+        use horizon_client::touch::{ControlStyle, Settings as TouchSettings};
+
+        let header_y = 62.0 + slide_y;
+        ui.text(
+            Face::SemiBold,
+            19.5,
+            content_x,
+            header_y,
+            my3_text(),
+            "Controls Studio",
+        );
+        ui.text(
+            Face::Regular,
+            11.0,
+            content_x,
+            header_y + 23.0,
+            my3_muted(),
+            "Import PojavLauncher & Zalith layouts, switch engines, or customize HUD controls",
+        );
+
+        let game_home = self.catalog.config.game_home(&self.home);
+        let touch_cfg = TouchSettings::load_from(&game_home.join("horizon-touch.json"));
+        let active_style = touch_cfg.control_style;
+
+        // Mode selector strip (MCPE vs GoyControl)
+        let mode_y = header_y + 44.0;
+        let mode_w = (content_w - 10.0) * 0.5;
+        for (i, (label, style)) in [
+            ("MCPE Classic", ControlStyle::Mcpe),
+            ("GoyControl / Java", ControlStyle::GoyControl),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let rx = content_x + i as f32 * (mode_w + 10.0);
+            let rect = [rx, mode_y, mode_w, 34.0];
+            let selected = active_style == style;
+            ui.rounded(
+                rx,
+                mode_y,
+                mode_w,
+                34.0,
+                14.0,
+                if selected { my3_accent_soft() } else { my3_card_bg() },
+            );
+            ui.border(
+                rx,
+                mode_y,
+                mode_w,
+                34.0,
+                14.0,
+                if selected { my3_accent() } else { my3_card_border() },
+            );
+            ui.centered_fit(
+                Face::SemiBold,
+                12.0,
+                rect,
+                if selected { my3_text() } else { my3_muted() },
+                label,
+            );
+            self.targets.push((rect, Action::SelectControlMode(style)));
+        }
+
+        // Studio toolbar buttons
+        let bar_y = mode_y + 42.0;
+        let btn_specs = [
+            ("Import Pojav / Zalith", Action::ImportControlProfile, true),
+            ("Layout Editor", Action::OpenControlEditor, true),
+            ("Export JSON", Action::ExportControlProfile, false),
+            ("Duplicate", Action::CopyActivePreset, false),
+        ];
+        let cols = if compact { 2 } else { 4 };
+        let gap = 8.0;
+        let btn_w = (content_w - gap * (cols as f32 - 1.0)) / cols as f32;
+        for (idx, (label, act, primary)) in btn_specs.into_iter().enumerate() {
+            let col = idx % cols;
+            let row = idx / cols;
+            let bx = content_x + col as f32 * (btn_w + gap);
+            let by = bar_y + row as f32 * 36.0;
+            button(ui, &mut self.targets, [bx, by, btn_w, 30.0], label, act, primary);
+        }
+
+        let list_top = bar_y + if compact { 78.0 } else { 40.0 };
+        let list_bottom = h - 42.0;
+        let mut entries = Vec::new();
+        for style in [ControlStyle::GoyControl, ControlStyle::Mcpe] {
+            for (idx, meta) in TouchSettings::list_presets(&game_home, style)
+                .into_iter()
+                .enumerate()
+            {
+                entries.push((style, idx, meta));
+            }
+        }
+        let step_y = 64.0;
+        let max_scroll =
+            (entries.len() as f32 * step_y - (list_bottom - list_top)).max(0.0);
+        self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
+        self.list_view = Some([list_top, list_bottom, max_scroll]);
+
+        ui.set_clip(Some([
+            content_x - 2.0,
+            list_top,
+            content_w + 4.0,
+            (list_bottom - list_top).max(1.0),
+        ]));
+        for (row_i, (style, idx, meta)) in entries.into_iter().enumerate() {
+            let ry = list_top + row_i as f32 * step_y - self.catalog.scroll;
+            if ry + 58.0 < list_top || ry > list_bottom {
+                continue;
+            }
+            let active = active_style == style && touch_cfg.preset_id == meta.id;
+            let card = [content_x, ry, content_w, 56.0];
+            ui.rounded(
+                card[0],
+                card[1],
+                card[2],
+                card[3],
+                14.0,
+                if active { my3_surface_high() } else { my3_card_bg() },
+            );
+            ui.border(
+                card[0],
+                card[1],
+                card[2],
+                card[3],
+                14.0,
+                if active { my3_accent() } else { my3_card_border() },
+            );
+            let badge_w = 88.0;
+            let badge_x = content_x + 12.0;
+            let badge_y = ry + 16.0;
+            ui.rounded(
+                badge_x,
+                badge_y,
+                badge_w,
+                24.0,
+                10.0,
+                if active { my3_accent_soft() } else { my3_surface() },
+            );
+            ui.centered_fit(
+                Face::SemiBold,
+                9.5,
+                [badge_x + 4.0, badge_y, badge_w - 8.0, 24.0],
+                my3_text(),
+                if style == ControlStyle::GoyControl {
+                    "GOYCONTROL"
+                } else {
+                    "MCPE"
+                },
+            );
+            let text_x = badge_x + badge_w + 12.0;
+            let text_w = (content_w - badge_w - 134.0).max(80.0);
+            let title = ui.fit_text(Face::SemiBold, 13.5, &meta.name, text_w);
+            let desc = ui.fit_text(Face::Regular, 10.5, &meta.description, text_w);
+            ui.text(Face::SemiBold, 13.5, text_x, ry + 10.0, my3_text(), &title);
+            ui.text(Face::Regular, 10.5, text_x, ry + 30.0, my3_muted(), &desc);
+
+            let act_rect = [content_x + content_w - 94.0, ry + 13.0, 82.0, 30.0];
+            let action = Action::ActivateStudioPreset(style, idx as u32);
+            ui.rounded(
+                act_rect[0],
+                act_rect[1],
+                act_rect[2],
+                act_rect[3],
+                15.0,
+                if active { my3_accent() } else { my3_surface_high() },
+            );
+            ui.centered_fit(
+                Face::SemiBold,
+                11.0,
+                act_rect,
+                if active { 0xff1b_1327 } else { my3_text() },
+                if active { "Active" } else { "Use" },
+            );
+            if let Some(clipped) = ui.clip_rect(card) {
+                self.targets.push((clipped, action));
+            }
+            self.list_targets.push((card, action));
+        }
+        ui.set_clip(None);
+    }
+
     /// Revamped Settings tab matching `45062.jpg` with 2-column MY3 category cards
     /// and dedicated sub-pages for Video, Launcher, Controls, Experimental, and Diagnostics.
     #[allow(clippy::too_many_arguments)]
@@ -4506,7 +4713,7 @@ impl Launcher {
                 "Settings",
             );
 
-            let cards: [(Icon, &str, &str, Action); 6] = [
+            let cards: [(Icon, &str, &str, Action); 7] = [
                 (
                     Icon::Monitor,
                     "Video Settings",
@@ -4524,6 +4731,12 @@ impl Launcher {
                     "Controls",
                     "HUD touch layout, buttons, sensitivity and profiles",
                     Action::SettingsCat(SettingsCategory::Controls),
+                ),
+                (
+                    Icon::Gamepad,
+                    "Controls Studio",
+                    "Import Pojav & Zalith layouts, edit HUD & switch presets",
+                    Action::Page(Page::ControlsStudio),
                 ),
                 (
                     Icon::Flask,
@@ -4548,19 +4761,25 @@ impl Launcher {
             let grid_top = 98.0 + slide_y;
             let gap_x = 14.0;
             let gap_y = 12.0;
-            let cols = if compact { 1 } else { 2 };
-            let card_w = if cols == 2 {
-                (content_w - gap_x) * 0.5
+            let card_h = if compact {
+                ((h - grid_top - 52.0 - gap_y * 6.0) / 7.0).clamp(44.0, 68.0)
             } else {
-                content_w
+                ((h - grid_top - 52.0 - gap_y * 2.0) / 3.0).clamp(64.0, 90.0)
             };
-            let card_h = ((h - grid_top - 52.0 - gap_y * 2.0) / 3.0).clamp(68.0, 92.0);
 
             for (idx, (icon, title, subtitle, action)) in cards.into_iter().enumerate() {
-                let col = idx % cols;
-                let row = idx / cols;
-                let cx = content_x + col as f32 * (card_w + gap_x);
-                let cy = grid_top + row as f32 * (card_h + gap_y);
+                let (cx, cy, card_w) = if compact {
+                    (content_x, grid_top + idx as f32 * (card_h + gap_y), content_w)
+                } else if idx < 4 {
+                    let col = idx % 2;
+                    let row = idx / 2;
+                    let w2 = (content_w - gap_x) * 0.5;
+                    (content_x + col as f32 * (w2 + gap_x), grid_top + row as f32 * (card_h + gap_y), w2)
+                } else {
+                    let col = idx - 4;
+                    let w3 = (content_w - gap_x * 2.0) / 3.0;
+                    (content_x + col as f32 * (w3 + gap_x), grid_top + 2.0 * (card_h + gap_y), w3)
+                };
                 let rect = [cx, cy, card_w, card_h];
 
                 ui.rounded(cx, cy, card_w, card_h, 16.0, my3_card_bg());
@@ -6572,6 +6791,21 @@ impl Launcher {
                     style.label(),
                     touch.preset_name
                 );
+            }
+            Some(Action::ActivateStudioPreset(style, idx)) => {
+                let game_home = self.catalog.config.game_home(&self.home);
+                let mut touch = horizon_client::touch::Settings::load_from(
+                    &game_home.join("horizon-touch.json"),
+                );
+                let presets = horizon_client::touch::Settings::list_presets(&game_home, style);
+                if let Some(meta) = presets.get(idx as usize) {
+                    touch.select_preset(&game_home, style, &meta.id);
+                    self.catalog.status = format!(
+                        "Activated {} preset '{}'.",
+                        style.label(),
+                        meta.name
+                    );
+                }
             }
             Some(Action::OpenControlEditor) => {
                 let game_home = self.catalog.config.game_home(&self.home);

@@ -1753,6 +1753,8 @@ pub struct OptionsUi {
     center_language: bool,
     pub graphics: crate::graphics_ui::GraphicsUi,
     pub volt_video: crate::volt_video_ui::VoltVideoUi,
+    pub volt_mods: crate::volt_pages_ui::VoltModsUi,
+    pub volt_horizon: crate::volt_pages_ui::VoltHorizonUi,
     pub split_profiles: crate::split_profiles::SplitProfiles,
     /// HDR calibration while its page is open.
     pub calibration: Option<crate::hdr_calibration::Calibration>,
@@ -1813,6 +1815,8 @@ impl Default for OptionsUi {
             center_language: false,
             graphics: Default::default(),
             volt_video: Default::default(),
+            volt_mods: Default::default(),
+            volt_horizon: Default::default(),
             split_profiles: Default::default(),
             calibration: None,
             calibration_fullscreen: None,
@@ -2332,7 +2336,10 @@ impl OptionsUi {
     }
     fn settings_search_active(&self) -> bool {
         self.settings_search.focused
-            && matches!(self.page(), Page::Video | Page::Controls | Page::KeyBinds)
+            && matches!(
+                self.page(),
+                Page::Video | Page::Mods | Page::Horizon | Page::Controls | Page::KeyBinds
+            )
     }
     #[cfg(target_os = "android")]
     pub fn android_edit_value(&mut self, atlas: &HudAtlas) -> String {
@@ -2470,12 +2477,21 @@ impl OptionsUi {
         self.scrollbar_drag_y = None;
         self.focus = None;
         self.can_change_value = false;
-        if matches!(page, Page::Video | Page::Controls | Page::KeyBinds) {
+        if matches!(
+            page,
+            Page::Video | Page::Mods | Page::Horizon | Page::Controls | Page::KeyBinds
+        ) {
             self.settings_search.set_value("");
             self.settings_search.focused = false;
         }
         if page == Page::Video {
             self.volt_video.reset();
+        }
+        if page == Page::Mods {
+            self.volt_mods.reset();
+        }
+        if page == Page::Horizon {
+            self.volt_horizon.reset();
         }
         if page == Page::Language {
             self.language_choice = None;
@@ -3849,6 +3865,34 @@ impl OptionsUi {
             }
             return;
         }
+        if self.page() == Page::Mods {
+            self.size = (w, h);
+            self.volt_mods.draw(
+                s,
+                batch,
+                atlas,
+                cursor,
+                self.in_world,
+                &mut self.settings_search,
+            );
+            return;
+        }
+        if self.page() == Page::Horizon {
+            self.size = (w, h);
+            self.volt_horizon.draw(
+                s,
+                batch,
+                atlas,
+                cursor,
+                self.in_world,
+                &mut self.settings_search,
+                self.selected_key,
+            );
+            if cfg!(target_os = "android") && self.selected_key.is_some() {
+                self.draw_touch_key_picker(batch, atlas);
+            }
+            return;
+        }
         if self.page() == Page::SplitProfiles {
             self.split_profiles
                 .draw(batch, atlas, cursor, self.in_world, self.pad_style);
@@ -3954,11 +3998,19 @@ impl OptionsUi {
                     _ => atlas.font.split(&tip, 170.0),
                 });
             }
+            let restyled_plate = matches!(
+                page,
+                Page::NativeMod(_)
+                    | Page::Graphics
+                    | Page::GraphicsAdvanced
+                    | Page::GraphicsHdr
+                    | Page::KeyBinds
+            );
             match &wd.kind {
                 WKind::Button { label, active, act } => {
                     let label = fitted.as_ref().map_or(label, |f| &f.0);
-                    if *act == Act::Done {
-                        // Volt Plus: the reference layout's one big action is a flat
+                    if restyled_plate && *act == Act::Done {
+                        // Volt Plus: the restyled legacy pages' Done action is a flat
                         // copper plate rather than a vanilla sprite.
                         let plate = if !*active {
                             crate::hud::rgb(horizon_theme::warm::BORDER, 230)
@@ -3979,10 +4031,10 @@ impl OptionsUi {
                             crate::hud::rgb(horizon_theme::warm::ON_ACCENT, 255),
                         );
                     } else {
-                        // Vanilla draws first for the narrator's record; the glass plate
-                        // is painted over it, so the stone never shows.
                         ui::button(batch, atlas, wd.x, wd.y, wd.w, wd.h, label, *active, hover);
-                        glass_button(batch, atlas, wd.x, wd.y, wd.w, wd.h, label, *active, hover);
+                        if restyled_plate {
+                            glass_button(batch, atlas, wd.x, wd.y, wd.w, wd.h, label, *active, hover);
+                        }
                     }
                     crate::widgets::last_narratable(|n| {
                         narrate_widget(n, s, wd, hover, list_key, framebuffer);
@@ -4005,18 +4057,20 @@ impl OptionsUi {
                         true,
                         dragging,
                     );
-                    glass_slider(
-                        batch,
-                        atlas,
-                        wd.x,
-                        wd.y,
-                        wd.w,
-                        wd.h,
-                        label,
-                        shown,
-                        hover || dragging,
-                        true,
-                    );
+                    if restyled_plate {
+                        glass_slider(
+                            batch,
+                            atlas,
+                            wd.x,
+                            wd.y,
+                            wd.w,
+                            wd.h,
+                            label,
+                            shown,
+                            hover || dragging,
+                            true,
+                        );
+                    }
                     crate::widgets::last_narratable(|n| {
                         narrate_widget(n, s, wd, hover, list_key, framebuffer);
                     });
@@ -4176,10 +4230,7 @@ impl OptionsUi {
         let page = self.page();
         let restyled = matches!(
             page,
-            Page::Video
-                | Page::Horizon
-                | Page::Mods
-                | Page::NativeMod(_)
+            Page::NativeMod(_)
                 | Page::Graphics
                 | Page::GraphicsAdvanced
                 | Page::GraphicsHdr
@@ -4472,6 +4523,52 @@ impl OptionsUi {
                 _ => None,
             };
             return self.volt_actions(s, actions);
+        }
+        if self.page() == Page::Mods {
+            self.size = size;
+            self.framebuffer = framebuffer;
+            if right {
+                return Vec::new();
+            }
+            let actions = self.volt_mods.click(
+                s,
+                atlas,
+                (x, y),
+                size,
+                drag,
+                &mut self.settings_search,
+            );
+            self.focus = match self.volt_mods.focus {
+                Some(crate::volt_pages_ui::ModsFocus::Search) => Some(FocusId::Search),
+                _ => None,
+            };
+            return self.volt_mods_actions(s, actions);
+        }
+        if self.page() == Page::Horizon {
+            self.size = size;
+            self.framebuffer = framebuffer;
+            if self.selected_key.is_some() && !drag {
+                let button = if right {
+                    winit::event::MouseButton::Right
+                } else {
+                    winit::event::MouseButton::Left
+                };
+                return self.bind_mouse(s, button);
+            }
+            let actions = self.volt_horizon.click(
+                s,
+                atlas,
+                (x, y),
+                size,
+                drag,
+                right,
+                &mut self.settings_search,
+            );
+            self.focus = match self.volt_horizon.focus {
+                Some(crate::volt_pages_ui::HorizonFocus::Search) => Some(FocusId::Search),
+                _ => None,
+            };
+            return self.volt_horizon_actions(s, actions);
         }
         if self.page() == Page::Packs {
             let mut events = Vec::new();
@@ -4842,6 +4939,52 @@ impl OptionsUi {
         }
         events
     }
+    fn volt_mods_actions(
+        &mut self,
+        s: &mut Settings,
+        actions: Vec<crate::volt_pages_ui::VoltModsAction>,
+    ) -> Vec<Event> {
+        use crate::volt_pages_ui::VoltModsAction;
+        let mut events = Vec::new();
+        for action in actions {
+            match action {
+                VoltModsAction::ButtonClick => events.push(Event::ButtonClick),
+                VoltModsAction::Changed => events.push(Event::Changed),
+                VoltModsAction::Toggle(_) => {}
+                VoltModsAction::Settings(i) => {
+                    let is_native = s.mods.installed.get(i).is_some_and(|m| m.native.is_some());
+                    self.push(Page::NativeMod(i));
+                    events.push(if is_native {
+                        Event::NativeSettings(i)
+                    } else {
+                        Event::ModSettings(i)
+                    });
+                }
+                VoltModsAction::OpenFolder => events.push(Event::OpenModFolder),
+                VoltModsAction::Done => events.extend(self.back(s)),
+            }
+        }
+        events
+    }
+    fn volt_horizon_actions(
+        &mut self,
+        s: &mut Settings,
+        actions: Vec<crate::volt_pages_ui::VoltHorizonAction>,
+    ) -> Vec<Event> {
+        use crate::volt_pages_ui::VoltHorizonAction;
+        let mut events = Vec::new();
+        for action in actions {
+            match action {
+                VoltHorizonAction::ButtonClick => events.push(Event::ButtonClick),
+                VoltHorizonAction::Changed => events.push(Event::Changed),
+                VoltHorizonAction::Extras => events.push(Event::Extras),
+                VoltHorizonAction::OpenPage(page) => self.push(page),
+                VoltHorizonAction::BindKey(name) => self.selected_key = Some(name),
+                VoltHorizonAction::Done => events.extend(self.back(s)),
+            }
+        }
+        events
+    }
     pub fn release(&mut self) -> Vec<Event> {
         self.scrollbar_drag_y = None;
         if let Some(p) = &mut self.pack_screen {
@@ -4852,6 +4995,8 @@ impl OptionsUi {
         let slider = self.dragging.take().is_some() | self.shader_dragging.take().is_some();
         let graphics_slider = self.graphics.release();
         let volt_slider = self.volt_video.release();
+        self.volt_mods.release();
+        self.volt_horizon.release();
         let calibration_slider = self.calibration.as_mut().is_some_and(|c| c.release());
         if slider || graphics_slider || volt_slider || calibration_slider {
             vec![Event::ButtonClick, Event::Changed]
@@ -4962,6 +5107,16 @@ impl OptionsUi {
             );
             return self.volt_actions(s, actions);
         }
+        if self.page() == Page::Mods {
+            self.volt_mods
+                .scroll(s, size, &self.settings_search.value, amount);
+            return Vec::new();
+        }
+        if self.page() == Page::Horizon {
+            self.volt_horizon
+                .scroll(s, size, &self.settings_search.value, amount);
+            return Vec::new();
+        }
         let plain = self.resource_error.is_none()
             && !(self.pack_screen.is_some() && self.stack.last() == Some(&Page::Packs));
         if !plain {
@@ -5038,6 +5193,8 @@ impl OptionsUi {
         self.graphics.focus = None;
         self.volt_video.focus = None;
         self.volt_video.can_change_value = false;
+        self.volt_mods.focus = None;
+        self.volt_horizon.focus = None;
     }
     /// A touchscreen scroll moves the list, never the last focused or hovered
     /// option. Keep physical wheel handling in `wheel` separate.
@@ -5062,6 +5219,16 @@ impl OptionsUi {
         }
         if self.page() == Page::Video {
             self.volt_video
+                .scroll(s, size, &self.settings_search.value, amount);
+            return;
+        }
+        if self.page() == Page::Mods {
+            self.volt_mods
+                .scroll(s, size, &self.settings_search.value, amount);
+            return;
+        }
+        if self.page() == Page::Horizon {
+            self.volt_horizon
                 .scroll(s, size, &self.settings_search.value, amount);
             return;
         }
@@ -5251,6 +5418,10 @@ impl OptionsUi {
             self.scroll = 0.0;
             if self.page() == Page::Video {
                 self.volt_video.reset_scroll();
+            } else if self.page() == Page::Mods {
+                self.volt_mods.reset_scroll();
+            } else if self.page() == Page::Horizon {
+                self.volt_horizon.reset_scroll();
             }
         }
     }
@@ -5285,6 +5456,10 @@ impl OptionsUi {
                 self.scroll = 0.0;
                 if self.page() == Page::Video {
                     self.volt_video.reset_scroll();
+                } else if self.page() == Page::Mods {
+                    self.volt_mods.reset_scroll();
+                } else if self.page() == Page::Horizon {
+                    self.volt_horizon.reset_scroll();
                 }
             }
             return true;
@@ -5454,6 +5629,40 @@ impl OptionsUi {
                 _ => None,
             };
             return self.volt_actions(s, actions);
+        }
+
+        if self.page() == Page::Mods {
+            let size = (self.size.0.max(427.0), self.size.1.max(240.0));
+            let (actions, _) = self.volt_mods.key_modifiers(
+                s,
+                key,
+                text,
+                shift,
+                size,
+                &mut self.settings_search,
+            );
+            self.focus = match self.volt_mods.focus {
+                Some(crate::volt_pages_ui::ModsFocus::Search) => Some(FocusId::Search),
+                _ => None,
+            };
+            return self.volt_mods_actions(s, actions);
+        }
+
+        if self.page() == Page::Horizon {
+            let size = (self.size.0.max(427.0), self.size.1.max(240.0));
+            let (actions, _) = self.volt_horizon.key_modifiers(
+                s,
+                key,
+                text,
+                shift,
+                size,
+                &mut self.settings_search,
+            );
+            self.focus = match self.volt_horizon.focus {
+                Some(crate::volt_pages_ui::HorizonFocus::Search) => Some(FocusId::Search),
+                _ => None,
+            };
+            return self.volt_horizon_actions(s, actions);
         }
 
         if key == K::Escape {
@@ -6207,7 +6416,7 @@ mod tests {
     }
 
     #[test]
-    fn classic_mods_page_toggles_mods_and_keeps_dev_and_invalid_entries_inactive() {
+    fn volt_mods_page_toggles_mods_and_keeps_dev_and_invalid_entries_inactive() {
         let atlas = atlas();
         let mut s = Settings::default();
         let mut ui = OptionsUi::default();
@@ -6223,35 +6432,18 @@ mod tests {
             )
         }));
         ui.show(Page::Mods);
-        let empty = ui.layout(&s, size.0, size.1).0;
-        assert!(empty.iter().any(|w| {
-            matches!(&w.kind, WKind::Text { text, .. } if text.plain() == "horizon.mods.empty")
-        }));
-        // The empty page points at the bundled key; the English line behind it
-        // is what a player reads, so both halves are checked here.
         let en = crate::lang::Language::load(&[], "en_us");
         assert!(
             en.get("horizon.mods.empty")
                 .is_some_and(|line| line.contains(".hmod"))
         );
-        let open_folder = empty
-            .iter()
-            .find(|w| {
-                matches!(
-                    &w.kind,
-                    WKind::Button {
-                        act: Act::OpenModFolder,
-                        ..
-                    }
-                )
-            })
-            .expect("Mods page has an Open Mod Folder button");
+        let open_folder = crate::volt_pages_ui::VoltModsUi::test_open_folder_rect(size.0, size.1);
         assert_eq!(
             ui.click(
                 &mut s,
                 &atlas,
-                open_folder.x + 1.0,
-                open_folder.y + 1.0,
+                open_folder[0] + 2.0,
+                open_folder[1] + 2.0,
                 size,
                 [480, 240],
                 false,
@@ -6270,26 +6462,14 @@ mod tests {
                 native: None,
             });
         }
-        let (widgets, ..) = ui.layout(&s, size.0, size.1);
-        let rows: Vec<_> = widgets
-            .iter()
-            .filter(|w| {
-                matches!(
-                    w.kind,
-                    WKind::Button {
-                        act: Act::ToggleMod(_),
-                        ..
-                    }
-                )
-            })
-            .collect();
+        let rows = ui.volt_mods.test_row_rects(&s, size, "");
         assert_eq!(rows.len(), 3);
-        for (i, row) in rows.iter().enumerate() {
+        for (i, (_, rect, _)) in rows.iter().enumerate() {
             let events = ui.click(
                 &mut s,
                 &atlas,
-                row.x + 1.0,
-                row.y + 1.0,
+                rect[0] + 4.0,
+                rect[1] + 4.0,
                 size,
                 [480, 240],
                 false,
@@ -6306,12 +6486,12 @@ mod tests {
         assert!(s.mods.is_on(1));
         assert!(!s.mods.is_on(2));
         assert_eq!(s.mods.serialize(), "mod.normal:true\n");
-        let row = rows[0];
+        let rect = rows[0].1;
         ui.click(
             &mut s,
             &atlas,
-            row.x + 1.0,
-            row.y + 1.0,
+            rect[0] + 4.0,
+            rect[1] + 4.0,
             size,
             [480, 240],
             false,
@@ -6341,24 +6521,13 @@ mod tests {
             }),
         });
         ui.show(Page::Mods);
-        let (widgets, ..) = ui.layout(&s, size.0, size.1);
-        let settings = widgets
-            .iter()
-            .find(|w| {
-                matches!(
-                    w.kind,
-                    WKind::Button {
-                        act: Act::ModSettings(0),
-                        ..
-                    }
-                )
-            })
-            .expect("a native mod's row has a Settings button");
+        let rows = ui.volt_mods.test_row_rects(&s, size, "");
+        let settings = rows[0].2.expect("a native mod's row has a Settings button");
         let events = ui.click(
             &mut s,
             &atlas,
-            settings.x + 1.0,
-            settings.y + 1.0,
+            settings[0] + 2.0,
+            settings[1] + 2.0,
             size,
             [480, 240],
             false,
@@ -6370,7 +6539,7 @@ mod tests {
     }
 
     #[test]
-    fn native_mod_without_settings_has_only_a_full_width_toggle() {
+    fn native_mod_without_settings_has_no_settings_button() {
         let atlas = atlas();
         let mut s = Settings::default();
         let mut ui = OptionsUi::default();
@@ -6384,32 +6553,15 @@ mod tests {
             native: Some(crate::mod_list::NativePage::default()),
         });
         ui.show(Page::Mods);
-        let (widgets, ..) = ui.layout(&s, 480.0, 240.0);
-        assert!(!widgets.iter().any(|w| matches!(
-            w.kind,
-            WKind::Button {
-                act: Act::ModSettings(_),
-                ..
-            }
-        )));
-        let toggle = widgets
-            .iter()
-            .find(|w| {
-                matches!(
-                    w.kind,
-                    WKind::Button {
-                        act: Act::ToggleMod(0),
-                        ..
-                    }
-                )
-            })
-            .unwrap();
-        assert_eq!(toggle.w, 310.0);
+        let rows = ui.volt_mods.test_row_rects(&s, (480.0, 240.0), "");
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].2.is_none());
+        let rect = rows[0].1;
         let events = ui.click(
             &mut s,
             &atlas,
-            toggle.x + 1.0,
-            toggle.y + 1.0,
+            rect[0] + 4.0,
+            rect[1] + 4.0,
             (480.0, 240.0),
             [480, 240],
             false,
@@ -6418,6 +6570,20 @@ mod tests {
         assert!(events.contains(&Event::Changed));
         assert!(!s.mods.is_on(0));
         assert!(s.mods.disabled.contains("no_settings"));
+    }
+
+    #[test]
+    fn main_page_uses_classic_vanilla_widgets_without_copper_overlay() {
+        let atlas = atlas();
+        let s = Settings::default();
+        let mut ui = OptionsUi::default();
+        let mut batch = HudBatch::new([480, 270]);
+        ui.draw(&s, &mut batch, &atlas, (0.0, 0.0));
+        let copper_plate = crate::hud::rgb(horizon_theme::warm::ACCENT, 255);
+        assert!(
+            !batch.vertices.iter().any(|v| v.color == copper_plate),
+            "Page::Main must use classic vanilla widgets rather than copper overlays"
+        );
     }
 
     #[test]
@@ -6858,13 +7024,34 @@ mod tests {
                 false,
             )
         };
-        for page in [Page::Horizon, Page::Extras] {
-            assert_eq!(
-                click(&mut ui, &mut s, Act::Push(page)),
-                vec![Event::ButtonClick]
-            );
-            assert_eq!(ui.page(), page);
-        }
+        assert_eq!(
+            click(&mut ui, &mut s, Act::Push(Page::Horizon)),
+            vec![Event::ButtonClick]
+        );
+        assert_eq!(ui.page(), Page::Horizon);
+        let extras_rect = ui
+            .volt_horizon
+            .test_row_rect(
+                &s,
+                size,
+                "",
+                crate::volt_pages_ui::HorizonItem::OpenPage(Page::Extras),
+            )
+            .expect("VoltHorizonUi has Extras row");
+        assert_eq!(
+            ui.click(
+                &mut s,
+                &atlas,
+                extras_rect[0] + 4.0,
+                extras_rect[1] + 4.0,
+                size,
+                [960, 960],
+                false,
+                false,
+            ),
+            vec![Event::ButtonClick]
+        );
+        assert_eq!(ui.page(), Page::Extras);
         let (widgets, _, _, _) = ui.layout(&s, size.0, size.1);
         assert_eq!(
             widgets

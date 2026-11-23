@@ -243,6 +243,28 @@ impl Game<'_> {
             }
         }
         if let Some(mapping) = name.strip_prefix("action:") {
+            if mapping == "horizon.toggle_keyboard" {
+                if down {
+                    self.android_show_keyboard();
+                }
+                return;
+            }
+            if mapping == "horizon.open_menu" {
+                if down {
+                    if self.pad_in_menu() {
+                        let _ = self.pad_back();
+                    } else {
+                        let _ = self.key_pressed(KeyCode::Escape);
+                    }
+                }
+                return;
+            }
+            if let Some(text_msg) = mapping.strip_prefix("horizon.send_text:") {
+                if down {
+                    self.open_chat(text_msg);
+                }
+                return;
+            }
             if mapping == "key.sneak" || mapping == "key.sprint" {
                 let slot = usize::from(mapping == "key.sprint");
                 let key = [KeyCode::ShiftLeft, KeyCode::ControlLeft][slot];
@@ -294,9 +316,12 @@ impl Game<'_> {
             }
             return;
         }
-        if name == "mouse.scroll.up" || name == "mouse.scroll.down" {
+        if matches!(
+            name,
+            "mouse.scroll.up" | "mouse.scroll.down" | "mouse.scroll.up.held" | "mouse.scroll.down.held"
+        ) {
             if down {
-                let delta = if name == "mouse.scroll.up" { 8.0 } else { 1.0 };
+                let delta = if name.starts_with("mouse.scroll.up") { 8.0 } else { 1.0 };
                 let next = horizon_client::mouse::ScrollWheelHandler::next_selection(
                     delta,
                     self.selected as i32,
@@ -699,6 +724,15 @@ impl Game<'_> {
         };
         let mut b = HudBatch::new([size.width, size.height]);
         let p = [t.location.x as f32 / b.scale, t.location.y as f32 / b.scale];
+        #[cfg(target_os = "android")]
+        if self.pad_in_menu()
+            && !self.pad.touch_ui.floating_menu
+            && self.android_updater_modal_touch(t.phase, [t.location.x as f32, t.location.y as f32], size.width, size.height)
+        {
+            self.pad.touch.clear();
+            self.pad.touch.ignore(t.id);
+            return Ok(true);
+        }
         if (self.pad_in_menu() || horizon_client::recorder::hiding_controls())
             && !self.pad.touch_ui.owns_relative(t.id)
             && !self.pad.touch_ui.owns_gesture(t.id)
@@ -1603,5 +1637,212 @@ impl Game<'_> {
                 );
             }
         }
+    }
+
+    #[cfg(target_os = "android")]
+    fn android_updater_modal_rects(w: f32, h: f32) -> ([f32; 4], [f32; 4], [f32; 4]) {
+        let mw = 390.0_f32.min(w - 32.0);
+        let mh = 230.0_f32.min(h - 32.0);
+        let mx = (w - mw) * 0.5;
+        let my = (h - mh) * 0.5;
+        let btn_y = my + mh - 50.0;
+        let btn_w = (mw - 52.0) * 0.5;
+        let later_r = [mx + 20.0, btn_y, btn_w, 34.0];
+        let action_r = [mx + 32.0 + btn_w, btn_y, btn_w, 34.0];
+        ([mx, my, mw, mh], later_r, action_r)
+    }
+
+    #[cfg(target_os = "android")]
+    fn android_updater_modal_active() -> Option<crate::updater::UpdateStatus> {
+        let status = crate::updater::get_status();
+        match &status {
+            crate::updater::UpdateStatus::Available(_)
+            | crate::updater::UpdateStatus::Downloading { .. }
+            | crate::updater::UpdateStatus::Downloaded { .. } => Some(status),
+            crate::updater::UpdateStatus::Error(_) if crate::updater::last_release_info().is_some() => {
+                Some(status)
+            }
+            _ => None,
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub(super) fn android_draw_updater_modal(&self, hud: &mut HudBatch) {
+        use horizon_client::ui_theme::{Face, Icon, Ui, active_theme};
+        static IN_GAME_CHECK: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        if !self.pad_in_menu() || self.pad.touch_ui.floating_menu {
+            return;
+        }
+        if !IN_GAME_CHECK.swap(true, std::sync::atomic::Ordering::Relaxed)
+            && crate::updater::get_status() == crate::updater::UpdateStatus::Idle
+        {
+            crate::updater::check_in_background();
+        }
+        let Some(status) = Self::android_updater_modal_active() else {
+            return;
+        };
+        let mut ui = Ui::mobile(&self.gui.atlas, hud, (0.0, 0.0));
+        let theme = active_theme();
+        let (modal_r, later_r, action_r) = Self::android_updater_modal_rects(ui.w, ui.h);
+        let [mx, my, mw, mh] = modal_r;
+
+        ui.rect(0.0, 0.0, ui.w, ui.h, 0x9900_0000);
+        ui.rounded(mx, my, mw, mh, 20.0, theme.bg_solid);
+        ui.stroke_rounded(mx, my, mw, mh, 20.0, 1.5, theme.accent);
+
+        ui.rounded(mx + 20.0, my + 18.0, 38.0, 38.0, 12.0, theme.accent_soft);
+        ui.icon(Icon::HorizonLogo, mx + 29.0, my + 27.0, 20.0, theme.accent);
+        ui.text(
+            Face::SemiBold,
+            16.5,
+            mx + 68.0,
+            my + 19.0,
+            theme.text_primary,
+            "Volt Plus Update",
+        );
+
+        let info = crate::updater::last_release_info();
+        let ver_badge = if let Some(ref rel) = info {
+            format!("v{}  ->  v{}", crate::backend::VERSION, rel.version)
+        } else if let crate::updater::UpdateStatus::Downloaded { ref version, .. } = status {
+            format!("v{}  ->  v{}", crate::backend::VERSION, version)
+        } else {
+            format!("v{}", crate::backend::VERSION)
+        };
+        ui.text(Face::Medium, 11.5, mx + 68.0, my + 40.0, theme.accent_text, &ver_badge);
+
+        match &status {
+            crate::updater::UpdateStatus::Available(rel) => {
+                let note = rel
+                    .changelog
+                    .lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("New release available on GitHub.");
+                let fitted = ui.fit_text(Face::Regular, 11.5, note, mw - 44.0);
+                ui.text(Face::Regular, 11.5, mx + 22.0, my + 74.0, theme.text_muted, &fitted);
+                ui.text(
+                    Face::Regular,
+                    10.5,
+                    mx + 22.0,
+                    my + 98.0,
+                    theme.text_muted,
+                    &ui.fit_text(Face::Regular, 10.5, &rel.asset_name, mw - 44.0),
+                );
+            }
+            crate::updater::UpdateStatus::Downloading {
+                progress,
+                downloaded,
+                total,
+            } => {
+                let pct = (progress * 100.0).clamp(0.0, 100.0);
+                let label = if *total > 0 {
+                    format!(
+                        "Downloading APK... {pct:.0}% ({:.1} / {:.1} MB)",
+                        *downloaded as f32 / 1_048_576.0,
+                        *total as f32 / 1_048_576.0
+                    )
+                } else {
+                    format!("Downloading APK... {pct:.0}%")
+                };
+                ui.text(Face::Medium, 12.0, mx + 22.0, my + 82.0, theme.text_primary, &label);
+                ui.rounded(mx + 22.0, my + 112.0, mw - 44.0, 10.0, 5.0, theme.surface);
+                ui.rounded(
+                    mx + 22.0,
+                    my + 112.0,
+                    ((mw - 44.0) * progress.clamp(0.04, 1.0)).max(10.0),
+                    10.0,
+                    5.0,
+                    theme.accent,
+                );
+            }
+            crate::updater::UpdateStatus::Downloaded { version, .. } => {
+                ui.text(
+                    Face::Medium,
+                    12.0,
+                    mx + 22.0,
+                    my + 86.0,
+                    theme.text_primary,
+                    &format!("Volt Plus v{version} is ready to install."),
+                );
+            }
+            crate::updater::UpdateStatus::Error(err) => {
+                let fitted = ui.fit_text(Face::Regular, 11.0, err, mw - 44.0);
+                ui.text(Face::Regular, 11.0, mx + 22.0, my + 86.0, theme.text_muted, &fitted);
+            }
+            _ => {}
+        }
+
+        ui.rounded(later_r[0], later_r[1], later_r[2], later_r[3], 14.0, theme.surface);
+        ui.border(later_r[0], later_r[1], later_r[2], later_r[3], 14.0, theme.border);
+        ui.centered_fit(Face::Medium, 12.5, later_r, theme.text_primary, "Later");
+
+        let action_label = match &status {
+            crate::updater::UpdateStatus::Available(_) => "Update Now",
+            crate::updater::UpdateStatus::Downloading { .. } => "Downloading...",
+            crate::updater::UpdateStatus::Downloaded { .. } => "Install APK",
+            crate::updater::UpdateStatus::Error(_) => "Retry",
+            _ => "Update",
+        };
+        ui.rounded(
+            action_r[0],
+            action_r[1],
+            action_r[2],
+            action_r[3],
+            14.0,
+            theme.accent,
+        );
+        ui.centered_fit(Face::SemiBold, 12.5, action_r, theme.on_accent, action_label);
+        ui.finish();
+    }
+
+    #[cfg(target_os = "android")]
+    pub(super) fn android_updater_modal_touch(
+        &mut self,
+        phase: TouchPhase,
+        phys_pos: [f32; 2],
+        width_px: u32,
+        height_px: u32,
+    ) -> bool {
+        let Some(status) = Self::android_updater_modal_active() else {
+            return false;
+        };
+        let mut dummy = HudBatch::new([width_px, height_px]);
+        let ui = horizon_client::ui_theme::Ui::mobile(&self.gui.atlas, &mut dummy, (0.0, 0.0));
+        let p = [phys_pos[0] / ui.density, phys_pos[1] / ui.density];
+        let (_modal_r, later_r, action_r) = Self::android_updater_modal_rects(ui.w, ui.h);
+        ui.finish();
+        if phase == TouchPhase::Started {
+            let hit = |r: [f32; 4]| {
+                p[0] >= r[0] && p[0] <= r[0] + r[2] && p[1] >= r[1] && p[1] <= r[1] + r[3]
+            };
+            if hit(later_r) {
+                crate::updater::dismiss();
+                self.audio.play_button_click();
+                self.android_touch_haptic(10);
+            } else if hit(action_r) {
+                self.audio.play_button_click();
+                self.android_touch_haptic(12);
+                match status {
+                    crate::updater::UpdateStatus::Available(info) => {
+                        let home = std::env::current_dir()
+                            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                        crate::updater::download_and_install_in_background(info, home);
+                    }
+                    crate::updater::UpdateStatus::Downloaded { path, .. } => {
+                        crate::updater::trigger_install(&path);
+                    }
+                    crate::updater::UpdateStatus::Error(_) => {
+                        if let Some(info) = crate::updater::last_release_info() {
+                            let home = std::env::current_dir()
+                                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                            crate::updater::download_and_install_in_background(info, home);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        true
     }
 }

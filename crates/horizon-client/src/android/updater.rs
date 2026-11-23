@@ -9,7 +9,7 @@ use std::{
 };
 
 pub const CURRENT_VERSION: &str = "1.0.1";
-pub const REPO: &str = "GoyDevv/Horizon-Android";
+pub const REPO: &str = "entitybrian69-bit/volt-plus";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReleaseInfo {
@@ -41,6 +41,7 @@ pub enum UpdateStatus {
 }
 
 static STATUS: Mutex<Option<UpdateStatus>> = Mutex::new(None);
+static LAST_INFO: Mutex<Option<ReleaseInfo>> = Mutex::new(None);
 static CHECKING: AtomicBool = AtomicBool::new(false);
 static DOWNLOADING: AtomicBool = AtomicBool::new(false);
 
@@ -52,7 +53,17 @@ pub fn get_status() -> UpdateStatus {
         .unwrap_or(UpdateStatus::Idle)
 }
 
+pub fn last_release_info() -> Option<ReleaseInfo> {
+    LAST_INFO
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 pub fn set_status(new_status: UpdateStatus) {
+    if let UpdateStatus::Available(ref info) = new_status {
+        *LAST_INFO.lock().unwrap_or_else(|e| e.into_inner()) = Some(info.clone());
+    }
     *STATUS.lock().unwrap_or_else(|e| e.into_inner()) = Some(new_status);
 }
 
@@ -80,7 +91,7 @@ pub fn is_newer_version(remote: &str, current: &str) -> bool {
 pub fn check_for_update() -> Result<Option<ReleaseInfo>, String> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
     let resp = ureq::get(&url)
-        .set("User-Agent", &format!("Horizon-Android/{CURRENT_VERSION}"))
+        .set("User-Agent", &format!("VoltPlus-Android/{CURRENT_VERSION}"))
         .set("Accept", "application/vnd.github.v3+json")
         .timeout(std::time::Duration::from_secs(12))
         .call()
@@ -104,17 +115,36 @@ pub fn check_for_update() -> Result<Option<ReleaseInfo>, String> {
     }
 
     let mut download_url = None;
-    let mut asset_name = format!("horizon-{tag}.apk");
+    let mut asset_name = format!("volt-plus-{tag}.apk");
     let mut size_bytes = 0u64;
 
     if let Some(assets) = val["assets"].as_array() {
+        let preferred_abi = if cfg!(target_arch = "aarch64") {
+            "arm64-v8a"
+        } else if cfg!(target_arch = "arm") {
+            "armeabi-v7a"
+        } else {
+            "universal"
+        };
+        let mut best_score = 0u8;
         for asset in assets {
             let a_name = asset["name"].as_str().unwrap_or("");
-            if a_name.ends_with(".apk") {
+            if !a_name.ends_with(".apk") {
+                continue;
+            }
+            let lower = a_name.to_ascii_lowercase();
+            let score = if lower.contains(preferred_abi) {
+                3
+            } else if lower.contains("universal") {
+                2
+            } else {
+                1
+            };
+            if score > best_score {
+                best_score = score;
                 asset_name = a_name.to_owned();
                 download_url = asset["browser_download_url"].as_str().map(str::to_owned);
                 size_bytes = asset["size"].as_u64().unwrap_or(0);
-                break;
             }
         }
     }
@@ -184,7 +214,7 @@ pub fn download_and_install_in_background(info: ReleaseInfo, home: PathBuf) {
                 let apk_path = updates_dir.join(&info.asset_name);
 
                 let resp = ureq::get(&url)
-                    .set("User-Agent", &format!("Horizon-Android/{CURRENT_VERSION}"))
+                    .set("User-Agent", &format!("VoltPlus-Android/{CURRENT_VERSION}"))
                     .timeout(std::time::Duration::from_secs(60))
                     .call()
                     .map_err(|e| format!("Failed to download update: {e}"))?;

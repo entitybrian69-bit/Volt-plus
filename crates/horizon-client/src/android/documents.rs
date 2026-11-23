@@ -309,7 +309,7 @@ pub fn begin_control_import(game_home: PathBuf) -> std::result::Result<(), Strin
         return Err("Android document picker is unavailable".into());
     }
     notice(
-        "Choose a control preset (.json). Java layouts can be saved, but are not active yet.",
+        "Choose a PojavLauncher, Zalith, MCPE, or GoyControl preset (.json).",
         false,
     );
     Ok(())
@@ -762,19 +762,13 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
             return Err("Import cancelled".into());
         }
         if horizon_client::java_layout_store::looks_like_java(&bytes) {
-            let (format, _) = horizon_client::java_layout_store::store(&request.home, &bytes)?;
-            let name = match format {
-                horizon_client::java_layout_store::Format::Pojav => "Pojav",
-                horizon_client::java_layout_store::Format::Zalith => "Zalith",
-            };
-            notice(format!("{name} layout saved, but Java controls are not available yet. Existing controls were not changed."), false);
-            return Ok(());
+            let _ = horizon_client::java_layout_store::store(&request.home, &bytes);
         }
         let meta =
             horizon_client::touch::Settings::detect_and_import_preset(&request.home, &bytes, &name)?;
         notice(
             format!(
-                "Imported {} preset '{}' into {}/{}.json",
+                "Imported and activated {} preset '{}' ({}/{}.json)",
                 meta.system.label(),
                 meta.name,
                 meta.system.storage_subdir(),

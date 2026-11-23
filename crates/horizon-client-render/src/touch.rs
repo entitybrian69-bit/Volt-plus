@@ -30,6 +30,7 @@ pub fn set_current_hud_opacity_scale(scale: f32) {
 
 pub mod custom;
 pub mod editor;
+pub mod java_import;
 pub use custom::CustomButton;
 pub use editor::{Editor, EditorDragKind, PickerStep};
 pub mod layout;
@@ -198,6 +199,7 @@ pub struct TouchControls {
     pub in_inventory: bool,
     /// True when `touch_ui::draw_goy_hud` renders GoyControl with `Ui::mobile` so `TouchControls::draw` skips duplicate boxy drawing.
     pub goy_rendered_by_ui: bool,
+    pub hide_non_always_visible: bool,
     pub inventory_shift: bool,
     pub editor: Option<editor::Editor>,
     fingers: BTreeMap<u64, (Role, [f32; 2])>,
@@ -248,6 +250,7 @@ impl Default for TouchControls {
             in_menu: false,
             in_inventory: false,
             goy_rendered_by_ui: false,
+            hide_non_always_visible: false,
             editor: None,
             fingers: BTreeMap::new(),
             passthrough_fingers: BTreeSet::new(),

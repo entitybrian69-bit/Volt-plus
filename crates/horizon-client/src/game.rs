@@ -15194,6 +15194,7 @@ impl Game<'_> {
                         &self.pad.touch.settings,
                     );
                 }
+                self.android_draw_updater_modal(&mut hud);
                 if let Some(status) = shader_packs::pending_shader_pack_status() {
                     let mut ui =
                         horizon_client::ui_theme::Ui::mobile(&self.gui.atlas, &mut hud, (0.0, 0.0));

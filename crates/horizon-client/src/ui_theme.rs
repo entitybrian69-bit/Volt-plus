@@ -439,17 +439,12 @@ static HORIZON_LOGO_RUNS: [(u8, u8, u8, u8, u8); 998] = [
 fn icon_hit(icon: Icon, u: f32, v: f32) -> bool {
     match icon {
         Icon::HorizonLogo => {
-            // Single-colour Horizon sunset mark: a half sun with two gaps over a city skyline.
-            let dx = u - 0.50;
-            let dy = v - 0.56;
-            let sun = dy <= 0.0
-                && (dx * dx + dy * dy).sqrt() <= 0.31
-                && !(v >= 0.43 && v < 0.47)
-                && !(v >= 0.50 && v < 0.54);
-            let tower_a = u >= 0.08 && u <= 0.30 && v >= 0.66 && v <= 0.90;
-            let tower_b = u >= 0.34 && u <= 0.66 && v >= 0.72 && v <= 0.90;
-            let tower_c = u >= 0.70 && u <= 0.92 && v >= 0.60 && v <= 0.90;
-            sun || tower_a || tower_b || tower_c
+            // Volt+ "V+" mark: bold V on the left, crisp + on the right.
+            let v_left = seg_dist(u, v, 0.14, 0.24, 0.34, 0.78) <= 0.085;
+            let v_right = seg_dist(u, v, 0.34, 0.78, 0.54, 0.24) <= 0.085;
+            let plus_h = seg_dist(u, v, 0.60, 0.50, 0.88, 0.50) <= 0.075;
+            let plus_v = seg_dist(u, v, 0.74, 0.36, 0.74, 0.64) <= 0.075;
+            v_left || v_right || plus_h || plus_v
         }
         Icon::ChevronDown => {
             seg_dist(u, v, 0.24, 0.38, 0.50, 0.64) <= 0.075
@@ -3628,39 +3623,41 @@ fn wordmark(atlas: &HudAtlas, batch: &mut HudBatch) {
     let top = (ui.h - block) / 2.0;
     let cx = ui.w / 2.0;
 
-    // Crisp vector H mark centered symmetrically above the wordmark
-    let mark_s = (size * 0.62).clamp(28.0, 52.0);
-    let mark_cy = (top - mark_s * 0.72).max(mark_s * 0.6);
-    let bar_w = (mark_s * 0.14).max(3.0);
-    let bar_h = (mark_s * 0.56).max(10.0);
-    let off_x = mark_s * 0.18;
+    // Crisp Volt+ V+ emblem badge centered symmetrically above the wordmark
+    let mark_s = (size * 0.78).clamp(34.0, 62.0);
+    let mark_cy = (top - mark_s * 0.74).max(mark_s * 0.62);
+    let badge_w = mark_s * 1.32;
+    let badge_h = mark_s * 0.86;
+    let badge_x = cx - badge_w * 0.5;
+    let badge_y = mark_cy - badge_h * 0.5;
     let accent = active_theme().accent;
     ui.rounded(
-        cx - off_x - bar_w * 0.5,
-        mark_cy - bar_h * 0.5,
-        bar_w,
-        bar_h,
-        bar_w * 0.5,
-        BOOT_TEXT,
+        badge_x,
+        badge_y,
+        badge_w,
+        badge_h,
+        badge_h * 0.32,
+        color::with_alpha(accent, 0.16),
     );
-    ui.rounded(
-        cx + off_x - bar_w * 0.5,
-        mark_cy - bar_h * 0.5,
-        bar_w,
-        bar_h,
-        bar_w * 0.5,
+    ui.stroke_rounded(
+        badge_x,
+        badge_y,
+        badge_w,
+        badge_h,
+        badge_h * 0.32,
+        1.6,
         accent,
     );
-    ui.rounded(
-        cx - off_x,
-        mark_cy - bar_w * 0.45,
-        off_x * 2.0,
-        bar_w * 0.9,
-        bar_w * 0.45,
-        accent,
-    );
+    let mark_font = (badge_h * 0.64).clamp(16.0, 40.0);
+    let v_w = ui.measure(Face::SemiBold, mark_font, "V");
+    let p_w = ui.measure(Face::SemiBold, mark_font, "+");
+    let total_mark_w = v_w + p_w;
+    let mark_tx = cx - total_mark_w * 0.5;
+    let mark_ty = badge_y + (badge_h - mark_font * 1.15) * 0.5;
+    ui.text(Face::SemiBold, mark_font, mark_tx, mark_ty, BOOT_TEXT, "V");
+    ui.text(Face::SemiBold, mark_font, mark_tx + v_w, mark_ty, accent, "+");
 
-    ui.text_centered(Face::SemiBold, size, cx, top, BOOT_TEXT, "Horizon");
+    ui.text_centered(Face::SemiBold, size, cx, top, BOOT_TEXT, "Volt+");
     let sub_y = top + size * 1.45 + small * 0.6;
     ui.text_centered(
         Face::Mono,
@@ -3668,7 +3665,7 @@ fn wordmark(atlas: &HudAtlas, batch: &mut HudBatch) {
         cx,
         sub_y,
         BOOT_LOG,
-        "Rust based minecraft client",
+        "Volt Launcher Plus",
     );
 
     // Symmetrical centered startup progress bar below the tagline

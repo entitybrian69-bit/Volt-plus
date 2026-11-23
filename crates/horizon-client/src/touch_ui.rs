@@ -2381,21 +2381,21 @@ impl TouchUi {
                 return Some(InGameMenuAction::Close);
             }
 
-            // The header tile is the way back out of a category page.
-            if self.hub_page == 1 && inside([dx + 14.0, dy + 9.0, 32.0, 30.0]) {
+            // The header Back pill returns from a category page to the radial home hub.
+            if self.hub_page == 1 && inside([dx + 14.0, dy + 9.0, 64.0, 30.0]) {
                 self.hub_page = 0;
                 self.page_anim.set(0.0);
                 return Some(InGameMenuAction::Close);
             }
 
             // Home page: the ring is the navigation, and a tap on a segment opens that
-            // category's own page.
+            // category's own page; the right-side quick card opens the Control Editor.
             if self.hub_page == 0 {
                 let (hcx, hcy, hr) = hub_home_wheel(dx, dy, dw, dh);
                 let off_x = p[0] - hcx;
                 let off_y = p[1] - hcy;
                 let reach = (off_x * off_x + off_y * off_y).sqrt();
-                if (hr - 30.0..=hr + 26.0).contains(&reach) {
+                if (hr - 32.0..=hr + 30.0).contains(&reach) {
                     let step = std::f32::consts::TAU / 6.0;
                     let mut angle = off_x.atan2(-off_y);
                     if angle < 0.0 {
@@ -2410,6 +2410,28 @@ impl TouchUi {
                     self.tab_anim.set(0.0);
                     self.last_anim_tick.set(None);
                     self.refresh_presets_cache(settings.control_style);
+                    return Some(InGameMenuAction::Close);
+                }
+                let rx = dx + dw * 0.56;
+                let rw = (dw - (rx - dx) - 18.0).max(120.0);
+                let card_w = (rw - 8.0) * 0.5;
+                let row0_y = dy + 62.0;
+                let row1_y = row0_y + 54.0;
+                if inside([rx, row0_y, card_w, 46.0]) {
+                    self.hub_tab = 0;
+                    self.hub_scroll = 0.0;
+                    self.hub_page = 1;
+                } else if inside([rx + card_w + 8.0, row0_y, card_w, 46.0]) {
+                    self.hub_tab = 2;
+                    self.hub_scroll = 0.0;
+                    self.hub_page = 1;
+                } else if inside([rx, row1_y, rw, 46.0]) {
+                    self.hub_tab = 1;
+                    self.hub_scroll = 0.0;
+                    self.hub_page = 1;
+                } else if inside([rx, row1_y + 56.0, rw, 34.0]) {
+                    self.floating_menu = false;
+                    return Some(InGameMenuAction::OpenControlEditor);
                 }
                 return Some(InGameMenuAction::Close);
             }
@@ -2910,19 +2932,23 @@ impl TouchUi {
                 ui.fill(btn_x + 2.0, btn_y + 4.0, 2.0, btn_h - 6.0, hi_bevel);
                 ui.fill(btn_x + 2.0, btn_y + btn_h - 4.0, btn_w - 4.0, 2.0, lo_bevel);
                 ui.fill(btn_x + btn_w - 4.0, btn_y + 4.0, 2.0, btn_h - 6.0, lo_bevel);
-                // Three crisp MCPE '...' pixel squares with classic 1px drop shadow
-                let dot_sz = 4.5;
-                let dot_gap = 4.5;
-                let total_dots_w = dot_sz * 3.0 + dot_gap * 2.0;
-                let start_dx = btn_x + (btn_w - total_dots_w) * 0.5;
-                let dot_y = btn_y + (btn_h - dot_sz) * 0.5;
-                let dot_fg = scale_rgba(248, 249, 252, 250);
-                let dot_sh = scale_rgba(24, 26, 32, 220);
-                for di in 0..3 {
-                    let dx_i = start_dx + di as f32 * (dot_sz + dot_gap);
-                    ui.fill(dx_i + 1.0, dot_y + 1.0, dot_sz, dot_sz, dot_sh);
-                    ui.fill(dx_i, dot_y, dot_sz, dot_sz, dot_fg);
-                }
+                // Crisp MCPE stone-bevel "V+" button with classic 1px drop shadow
+                let v_fg = scale_rgba(248, 249, 252, 250);
+                let v_sh = scale_rgba(24, 26, 32, 220);
+                ui.centered_fit(
+                    Face::SemiBold,
+                    15.0,
+                    [btn_x + 1.0, btn_y + 1.0, btn_w, btn_h],
+                    v_sh,
+                    "V+",
+                );
+                ui.centered_fit(
+                    Face::SemiBold,
+                    15.0,
+                    [btn_x, btn_y, btn_w, btn_h],
+                    v_fg,
+                    "V+",
+                );
             } else {
                 let btn_w = 48.0;
                 let btn_h = 42.0;
@@ -2961,13 +2987,11 @@ impl TouchUi {
                         bubble_alpha,
                     ),
                 );
-                // The button is Volt+'s own: the mark, not a glyph, so it is recognisable
-                // at a glance in a menu.
-                ui.icon(
-                    Icon::HorizonLogo,
-                    btn_x + (btn_w - 22.0) * 0.5,
-                    btn_y + (btn_h - 22.0) * 0.5,
-                    22.0,
+                // Branded Volt+ "V+" floating trigger
+                ui.centered_fit(
+                    Face::SemiBold,
+                    16.0,
+                    [btn_x, btn_y, btn_w, btn_h],
                     color::with_alpha(
                         if self.floating_menu {
                             accent_fg
@@ -2976,6 +3000,7 @@ impl TouchUi {
                         },
                         bubble_alpha,
                     ),
+                    "V+",
                 );
             }
         }
@@ -2996,30 +3021,36 @@ impl TouchUi {
         ui.rounded(dx + 2.0, dy + 6.0, dw, dh, 20.0, rgba(0, 0, 0, 170));
         ui.rounded(dx, dy, dw, dh, 20.0, surface_bg);
 
-        // Left Sidebar Background & Vertical Divider
-        ui.rounded(dx + 2.0, dy + 48.0, side_w, dh - 50.0, 16.0, sidebar_bg);
-        ui.fill(dx + side_w, dy + 48.0, 1.0, dh - 48.0, border_c);
+        // Left Sidebar Background & Vertical Divider only on category sub-pages
+        if self.hub_page == 1 {
+            ui.rounded(dx + 2.0, dy + 48.0, side_w, dh - 50.0, 16.0, sidebar_bg);
+            ui.fill(dx + side_w, dy + 48.0, 1.0, dh - 48.0, border_c);
+        }
         ui.fill(dx, dy + 47.0, dw, 1.0, border_c);
         ui.stroke_rounded(dx, dy, dw, dh, 20.0, 1.4, border_c);
 
         // Top Header Bar with Active Control System Mode Badge
-        ui.rounded(dx + 14.0, dy + 9.0, 30.0, 30.0, 9.0, card_sel);
-        ui.border(dx + 14.0, dy + 9.0, 30.0, 30.0, 9.0, accent);
-        if self.hub_page == 1 {
+        let title_x = if self.hub_page == 1 {
+            ui.rounded(dx + 14.0, dy + 9.0, 64.0, 30.0, 15.0, card_sel);
+            ui.border(dx + 14.0, dy + 9.0, 64.0, 30.0, 15.0, accent);
             ui.centered_fit(
                 Face::SemiBold,
-                15.0,
-                [dx + 14.0, dy + 9.0, 30.0, 30.0],
+                11.0,
+                [dx + 14.0, dy + 9.0, 64.0, 30.0],
                 accent_hi,
-                "\u{2039}",
+                "← Back",
             );
+            dx + 86.0
         } else {
+            ui.rounded(dx + 14.0, dy + 9.0, 30.0, 30.0, 15.0, card_sel);
+            ui.border(dx + 14.0, dy + 9.0, 30.0, 30.0, 15.0, accent);
             ui.icon(Icon::HorizonLogo, dx + 20.0, dy + 15.0, 18.0, accent_hi);
-        }
+            dx + 52.0
+        };
         ui.text(
             Face::SemiBold,
             13.5,
-            dx + 52.0,
+            title_x,
             dy + 8.0,
             text_c,
             "Volt+ Control Hub",
@@ -3027,10 +3058,10 @@ impl TouchUi {
         ui.text(
             Face::Regular,
             9.6,
-            dx + 52.0,
+            title_x,
             dy + 25.0,
             muted_c,
-            "Configure touch controls, virtual mouse & feedback",
+            "Touch controls, virtual mouse & feedback",
         );
 
         // Active Control System Pill Badge in Header
@@ -3039,20 +3070,20 @@ impl TouchUi {
         } else {
             "GoyControl HUD"
         };
-        let badge_w = 104.0;
-        let badge_r = [dx + dw - 188.0, dy + 11.0, badge_w, 26.0];
-        if badge_r[0] > dx + 220.0 {
+        let badge_w = 100.0;
+        let badge_r = [dx + dw - 186.0, dy + 11.0, badge_w, 26.0];
+        if badge_r[0] > title_x + 170.0 {
             ui.rounded(
-                badge_r[0], badge_r[1], badge_r[2], badge_r[3], 8.0, card_sel,
+                badge_r[0], badge_r[1], badge_r[2], badge_r[3], 13.0, card_sel,
             );
-            ui.border(badge_r[0], badge_r[1], badge_r[2], badge_r[3], 8.0, accent);
+            ui.border(badge_r[0], badge_r[1], badge_r[2], badge_r[3], 13.0, accent);
             ui.centered_fit(Face::SemiBold, 9.5, badge_r, accent_hi, mode_badge_txt);
         }
 
-        // "Done" Button in top-right
+        // Circular/pill "Done" Button in top-right
         let done_r = [dx + dw - 76.0, dy + 10.0, 62.0, 28.0];
-        ui.rounded(done_r[0], done_r[1], done_r[2], done_r[3], 9.0, card_bg);
-        ui.border(done_r[0], done_r[1], done_r[2], done_r[3], 9.0, border_c);
+        ui.rounded(done_r[0], done_r[1], done_r[2], done_r[3], 14.0, card_bg);
+        ui.border(done_r[0], done_r[1], done_r[2], done_r[3], 14.0, border_c);
         ui.centered_fit(Face::SemiBold, 11.0, done_r, text_c, "Done");
 
         // Left Sidebar Navigation Tabs (Recommended, Controls, Aiming, Buttons, Advanced, Record)
@@ -3077,45 +3108,46 @@ impl TouchUi {
             let home_span = std::f32::consts::TAU / 6.0;
             let home_top = -std::f32::consts::FRAC_PI_2;
             let home_rot = -(self.hub_tab as f32) * home_span;
-            let ring = hr + 16.0;
+            let ring_outer = hr + 20.0;
             ui.rounded(
-                hcx - ring,
-                cy - ring,
-                ring * 2.0,
-                ring * 2.0,
-                ring,
-                rgba(0, 0, 0, 70),
+                hcx - ring_outer,
+                cy - ring_outer,
+                ring_outer * 2.0,
+                ring_outer * 2.0,
+                ring_outer,
+                rgba(0, 0, 0, 80),
             );
             ui.stroke_rounded(
-                hcx - ring,
-                cy - ring,
-                ring * 2.0,
-                ring * 2.0,
-                ring,
+                hcx - ring_outer,
+                cy - ring_outer,
+                ring_outer * 2.0,
+                ring_outer * 2.0,
+                ring_outer,
                 1.2,
                 border_c,
             );
             for (ti, (ic, lbl)) in tabs.iter().enumerate() {
                 let active = self.hub_tab == ti as u8;
                 let centre = home_top + home_span * ti as f32 + home_rot;
-                let dots = 13;
-                for k in 0..dots {
-                    let t = k as f32 / (dots - 1) as f32;
+                let seg_steps = 36;
+                let band_w = if active { 26.0 } else { 18.0 };
+                let seg_col = if active {
+                    accent
+                } else {
+                    color::with_alpha(card_bg, 1.0)
+                };
+                for k in 0..seg_steps {
+                    let t = k as f32 / (seg_steps - 1) as f32;
                     let angle = centre + (t - 0.5) * (home_span - 0.14);
-                    let dot = if active { 12.0 } else { 6.0 };
                     let x = hcx + angle.cos() * hr;
                     let y = cy + angle.sin() * hr;
                     ui.rounded(
-                        x - dot * 0.5,
-                        y - dot * 0.5,
-                        dot,
-                        dot,
-                        dot * 0.5,
-                        if active {
-                            accent
-                        } else {
-                            color::with_alpha(muted_c, 0.62)
-                        },
+                        x - band_w * 0.5,
+                        y - band_w * 0.5,
+                        band_w,
+                        band_w,
+                        band_w * 0.5,
+                        seg_col,
                     );
                 }
                 let ix = hcx + centre.cos() * hr;
@@ -3125,56 +3157,71 @@ impl TouchUi {
                     ix - 9.0,
                     iy - 9.0,
                     18.0,
-                    if active { accent_fg } else { muted_c },
+                    if active { accent_fg } else { text_c },
                 );
                 if active {
                     let lx = hcx + centre.cos() * (hr + 30.0) - 44.0;
                     let ly = cy + centre.sin() * (hr + 30.0) - 6.0;
-                    ui.centered_fit(Face::SemiBold, 8.8, [lx, ly, 88.0, 12.0], text_c, *lbl);
+                    ui.centered_fit(Face::SemiBold, 9.2, [lx, ly, 88.0, 12.0], accent_hi, *lbl);
                 }
             }
-            // The centre disc carries the headline value, as the mockup's does.
-            ui.rounded(hcx - 54.0, cy - 54.0, 108.0, 108.0, 54.0, card_sel);
-            ui.border(hcx - 54.0, cy - 54.0, 108.0, 108.0, 54.0, accent);
+            // Center disc with Volt+ headline metric
+            ui.rounded(hcx - 50.0, cy - 50.0, 100.0, 100.0, 50.0, surface_bg);
+            ui.border(hcx - 50.0, cy - 50.0, 100.0, 100.0, 50.0, accent);
             let headline = format!("{}%", settings.resolution_scale_percent);
             ui.centered_fit(
                 Face::SemiBold,
-                27.0,
-                [hcx - 52.0, cy - 24.0, 104.0, 32.0],
+                25.0,
+                [hcx - 46.0, cy - 22.0, 92.0, 30.0],
                 text_c,
                 &headline,
             );
             ui.centered_fit(
                 Face::Regular,
-                8.4,
-                [hcx - 52.0, cy + 10.0, 104.0, 12.0],
+                8.5,
+                [hcx - 46.0, cy + 10.0, 92.0, 12.0],
                 muted_c,
                 "resolution",
             );
-            // Live readouts sit to the right of the ring.
+            // Live metric cards + quick Customize HUD action on the right
             let rx = dx + dw * 0.56;
             let rw = (dw - (rx - dx) - 18.0).max(120.0);
+            let card_w = (rw - 8.0) * 0.5;
             let look = format!("{:.0}%", settings.sensitivity * 100.0 / 3.0);
+            let res_str = format!("{}%", settings.resolution_scale_percent);
             let system = if settings.control_style == ControlStyle::Mcpe {
                 "MCPE"
             } else {
                 "GoyControl"
             };
-            let mut ry = dy + 62.0;
-            for (label, value) in [("Touch look", look.as_str()), ("Control system", system)] {
-                ui.rounded(rx, ry, rw, 46.0, 12.0, card_bg);
-                ui.border(rx, ry, rw, 46.0, 12.0, border_c);
-                ui.text(Face::Regular, 8.8, rx + 14.0, ry + 9.0, muted_c, label);
-                ui.text(Face::SemiBold, 15.0, rx + 14.0, ry + 21.0, text_c, value);
-                ry += 56.0;
+            let row0_y = dy + 62.0;
+            for (ci, (lbl, val)) in [("Resolution", res_str.as_str()), ("Touch Look", look.as_str())]
+                .into_iter()
+                .enumerate()
+            {
+                let cx_i = rx + ci as f32 * (card_w + 8.0);
+                ui.rounded(cx_i, row0_y, card_w, 46.0, 12.0, card_bg);
+                ui.border(cx_i, row0_y, card_w, 46.0, 12.0, border_c);
+                ui.text(Face::Regular, 8.6, cx_i + 12.0, row0_y + 8.0, muted_c, lbl);
+                ui.text(Face::SemiBold, 14.0, cx_i + 12.0, row0_y + 21.0, text_c, val);
             }
+            let row1_y = row0_y + 54.0;
+            ui.rounded(rx, row1_y, rw, 46.0, 12.0, card_bg);
+            ui.border(rx, row1_y, rw, 46.0, 12.0, border_c);
+            ui.text(Face::Regular, 8.6, rx + 12.0, row1_y + 8.0, muted_c, "Control system");
+            ui.text(Face::SemiBold, 14.0, rx + 12.0, row1_y + 21.0, text_c, system);
+
+            let edit_btn = [rx, row1_y + 56.0, rw, 34.0];
+            ui.rounded(edit_btn[0], edit_btn[1], edit_btn[2], edit_btn[3], 14.0, accent);
+            ui.centered_fit(Face::SemiBold, 11.5, edit_btn, accent_fg, "Customize HUD Layout");
+
             ui.text(
                 Face::Regular,
-                9.0,
+                8.8,
                 rx,
-                ry + 6.0,
+                row1_y + 98.0,
                 muted_c,
-                "Tap a category to open it",
+                "Tap any ring segment or metric card to configure",
             );
             ui.finish();
             return;
@@ -3210,36 +3257,31 @@ impl TouchUi {
         for (ti, (ic, _lbl)) in tabs.iter().enumerate() {
             let active = self.hub_tab == ti as u8;
             let centre = wheel_top + wheel_span * ti as f32 + wheel_rot;
-            // The arc is drawn as overlapping dots: a dot is rotation-invariant, so the ring
-            // stays round at every radius without needing a stroked-arc primitive.
-            let dots = 11;
-            for k in 0..dots {
-                let t = k as f32 / (dots - 1) as f32;
+            let seg_steps = 28;
+            let band_w = if active { 16.0 } else { 11.0 };
+            let seg_col = if active { accent } else { card_bg };
+            for k in 0..seg_steps {
+                let t = k as f32 / (seg_steps - 1) as f32;
                 let angle = centre + (t - 0.5) * (wheel_span - 0.16);
-                let dot = if active { 9.0 } else { 5.0 };
                 let x = wcx + angle.cos() * wr;
                 let y = wcy + angle.sin() * wr;
                 ui.rounded(
-                    x - dot * 0.5,
-                    y - dot * 0.5,
-                    dot,
-                    dot,
-                    dot * 0.5,
-                    if active {
-                        accent
-                    } else {
-                        color::with_alpha(muted_c, 0.62)
-                    },
+                    x - band_w * 0.5,
+                    y - band_w * 0.5,
+                    band_w,
+                    band_w,
+                    band_w * 0.5,
+                    seg_col,
                 );
             }
             let ix = wcx + centre.cos() * wr;
             let iy = wcy + centre.sin() * wr;
             ui.icon(
                 *ic,
-                ix - 8.0,
-                iy - 8.0,
-                16.0,
-                if active { accent_fg } else { muted_c },
+                ix - 7.5,
+                iy - 7.5,
+                15.0,
+                if active { accent_fg } else { text_c },
             );
         }
         // The centre names the selected category, so the ring itself stays icon-only.

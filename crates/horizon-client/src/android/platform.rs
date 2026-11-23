@@ -321,7 +321,7 @@ pub fn cache_dir() -> Option<std::path::PathBuf> {
 }
 
 pub fn open_repository() -> bool {
-    open_url("https://github.com/GoyDevv/Horizon-Android")
+    open_url("https://github.com/entitybrian69-bit/volt-plus")
 }
 /// Browse our SAF directory through the system file manager, never a private path.
 pub fn open_documents(id: &str) -> bool {

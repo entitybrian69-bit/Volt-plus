@@ -29,9 +29,8 @@ const VERSION: &str = "1.0.1";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Where the button on the card leads.
 const DOWNLOAD_URL: &str = "https://github.com/entitybrian69-bit/volt-plus";
-/// The logo the phone's card shows: a picture address Discord fetches itself, pinned to the
-/// commit that added it so it cannot change under the card.
-const LOGO_URL: &str = "https://raw.githubusercontent.com/entitybrian69-bit/volt-plus/ed65ec90fad334947e1dd12825e74569e7ed7749/packaging/android/res/drawable-nodpi/launcher_icon.png";
+/// The logo the phone's card shows: a picture address Discord fetches itself.
+const LOGO_URL: &str = "https://raw.githubusercontent.com/entitybrian69-bit/volt-plus/main/packaging/android/res/drawable-nodpi/launcher_icon.png";
 /// The Rich Presence assets the card draws, by the names they must be uploaded under in the
 /// developer portal: the square logo, and one 512x512 picture a dimension.
 const LOGO_ASSET: &str = "volt";
@@ -219,6 +218,7 @@ pub fn set(status: Status) {
 /// On quit: clears the activity, waiting at most a moment for Discord.
 pub fn stop() {
     if let Some(sink) = SINK.get() {
+        lock().wanted.status = Status::Off;
         (sink.clear)();
         return;
     }

@@ -485,18 +485,18 @@ pub enum VoltFocus {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Rect {
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
+pub(crate) struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
 }
 
 impl Rect {
-    fn contains(self, p: (f32, f32)) -> bool {
+    pub(crate) fn contains(self, p: (f32, f32)) -> bool {
         ui::hovered(p, self.x, self.y, self.w, self.h)
     }
-    fn array(self) -> [f32; 4] {
+    pub(crate) fn array(self) -> [f32; 4] {
         [self.x, self.y, self.w, self.h]
     }
 }
@@ -533,9 +533,9 @@ enum LaidRow {
     },
 }
 
-const GROUP_HEIGHT: f32 = 17.0;
-const ROW_HEIGHT: f32 = 20.0;
-const ROW_STRIDE: f32 = 22.0;
+pub(crate) const GROUP_HEIGHT: f32 = 17.0;
+pub(crate) const ROW_HEIGHT: f32 = 20.0;
+pub(crate) const ROW_STRIDE: f32 = 22.0;
 
 pub struct VoltVideoUi {
     pub tab: VoltTab,
@@ -1903,7 +1903,7 @@ impl VoltVideoUi {
     }
 }
 
-fn cost_color(cost: Cost) -> u32 {
+pub(crate) fn cost_color(cost: Cost) -> u32 {
     match cost {
         Cost::None => rgba(182, 184, 198, 255),
         Cost::Low => rgba(138, 218, 138, 255),
@@ -1913,13 +1913,13 @@ fn cost_color(cost: Cost) -> u32 {
     }
 }
 
-fn with_alpha(color: u32, factor: f32) -> u32 {
+pub(crate) fn with_alpha(color: u32, factor: f32) -> u32 {
     let a = ((color >> 24) & 0xff) as f32;
     let na = (a * factor.clamp(0.0, 1.0)).round() as u32;
     (color & 0x00ff_ffff) | (na << 24)
 }
 
-fn lerp_color(a: u32, b: u32, t: f32) -> u32 {
+pub(crate) fn lerp_color(a: u32, b: u32, t: f32) -> u32 {
     let t = t.clamp(0.0, 1.0);
     let ch = |shift: u32| {
         let ca = ((a >> shift) & 0xff) as f32;
@@ -1929,14 +1929,14 @@ fn lerp_color(a: u32, b: u32, t: f32) -> u32 {
     (ch(24) << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)
 }
 
-fn draw_border(batch: &mut HudBatch, atlas: &HudAtlas, x: f32, y: f32, w: f32, h: f32, color: u32) {
+pub(crate) fn draw_border(batch: &mut HudBatch, atlas: &HudAtlas, x: f32, y: f32, w: f32, h: f32, color: u32) {
     batch.fill(atlas, x, y, w, 1.0, color);
     batch.fill(atlas, x, y + h - 1.0, w, 1.0, color);
     batch.fill(atlas, x, y + 1.0, 1.0, (h - 2.0).max(0.0), color);
     batch.fill(atlas, x + w - 1.0, y + 1.0, 1.0, (h - 2.0).max(0.0), color);
 }
 
-fn fit_with_ellipsis(atlas: &HudAtlas, text: &str, max_width: f32) -> String {
+pub(crate) fn fit_with_ellipsis(atlas: &HudAtlas, text: &str, max_width: f32) -> String {
     if HudBatch::text_width(atlas, text) <= max_width {
         return text.to_owned();
     }

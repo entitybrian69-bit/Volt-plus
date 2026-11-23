@@ -1521,16 +1521,20 @@ impl Settings {
     ) -> std::result::Result<PresetMeta, String> {
         let value: serde_json::Value = serde_json::from_slice(bytes)
             .map_err(|e| format!("Invalid control JSON file: {e}"))?;
-        if value.get("mControlDataList").is_some() || value.get("layers").is_some() {
-            return Err("Pojav and Zalith control layouts are not supported by this importer yet. Your existing controls were not changed.".into());
-        }
-        let recognized = ["layouts", "custom_buttons", "control_style", "button_visibility"]
-            .iter().any(|key| value.get(*key).is_some());
-        if !recognized {
-            return Err("Unrecognized control preset format; existing controls were not changed.".into());
-        }
-        let mut parsed: Self = serde_json::from_value(value.clone())
-            .map_err(|e| format!("Unrecognized control preset format: {e}"))?;
+        let mut parsed: Self = if let Some(java_res) =
+            super::java_import::convert_java_control_json(&value, file_name)
+        {
+            java_res?
+        } else {
+            let recognized = ["layouts", "custom_buttons", "control_style", "button_visibility"]
+                .iter()
+                .any(|key| value.get(*key).is_some());
+            if !recognized {
+                return Err("Unrecognized control preset format; existing controls were not changed.".into());
+            }
+            serde_json::from_value(value.clone())
+                .map_err(|e| format!("Unrecognized control preset format: {e}"))?
+        };
         let style = Self::detect_control_style(&value, &parsed);
         Self::ensure_system_storage(game_home, style);
 
@@ -1691,6 +1695,8 @@ impl Settings {
                 fourth_key: String::new(),
                 custom_label: label.into(),
                 always_visible: in_menu,
+                layer_id: String::new(),
+                hidden: false,
                 layouts: [p; 3],
             }
         };

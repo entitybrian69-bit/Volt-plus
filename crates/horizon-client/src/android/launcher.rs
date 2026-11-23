@@ -261,6 +261,16 @@ impl Launcher {
         // the account pill must have the real face instantly, not after a page visit.
         let mut wardrobe = wardrobe::Wardrobe::new(&home);
         wardrobe.open(&catalog.config.name, &catalog.config.microsoft_client_id);
+        let dp_enabled = horizon_client::settings::Settings::load(
+            &catalog.config.game_dir(&home).join("options.txt"),
+        )
+        .extras
+        .discord_presence;
+        if dp_enabled {
+            crate::discord_presence_android::install(false);
+            horizon_client::discord_presence::start(true, false);
+            horizon_client::discord_presence::set(horizon_client::discord_presence::Status::Menus);
+        }
         Self {
             wardrobe,
             home,
@@ -330,7 +340,17 @@ impl Launcher {
         self.prepared_session = None;
         self.launching = false;
         self.launch_pending_tick = false;
-        horizon_client::discord_presence::stop();
+        let dp_enabled = horizon_client::settings::Settings::load(
+            &self.catalog.config.game_dir(&self.home).join("options.txt"),
+        )
+        .extras
+        .discord_presence;
+        if dp_enabled {
+            crate::discord_presence_android::install(false);
+            horizon_client::discord_presence::set(horizon_client::discord_presence::Status::Menus);
+        } else {
+            horizon_client::discord_presence::stop();
+        }
         horizon_client::ui_theme::reset_atlas();
         self.cursor = (0.0, 0.0);
         self.drag = None;

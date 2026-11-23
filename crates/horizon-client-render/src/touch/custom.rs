@@ -15,6 +15,10 @@ pub struct CustomButton {
     pub custom_label: String,
     #[serde(default)]
     pub always_visible: bool,
+    #[serde(default)]
+    pub layer_id: String,
+    #[serde(default)]
+    pub hidden: bool,
     pub layouts: [Placement; 3],
 }
 impl CustomButton {
@@ -26,6 +30,8 @@ impl CustomButton {
             fourth_key: String::new(),
             custom_label: String::new(),
             always_visible: false,
+            layer_id: String::new(),
+            hidden: false,
             layouts: [Placement::new(
                 0.68 + (index % 3) as f32 * 0.1,
                 0.35 + (index / 3 % 3) as f32 * 0.12,
@@ -39,8 +45,20 @@ impl CustomButton {
             || crate::keybinds::mouse_button(token).is_some()
             || matches!(
                 token,
-                "mouse.scroll.up" | "mouse.scroll.down" | "mouse.virtual.toggle" | "mouse.look"
+                "mouse.scroll.up"
+                    | "mouse.scroll.down"
+                    | "mouse.scroll.up.held"
+                    | "mouse.scroll.down.held"
+                    | "mouse.virtual.toggle"
+                    | "mouse.look"
+                    | "action:horizon.toggle_keyboard"
+                    | "action:horizon.toggle_controls"
+                    | "action:horizon.open_menu"
             )
+            || token.starts_with("action:horizon.switch_layer:")
+            || token.starts_with("action:horizon.show_layer:")
+            || token.starts_with("action:horizon.hide_layer:")
+            || token.starts_with("action:horizon.send_text:")
             || token
                 .strip_prefix("action:")
                 .is_some_and(|name| crate::keybinds::MAPPINGS.iter().any(|m| m.0 == name))
@@ -188,10 +206,17 @@ pub fn friendly_token_name(token: &str) -> String {
         "key.mouse.middle" => "MMB (Pick)".into(),
         "key.mouse.4" => "Mouse 4".into(),
         "key.mouse.5" => "Mouse 5".into(),
-        "mouse.scroll.up" => "Wheel Up".into(),
-        "mouse.scroll.down" => "Wheel Down".into(),
+        "mouse.scroll.up" | "mouse.scroll.up.held" => "Wheel Up".into(),
+        "mouse.scroll.down" | "mouse.scroll.down.held" => "Wheel Down".into(),
         "mouse.virtual.toggle" => "Virtual Mouse".into(),
         "mouse.look" => "Mouse Look".into(),
+        "action:horizon.toggle_keyboard" => "Keyboard".into(),
+        "action:horizon.toggle_controls" => "GUI Toggle".into(),
+        "action:horizon.open_menu" => "Menu".into(),
+        _ if token.starts_with("action:horizon.switch_layer:") => "Layer".into(),
+        _ if token.starts_with("action:horizon.show_layer:") => "Show Layer".into(),
+        _ if token.starts_with("action:horizon.hide_layer:") => "Hide Layer".into(),
+        _ if token.starts_with("action:horizon.send_text:") => "Send Text".into(),
         _ => {
             if let Some(name) = token.strip_prefix("action:") {
                 let tr = crate::text::Text::translate(name, &[]).plain();
@@ -338,9 +363,9 @@ impl TouchControls {
         self.fit_placement(p)
     }
     pub fn custom_visible_for_state(&self, index: usize, in_menu: bool) -> bool {
-        if index >= self.settings.custom_buttons.len() {
+        let Some(btn) = self.settings.custom_buttons.get(index) else {
             return false;
-        }
+        };
         let p = self.custom_placement(index);
         let is_goy =
             self.settings.control_style == layout::ControlStyle::GoyControl || p.use_goy_style;
@@ -350,6 +375,12 @@ impl TouchControls {
         }
         if self.editor.is_some() {
             return true;
+        }
+        if btn.hidden {
+            return false;
+        }
+        if self.hide_non_always_visible && !btn.always_visible {
+            return false;
         }
         if in_menu {
             p.visible_in_menu
@@ -397,6 +428,54 @@ impl TouchControls {
         let placement = self.custom_placement(index);
         self.clicked = true;
         self.custom_swipe_btn.insert(id, index);
+
+        // Apply layout-local layer & control-visibility actions immediately on press.
+        if !is_swipe {
+            let mut local_handled = false;
+            for tok in &active {
+                if tok == "action:horizon.toggle_controls" {
+                    self.hide_non_always_visible = !self.hide_non_always_visible;
+                    local_handled = true;
+                } else if let Some(ids) = tok.strip_prefix("action:horizon.switch_layer:") {
+                    for target in ids.split(',').filter(|s| !s.is_empty()) {
+                        for b in &mut self.settings.custom_buttons {
+                            if b.layer_id == target {
+                                b.hidden = !b.hidden;
+                            }
+                        }
+                    }
+                    local_handled = true;
+                } else if let Some(ids) = tok.strip_prefix("action:horizon.show_layer:") {
+                    for target in ids.split(',').filter(|s| !s.is_empty()) {
+                        for b in &mut self.settings.custom_buttons {
+                            if b.layer_id == target {
+                                b.hidden = false;
+                            }
+                        }
+                    }
+                    local_handled = true;
+                } else if let Some(ids) = tok.strip_prefix("action:horizon.hide_layer:") {
+                    for target in ids.split(',').filter(|s| !s.is_empty()) {
+                        for b in &mut self.settings.custom_buttons {
+                            if b.layer_id == target {
+                                b.hidden = true;
+                            }
+                        }
+                    }
+                    local_handled = true;
+                }
+            }
+            let has_non_local = active.iter().any(|t| {
+                t != "action:horizon.toggle_controls"
+                    && !t.starts_with("action:horizon.switch_layer:")
+                    && !t.starts_with("action:horizon.show_layer:")
+                    && !t.starts_with("action:horizon.hide_layer:")
+            });
+            if local_handled && !has_non_local {
+                self.fingers.insert(id, (Role::Ignore, point));
+                return true;
+            }
+        }
 
         if placement.toggleable && key != "mouse.virtual.toggle" {
             let all_latched = active.iter().all(|t| self.latched_custom.contains(t));

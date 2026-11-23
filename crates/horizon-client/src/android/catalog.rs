@@ -429,6 +429,7 @@ pub enum Page {
     Play,
     Mods,
     Packs,
+    ControlsStudio,
     Shaders,
     Compiler,
     Installed,
@@ -436,10 +437,11 @@ pub enum Page {
     Skins,
 }
 impl Page {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Play,
         Self::Mods,
         Self::Packs,
+        Self::ControlsStudio,
         Self::Shaders,
         Self::Installed,
         Self::Settings,
@@ -450,6 +452,7 @@ impl Page {
             Page::Play => "Play",
             Page::Mods => "Mods",
             Page::Packs => "Resource Pack",
+            Page::ControlsStudio => "Controls Studio",
             Page::Shaders => "Shaders",
             Page::Compiler => "Compiler",
             Page::Installed => "Installed",

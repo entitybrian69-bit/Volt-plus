@@ -13,7 +13,14 @@
          Android 11 and later only let the app see a package it declares here. -->
     <queries>
         <package android:name="com.discord" />
+        <package android:name="com.discord.beta" />
+        <package android:name="com.discord.alpha" />
+        <package android:name="com.discord.canary" />
         <package android:name="cocobo1.pupu.app" />
+        <package android:name="com.aliucord" />
+        <package android:name="app.revenge" />
+        <package android:name="dev.bunny" />
+        <package android:name="app.kettu" />
         <intent>
             <action android:name="com.discord.socialsdk.rpc.IDiscordRpcService" />
         </intent>
