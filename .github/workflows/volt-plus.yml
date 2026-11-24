@@ -12,7 +12,7 @@ on:
         default: false
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 concurrency:
   group: volt-plus-${{ github.ref }}
@@ -378,3 +378,125 @@ jobs:
       - name: Remove signing key
         if: always()
         run: rm -f .local/android/ci.keystore .local/android/debug.keystore
+
+  release:
+    needs: [build, universal]
+    if: github.ref == 'refs/heads/arena/16c8aaea-volt-plus' && needs.build.result == 'success' && needs.universal.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Install Android build tools
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager" ]]; then
+            sdkmanager=$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -n 1)
+          fi
+          test -x "$sdkmanager"
+          "$sdkmanager" --sdk_root="$ANDROID_HOME" 'build-tools;35.0.0'
+      - name: Download signed APK artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --pattern 'volt-plus-*' --dir release-artifacts --repo "$GITHUB_REPOSITORY"
+      - name: Verify APKs and publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, re, shutil, subprocess
+          from pathlib import Path
+
+          tools = Path(os.environ['ANDROID_HOME']) / 'build-tools/35.0.0'
+          aapt = str(tools / 'aapt')
+          apksigner = str(tools / 'lib/apksigner.jar')
+
+          stage = Path('release-files')
+          stage.mkdir(exist_ok=True)
+
+          apks = sorted(Path('release-artifacts').rglob('*.apk'))
+          if len(apks) < 3:
+              raise SystemExit(f'Expected at least 3 APKs, found {len(apks)}: {apks}')
+
+          rows = []
+          sums = []
+          version_name = None
+          version_code = None
+          package_name = None
+          cert_sha256 = None
+
+          for src in apks:
+              dst = stage / src.name
+              shutil.copyfile(src, dst)
+              data = dst.read_bytes()
+              digest = hashlib.sha256(data).hexdigest()
+              size = len(data)
+              sums.append(f'{digest}  {dst.name}')
+
+              badging = subprocess.check_output([aapt, 'dump', 'badging', str(dst)], text=True)
+              m = re.search(r"^package: name='([^']+)' versionCode='(\d+)' versionName='([^']+)'", badging, re.MULTILINE)
+              if not m:
+                  raise SystemExit(f'Failed to parse package metadata for {dst.name}')
+              pkg, vcode, vname = m.group(1), m.group(2), m.group(3)
+              package_name = package_name or pkg
+              version_code = version_code or vcode
+              version_name = version_name or vname
+
+              sig = subprocess.check_output(['java', '-jar', apksigner, 'verify', '--print-certs', str(dst)], text=True)
+              certs = re.findall(r'^Signer #\d+ certificate SHA-256 digest: ([0-9a-fA-F]+)$', sig, re.MULTILINE)
+              if len(certs) != 1:
+                  raise SystemExit(f'Unexpected signer count for {dst.name}: {certs}')
+              if cert_sha256 is None:
+                  cert_sha256 = certs[0].lower()
+              elif certs[0].lower() != cert_sha256:
+                  raise SystemExit(f'Signing certificate mismatch on {dst.name}')
+
+              rows.append((dst.name, size, digest))
+
+          for extra in ('LICENSE.txt', 'THIRD_PARTY_NOTICES.md'):
+              found = next(Path('release-artifacts').rglob(extra), None)
+              if found:
+                  shutil.copyfile(found, stage / extra)
+
+          (stage / 'SHA256SUMS.txt').write_text('\n'.join(sums) + '\n', encoding='utf-8')
+
+          run_number = os.environ['GITHUB_RUN_NUMBER']
+          sha = os.environ['GITHUB_SHA']
+          repo = os.environ['GITHUB_REPOSITORY']
+          run_id = os.environ['GITHUB_RUN_ID']
+          tag = f'v{version_name}-build.{run_number}'
+          title = f'Volt Plus v{version_name} (Build {run_number})'
+
+          notes_lines = [
+              f'## {title}',
+              '',
+              f'- **Package**: `{package_name}`',
+              f'- **Version**: `{version_name}` (`versionCode` `{version_code}`)',
+              f'- **Commit**: `{sha}`',
+              f'- **Signing Cert SHA-256**: `{cert_sha256}`',
+              f'- **CI Run**: https://github.com/{repo}/actions/runs/{run_id}',
+              '',
+              '### Signed APKs',
+              '',
+              '| File | Size (bytes) | SHA-256 |',
+              '| --- | ---: | --- |',
+          ]
+          for fname, size, digest in rows:
+              notes_lines.append(f'| `{fname}` | `{size}` | `{digest}` |')
+          notes_lines.append('')
+          notes_file = Path('release-notes.md')
+          notes_file.write_text('\n'.join(notes_lines), encoding='utf-8')
+
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
+              summary.write('\n'.join(notes_lines) + '\n')
+
+          # Delete existing release/tag only if this run is re-run
+          subprocess.run(['gh', 'release', 'delete', tag, '--repo', repo, '--yes'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+          assets = [str(p) for p in sorted(stage.iterdir())]
+          subprocess.run([
+              'gh', 'release', 'create', tag, *assets,
+              '--repo', repo,
+              '--target', sha,
+              '--title', title,
+              '--notes-file', str(notes_file),
+          ], check=True)
+          print(f'::notice::Published GitHub Release {tag} ({package_name} v{version_name} code {version_code})')
+          PY
