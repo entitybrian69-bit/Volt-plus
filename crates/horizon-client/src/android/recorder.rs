@@ -210,6 +210,22 @@ pub fn refresh(watching: bool) {
     if !status.capability.checked {
         status.capability = capabilities();
     }
+    if status.phase == Phase::Recording
+        && recorder::capture_target().is_none()
+        && status.width > 0
+        && status.height > 0
+        && let Some(window) = engine_window()
+        && window != 0
+    {
+        recorder::set_capture_target(Some(recorder::CaptureTarget {
+            window,
+            width: status.width,
+            height: status.height,
+            serial: recorder::next_capture_serial(),
+        }));
+    } else if !status.phase.active() && recorder::capture_target().is_some() {
+        release_capture();
+    }
     let listing_due = {
         let guard = listed().lock().unwrap_or_else(|e| e.into_inner());
         guard.is_none_or(|at| now.duration_since(at) > LIST_EVERY)
@@ -219,6 +235,21 @@ pub fn refresh(watching: bool) {
         status.recordings = list_recordings();
     }
     recorder::publish(status);
+}
+
+fn engine_window() -> Option<usize> {
+    crate::platform::with_context(|env, activity| {
+        let class = recorder_class(env, activity)?;
+        let surface = env
+            .call_static_method(class, "engineSurface", "()Landroid/view/Surface;", &[])?
+            .l()?;
+        if surface.is_null() {
+            Ok(0)
+        } else {
+            let raw = surface.into_raw();
+            Ok(unsafe { ANativeWindow_fromSurface(env.get_native_interface(), raw) as usize })
+        }
+    })
 }
 
 /// Asks the system for the screen-capture prompt with the overlay's current choices.
@@ -253,16 +284,10 @@ pub fn start() {
     let audio = settings.audio as i32;
     // When `record_controls` is OFF, the engine copies each raw 3D gameplay frame before the
     // HUD/controls into `EngineRecorder`, so the player keeps seeing controls on screen while the
-    // saved MP4 contains only raw gameplay without controls.
+    // saved MP4 contains only raw gameplay without controls (supporting No audio, Microphone,
+    // and In-game audio).
     if !settings.record_controls {
-        if audio != 0 {
-            let mut status = recorder::status();
-            status.phase = Phase::Unsupported;
-            status.message = "raw gameplay (controls off) supports No audio only — turn Record With Controls on to record audio".to_owned();
-            recorder::publish(status);
-            return;
-        }
-        start_engine(width, height, frames);
+        start_engine(width, height, frames, audio);
         return;
     }
     let result = crate::platform::with_context(|env, activity| {
@@ -298,7 +323,7 @@ pub fn start() {
 /// Starts a recording of the game's own frames: `EngineRecorder.java` opens a MediaCodec
 /// encoder, the game renders into its surface (HUD-free, see `render_target`), and the
 /// codec's output goes to the same `Recordings` folder as a screen recording.
-fn start_engine(width: u32, height: u32, frames: i32) {
+fn start_engine(width: u32, height: u32, frames: i32, audio: i32) {
     release_capture();
     let result = crate::platform::with_context(|env, activity| {
         let class = recorder_class(env, activity)?;
@@ -306,12 +331,13 @@ fn start_engine(width: u32, height: u32, frames: i32) {
             .call_static_method(
                 class,
                 "startEngine",
-                "(Landroid/app/Activity;III)Ljava/lang/String;",
+                "(Landroid/app/Activity;IIII)Ljava/lang/String;",
                 &[
                     JValue::Object(activity),
                     JValue::Int(width.max(160) as i32),
                     JValue::Int(height as i32),
                     JValue::Int(frames),
+                    JValue::Int(audio),
                 ],
             )?
             .l()?;
@@ -339,6 +365,10 @@ fn start_engine(width: u32, height: u32, frames: i32) {
         recorder::publish(status);
         return;
     };
+    if note.starts_with("asking;") {
+        publish_state(&note);
+        return;
+    }
     let Some((width, height)) = engine_size(&note) else {
         // The encoder refused (or told us nothing): show why, and start nothing.
         publish_state(&note);

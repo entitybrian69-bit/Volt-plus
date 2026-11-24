@@ -93,6 +93,7 @@ public final class ScreenRecorder {
 
     static volatile int consentResult = 0;
     static volatile android.content.Intent consentData = null;
+    static volatile boolean rawGameplayOnly = false;
 
     private ScreenRecorder() {}
 
@@ -161,23 +162,41 @@ public final class ScreenRecorder {
 
     /**
      * Records the game's own frames at {@code w x h}, {@code f} frames a second: no display
-     * capture, no consent prompt, and the touch controls stay on screen without appearing in
-     * the video (the renderer copies each frame into the encoder's surface before the HUD).
-     * Answers {@code recording;WxH} with the size the device accepted.
+     * capture for no-audio/mic (no consent prompt), and the touch controls stay on screen without
+     * appearing in the video (the renderer copies each frame into the encoder's surface before the
+     * HUD). When {@code audio == 2} (in-game audio), requests MediaProjection only for audio
+     * capture while keeping the video raw gameplay. Answers {@code state;message}.
      */
     public static synchronized String startEngine(
-            android.app.Activity activity, int w, int h, int f) {
+            android.app.Activity activity, int w, int h, int f, int audio) {
         if (activity == null) {
             return "error;no window to record";
         }
         if (busy()) {
             return "recording;already recording";
         }
+        if (audio == 1
+                && activity.getApplicationContext()
+                                .checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            try {
+                activity.requestPermissions(
+                        new String[] {android.Manifest.permission.RECORD_AUDIO}, REQUEST_MIC);
+            } catch (Throwable ignored) {
+            }
+            return "permission;microphone access is off, allow it and start again";
+        }
+        if (audio == 2) {
+            rawGameplayOnly = true;
+            return startProjection(activity, w, h, f, 2);
+        }
+        rawGameplayOnly = false;
         uri = "";
         bytes = 0L;
         startedAt = System.currentTimeMillis();
         message = "";
-        String answer = EngineRecorder.start(activity.getApplicationContext(), w, h, f);
+        String answer =
+                EngineRecorder.start(activity.getApplicationContext(), w, h, f, audio == 1);
         if (answer.startsWith("recording;")) {
             state = "recording";
         } else if (answer.startsWith("error;")) {
@@ -201,6 +220,12 @@ public final class ScreenRecorder {
      * {@code state;message} pair the overlay shows as is.
      */
     public static synchronized String start(
+            android.app.Activity activity, int w, int h, int f, int audio) {
+        rawGameplayOnly = false;
+        return startProjection(activity, w, h, f, audio);
+    }
+
+    private static synchronized String startProjection(
             android.app.Activity activity, int w, int h, int f, int audio) {
         if (activity == null) {
             return "error;no window to record";
@@ -311,7 +336,13 @@ public final class ScreenRecorder {
     public static synchronized String stop() {
         if (!busy()) {
             state = "idle";
+            rawGameplayOnly = false;
             return "idle;nothing is recording";
+        }
+        if (RecorderService.current != null) {
+            state = "stopping";
+            RecorderService.stopNow("saved");
+            return "stopping;finishing the file";
         }
         if (EngineRecorder.active()) {
             state = "stopping";

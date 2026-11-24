@@ -97,12 +97,15 @@ public final class RecorderService extends Service {
     private int frames = 30;
     private int audioMode;
     private long startedAt;
+    private boolean rawGameplay;
     private volatile boolean stopping;
     private volatile boolean failed;
 
     static boolean busy() {
         RecorderService service = current;
-        return service != null && service.recorder != null && !service.stopping;
+        return service != null
+                && (service.recorder != null || service.rawGameplay)
+                && !service.stopping;
     }
 
     static void stopNow(String reason) {
@@ -140,7 +143,7 @@ public final class RecorderService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         startForegroundNotice();
-        if (recorder == null && !stopping && workerHandler != null) {
+        if (recorder == null && !rawGameplay && !stopping && workerHandler != null) {
             final RecorderService self = this;
             workerHandler.post(
                     new Runnable() {
@@ -237,6 +240,33 @@ public final class RecorderService extends Service {
                             Math.round(
                                     (double) requestedHeight * displayWidth / (double) displayHeight);
             requestedWidth = Math.max(MIN_WIDTH, Math.min(requestedWidth, displayWidth));
+
+            if (ScreenRecorder.rawGameplayOnly && audioMode == 2) {
+                rawGameplay = true;
+                String ans =
+                        EngineRecorder.startTempOnly(
+                                this, requestedWidth, requestedHeight, frames);
+                if (!ans.startsWith("recording;")) {
+                    rawGameplay = false;
+                    ScreenRecorder.rawGameplayOnly = false;
+                    int semi = ans.indexOf(';');
+                    fail(semi >= 0 ? ans.substring(semi + 1) : ans);
+                    return;
+                }
+                width = ScreenRecorder.runWidth;
+                height = ScreenRecorder.runHeight;
+                frames = ScreenRecorder.runFps;
+                audio = new AudioCapture(projection, getCacheDir());
+                audio.start();
+                startedAt = System.currentTimeMillis();
+                ScreenRecorder.startedAt = startedAt;
+                ScreenRecorder.bytes = 0L;
+                ScreenRecorder.uri = "";
+                ScreenRecorder.state = "recording";
+                ScreenRecorder.message = width + "x" + height + " at " + frames + " fps";
+                return;
+            }
+            rawGameplay = false;
 
             int[] fitted = fit(requestedWidth, requestedHeight, frames);
             if (fitted == null) {
@@ -464,6 +494,12 @@ public final class RecorderService extends Service {
 
     private void finish(String reason) {
         boolean stopped = false;
+        if (rawGameplay) {
+            tempVideo = EngineRecorder.stopAndWaitTempFile();
+            stopped = tempVideo != null && tempVideo.exists() && tempVideo.length() > 0;
+            rawGameplay = false;
+            ScreenRecorder.rawGameplayOnly = false;
+        }
         try {
             if (recorder != null) {
                 try {

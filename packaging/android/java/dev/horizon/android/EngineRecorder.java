@@ -2,17 +2,22 @@ package dev.horizon.android;
 
 import android.content.ContentValues;
 import android.content.Context;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
+import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Build;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
 import android.view.Surface;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.nio.ByteBuffer;
 
 /**
@@ -35,6 +40,9 @@ final class EngineRecorder {
     private static Thread drain;
     private static Uri target;
     private static File legacyTarget;
+    private static File tempVideo;
+    private static MicCapture mic;
+    private static boolean externalAudio;
     private static String displayName;
     private static ParcelFileDescriptor targetFile;
     private static int track = -1;
@@ -70,7 +78,24 @@ final class EngineRecorder {
      * Opens the encoder and its file. Answers {@code recording;WxH} with the size the device
      * accepted, or {@code error;…} / {@code unsupported;…} with the reason.
      */
-    static synchronized String start(Context context, int wantedWidth, int wantedHeight, int wantedFps) {
+    static synchronized String start(
+            Context context, int wantedWidth, int wantedHeight, int wantedFps, boolean withMic) {
+        return startInternal(context, wantedWidth, wantedHeight, wantedFps, withMic, false);
+    }
+
+    /** Starts raw video-only capture into a temporary MP4 for {@link RecorderService} to merge with game audio. */
+    static synchronized String startTempOnly(
+            Context context, int wantedWidth, int wantedHeight, int wantedFps) {
+        return startInternal(context, wantedWidth, wantedHeight, wantedFps, false, true);
+    }
+
+    private static synchronized String startInternal(
+            Context context,
+            int wantedWidth,
+            int wantedHeight,
+            int wantedFps,
+            boolean withMic,
+            boolean extAudio) {
         if (started) {
             return "recording;already recording";
         }
@@ -82,6 +107,12 @@ final class EngineRecorder {
         height = fit[1];
         frames = fit[2];
         appContext = context.getApplicationContext() == null ? context : context.getApplicationContext();
+        externalAudio = extAudio;
+        tempVideo = null;
+        mic = null;
+        target = null;
+        legacyTarget = null;
+        targetFile = null;
         MediaCodec encoder = null;
         Surface input = null;
         MediaMuxer out = null;
@@ -95,21 +126,45 @@ final class EngineRecorder {
             encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
             input = encoder.createInputSurface();
-            openTarget(context);
-            if (targetFile == null) {
-                throw new IllegalStateException("the recordings folder is not writable");
-            }
-            if (legacyTarget != null) {
+            if (withMic || extAudio) {
+                tempVideo = File.createTempFile("volt-raw-video-", ".mp4", appContext.getCacheDir());
                 out = new MediaMuxer(
-                        legacyTarget.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+                        tempVideo.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+                if (withMic) {
+                    mic = new MicCapture(appContext.getCacheDir());
+                    mic.start();
+                }
             } else {
-                out = new MediaMuxer(
-                        targetFile.getFileDescriptor(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+                openTarget(appContext);
+                if (targetFile == null) {
+                    throw new IllegalStateException("the recordings folder is not writable");
+                }
+                if (legacyTarget != null) {
+                    out = new MediaMuxer(
+                            legacyTarget.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+                } else {
+                    out = new MediaMuxer(
+                            targetFile.getFileDescriptor(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+                }
             }
             encoder.start();
         } catch (Throwable error) {
+            if (mic != null) {
+                try {
+                    mic.stopAndWait();
+                } catch (Throwable ignored) {
+                }
+                if (mic.file() != null) {
+                    mic.file().delete();
+                }
+                mic = null;
+            }
+            if (tempVideo != null) {
+                tempVideo.delete();
+                tempVideo = null;
+            }
             closeQuietly(encoder, input, out);
-            deleteTarget(context);
+            deleteTarget(appContext);
             ScreenRecorder.publish("error", "", 0L, 0L, ScreenRecorder.shorter(error));
             return "error;" + ScreenRecorder.shorter(error);
         }
@@ -132,28 +187,30 @@ final class EngineRecorder {
         return "recording;" + width + "x" + height;
     }
 
-    /**
-     * Ends the recording. The encoder is finalised on its own thread and the overlay hears
-     * {@code saved} when the file is whole: the game must not wait for a codec.
-     */
-    static String stop() {
+    /** Stops capture synchronously (off the UI/game thread) and returns the recorded video file when {@code externalAudio} is set. */
+    static File stopAndWaitTempFile() {
         synchronized (EngineRecorder.class) {
             if (!started) {
-                return "idle;nothing is recording";
-            }
-            if (stopping) {
-                return "stopping;finishing the file";
+                return null;
             }
             stopping = true;
         }
-        Thread finisher = new Thread(EngineRecorder::finish, "Volt engine recorder stop");
-        finisher.setDaemon(true);
-        finisher.start();
-        return "stopping;finishing the file";
+        stopCodecAndDrain();
+        finishMuxer();
+        File result = written > 0L ? tempVideo : null;
+        if (result == null && tempVideo != null) {
+            tempVideo.delete();
+        }
+        tempVideo = null;
+        externalAudio = false;
+        synchronized (EngineRecorder.class) {
+            started = false;
+            stopping = false;
+        }
+        return result;
     }
 
-    /** Drains the last frames, closes the codec and finalises the MP4. Never on the game. */
-    private static void finish() {
+    private static void stopCodecAndDrain() {
         MediaCodec encoder;
         Thread worker;
         synchronized (EngineRecorder.class) {
@@ -167,7 +224,6 @@ final class EngineRecorder {
             } catch (Throwable ignored) {
             }
         }
-        // Let the drain thread take the last frames before the encoder goes away.
         if (worker != null && worker != Thread.currentThread()) {
             try {
                 worker.join(3000);
@@ -197,20 +253,88 @@ final class EngineRecorder {
             } catch (Throwable ignored) {
             }
         }
-        boolean finished = finishMuxer();
-        long size = size();
-        Uri savedMedia = target;
-        File savedLegacy = legacyTarget;
-        String savedName = displayName;
-        String uri =
-                savedMedia != null
-                        ? savedMedia.toString()
-                        : (savedLegacy != null ? "file:" + savedLegacy.getAbsolutePath() : "");
-        boolean empty = written == 0L;
-        closeTarget();
-        if (!empty && appContext != null) {
-            ScreenRecorder.mirrorToLocalRecordings(appContext, savedMedia, savedLegacy, savedName);
+    }
+
+    /**
+     * Ends the recording. The encoder is finalised on its own thread and the overlay hears
+     * {@code saved} when the file is whole: the game must not wait for a codec.
+     */
+    static String stop() {
+        synchronized (EngineRecorder.class) {
+            if (!started) {
+                return "idle;nothing is recording";
+            }
+            if (stopping) {
+                return "stopping;finishing the file";
+            }
+            stopping = true;
         }
+        Thread finisher = new Thread(EngineRecorder::finish, "Volt engine recorder stop");
+        finisher.setDaemon(true);
+        finisher.start();
+        return "stopping;finishing the file";
+    }
+
+    /** Drains the last frames, closes the codec and finalises the MP4. Never on the game. */
+    private static void finish() {
+        stopCodecAndDrain();
+        if (mic != null) {
+            try {
+                mic.stopAndWait();
+            } catch (Throwable ignored) {
+            }
+        }
+        boolean finished = finishMuxer();
+        boolean empty = written == 0L;
+        long size = 0L;
+        String uri = "";
+        if (!empty && tempVideo != null && appContext != null) {
+            openTarget(appContext);
+            File micFile = mic == null ? null : mic.file();
+            if (targetFile != null) {
+                boolean merged =
+                        micFile != null
+                                && micFile.exists()
+                                && micFile.length() > 0
+                                && RecorderService.Muxer.merge(
+                                        tempVideo, micFile, targetFile.getFileDescriptor());
+                if (!merged) {
+                    copyFileToFd(tempVideo, targetFile.getFileDescriptor());
+                }
+                size = size();
+                Uri savedMedia = target;
+                File savedLegacy = legacyTarget;
+                String savedName = displayName;
+                uri =
+                        savedMedia != null
+                                ? savedMedia.toString()
+                                : (savedLegacy != null ? "file:" + savedLegacy.getAbsolutePath() : "");
+                closeTarget();
+                ScreenRecorder.mirrorToLocalRecordings(appContext, savedMedia, savedLegacy, savedName);
+            }
+        } else {
+            size = size();
+            Uri savedMedia = target;
+            File savedLegacy = legacyTarget;
+            String savedName = displayName;
+            uri =
+                    savedMedia != null
+                            ? savedMedia.toString()
+                            : (savedLegacy != null ? "file:" + savedLegacy.getAbsolutePath() : "");
+            closeTarget();
+            if (!empty && appContext != null) {
+                ScreenRecorder.mirrorToLocalRecordings(appContext, savedMedia, savedLegacy, savedName);
+            }
+        }
+        if (tempVideo != null) {
+            tempVideo.delete();
+            tempVideo = null;
+        }
+        if (mic != null && mic.file() != null) {
+            mic.file().delete();
+            mic = null;
+        }
+        externalAudio = false;
         legacyTarget = null;
         displayName = null;
         synchronized (EngineRecorder.class) {
@@ -233,6 +357,22 @@ final class EngineRecorder {
                 size,
                 startedAt,
                 finished ? "" : "the recording may be incomplete");
+    }
+
+    private static void copyFileToFd(File from, java.io.FileDescriptor to) {
+        if (from == null || to == null) {
+            return;
+        }
+        try (FileInputStream in = new FileInputStream(from);
+                FileOutputStream out = new FileOutputStream(to)) {
+            byte[] buf = new byte[1 << 16];
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                out.write(buf, 0, n);
+            }
+            out.flush();
+        } catch (Throwable ignored) {
+        }
     }
 
     /** The drain loop: encoder output to the muxer, until the end of the stream. */
@@ -471,7 +611,7 @@ final class EngineRecorder {
     }
 
     /**
-     * The largest size the display can be recorded at that a hardware AVC encoder accepts.
+     * The largest size the display can be recorded at that an AVC encoder accepts.
      * Answers {@code {width, height, fps}}, or {@code null}.
      */
     private static int[] fit(int wantedWidth, int wantedHeight, int wantedFps) {
@@ -485,33 +625,219 @@ final class EngineRecorder {
             {426, 240},
         };
         int[] rates = {wantedFps, 60, 30};
+        MediaCodecInfo[] infos = null;
+        try {
+            infos = new MediaCodecList(MediaCodecList.REGULAR_CODECS).getCodecInfos();
+        } catch (Throwable ignored) {
+        }
         for (int[] size : sizes) {
-            int w = size[0] - (size[0] % 2);
-            int h = size[1] - (size[1] % 2);
-            if (w < 160 || h < 120) {
+            int w16 = Math.max(160, (size[0] + 8) & ~15);
+            int h16 = Math.max(120, (size[1] + 8) & ~15);
+            int w2 = Math.max(160, size[0] & ~1);
+            int h2 = Math.max(120, size[1] & ~1);
+            int[][] alignedCandidates = {{w16, h16}, {w2, h2}};
+            for (int[] wh : alignedCandidates) {
+                int w = wh[0];
+                int h = wh[1];
+                for (int rate : rates) {
+                    if (rate <= 0) {
+                        continue;
+                    }
+                    if (avcSupports(infos, w, h, rate)) {
+                        return new int[] {w, h, rate};
+                    }
+                }
+            }
+        }
+        // Final fallback: verify an AVC encoder exists and hand back 720p30 / 480p30.
+        try {
+            MediaCodec test = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+            if (test != null) {
+                test.release();
+                int w = Math.max(160, Math.min(1280, (wantedWidth + 8) & ~15));
+                int h = Math.max(120, Math.min(720, (wantedHeight + 8) & ~15));
+                return new int[] {w, h, Math.max(30, Math.min(60, wantedFps))};
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static boolean avcSupports(MediaCodecInfo[] infos, int w, int h, int fps) {
+        if (infos == null) {
+            return false;
+        }
+        for (MediaCodecInfo info : infos) {
+            if (!info.isEncoder()) {
                 continue;
             }
-            for (int rate : rates) {
-                if (rate <= 0) {
+            for (String type : info.getSupportedTypes()) {
+                if (!MediaFormat.MIMETYPE_VIDEO_AVC.equalsIgnoreCase(type)) {
                     continue;
                 }
-                MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, w, h);
-                format.setInteger(
-                        MediaFormat.KEY_COLOR_FORMAT,
-                        MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
-                format.setInteger(MediaFormat.KEY_FRAME_RATE, rate);
-                format.setInteger(MediaFormat.KEY_BIT_RATE, bitrate(w, h, rate));
-                format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
                 try {
-                    MediaCodecList list = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
-                    if (list.findEncoderForFormat(format) != null) {
-                        return new int[] {w, h, rate};
+                    MediaCodecInfo.CodecCapabilities caps = info.getCapabilitiesForType(type);
+                    MediaCodecInfo.VideoCapabilities vc = caps == null ? null : caps.getVideoCapabilities();
+                    if (vc != null && vc.areSizeAndRateSupported(w, h, fps)) {
+                        return true;
                     }
                 } catch (Throwable ignored) {
                 }
             }
         }
-        return null;
+        return false;
+    }
+
+    /** Microphone AAC capture for raw gameplay recordings when Microphone audio is chosen. */
+    private static final class MicCapture {
+        private final File file;
+        private final int sampleRate = 44_100;
+        private AudioRecord record;
+        private MediaCodec codec;
+        private MediaMuxer muxer;
+        private Thread thread;
+        private volatile boolean running;
+
+        MicCapture(File cacheDir) throws Exception {
+            this.file = File.createTempFile("volt-mic-", ".mp4", cacheDir);
+        }
+
+        File file() {
+            return file;
+        }
+
+        void start() throws Exception {
+            int minimum =
+                    AudioRecord.getMinBufferSize(
+                            sampleRate, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+            int buffer = Math.max(minimum * 2, 16_384);
+            record =
+                    new AudioRecord(
+                            MediaRecorder.AudioSource.MIC,
+                            sampleRate,
+                            AudioFormat.CHANNEL_IN_MONO,
+                            AudioFormat.ENCODING_PCM_16BIT,
+                            buffer);
+            if (record.getState() != AudioRecord.STATE_INITIALIZED) {
+                throw new IllegalStateException("microphone could not be opened");
+            }
+            MediaFormat format =
+                    MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, sampleRate, 1);
+            format.setInteger(
+                    MediaFormat.KEY_AAC_PROFILE,
+                    MediaCodecInfo.CodecProfileLevel.AACObjectLC);
+            format.setInteger(MediaFormat.KEY_BIT_RATE, 96_000);
+            format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16_384);
+            codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC);
+            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            codec.start();
+            record.startRecording();
+            running = true;
+            thread = new Thread(this::pump, "Volt raw mic audio");
+            thread.setDaemon(true);
+            thread.start();
+        }
+
+        private void pump() {
+            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+            byte[] pcm = new byte[8192];
+            int audioTrack = -1;
+            boolean formatSent = false;
+            long total = 0L;
+            try {
+                while (running) {
+                    int read = record.read(pcm, 0, pcm.length);
+                    if (read > 0) {
+                        int index = codec.dequeueInputBuffer(10_000);
+                        if (index >= 0) {
+                            ByteBuffer input = codec.getInputBuffer(index);
+                            if (input != null) {
+                                input.clear();
+                                int len = Math.min(read, input.capacity());
+                                input.put(pcm, 0, len);
+                                long pts = total * 1_000_000L / (2L * sampleRate);
+                                codec.queueInputBuffer(index, 0, len, pts, 0);
+                                total += len;
+                            }
+                        }
+                    } else if (read < 0) {
+                        break;
+                    }
+                    int outIndex;
+                    while ((outIndex = codec.dequeueOutputBuffer(info, 0)) >= 0) {
+                        ByteBuffer out = codec.getOutputBuffer(outIndex);
+                        if (out != null && info.size > 0) {
+                            if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                                info.size = 0;
+                            }
+                            if (info.size > 0) {
+                                if (!formatSent) {
+                                    MediaFormat outFmt = codec.getOutputFormat();
+                                    muxer =
+                                            new MediaMuxer(
+                                                    file.getAbsolutePath(),
+                                                    MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+                                    audioTrack = muxer.addTrack(outFmt);
+                                    muxer.start();
+                                    formatSent = true;
+                                }
+                                out.position(info.offset);
+                                out.limit(info.offset + info.size);
+                                muxer.writeSampleData(audioTrack, out, info);
+                            }
+                        }
+                        codec.releaseOutputBuffer(outIndex, false);
+                    }
+                }
+            } catch (Throwable ignored) {
+            } finally {
+                try {
+                    if (muxer != null && formatSent) {
+                        muxer.stop();
+                    }
+                } catch (Throwable ignored) {
+                }
+                try {
+                    if (muxer != null) {
+                        muxer.release();
+                    }
+                } catch (Throwable ignored) {
+                }
+                muxer = null;
+            }
+        }
+
+        void stopAndWait() {
+            running = false;
+            try {
+                if (record != null) {
+                    record.stop();
+                }
+            } catch (Throwable ignored) {
+            }
+            try {
+                if (thread != null) {
+                    thread.join(1_500L);
+                }
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            try {
+                if (codec != null) {
+                    codec.stop();
+                    codec.release();
+                }
+            } catch (Throwable ignored) {
+            }
+            codec = null;
+            try {
+                if (record != null) {
+                    record.release();
+                }
+            } catch (Throwable ignored) {
+            }
+            record = null;
+        }
     }
 
     /** `yyyyMMdd-HHmmss`, the same name a screen recording gets. */
