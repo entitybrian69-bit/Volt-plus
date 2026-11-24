@@ -380,8 +380,8 @@ impl Game<'_> {
     pub(super) fn effective_menu_blur(&self, raw_blur: Option<f32>) -> Option<f32> {
         match self.volt_rt.active.menu_backdrop {
             MenuBackdropMode::Full => raw_blur,
-            MenuBackdropMode::Static => None,
-            MenuBackdropMode::Off => None,
+            MenuBackdropMode::Blurred => raw_blur.map(|r| r.min(3.0)),
+            MenuBackdropMode::Static | MenuBackdropMode::Off => None,
         }
     }
 
