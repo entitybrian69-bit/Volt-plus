@@ -515,7 +515,7 @@ impl Settings {
             notification_display_time: f.double("notificationDisplayTime") as f32,
             main_hand_left: f.name("mainHand") == "left",
             resource_packs: f.list("resourcePacks"),
-            volt_boost: VoltPlusBoostSettings::default(),
+            volt_boost: crate::volt_boost::VoltPlusBoostSettings::default(),
             keys,
             file: f,
         }

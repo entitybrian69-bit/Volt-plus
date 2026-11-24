@@ -4660,7 +4660,7 @@ impl Renderer {
         }
     }
     pub fn draw_calls(&self) -> u32 {
-        self.section_draw_calls.max(self.drawn_sections as u32)
+        self.section_draw_calls.max(self.drawn_sections) as u32
     }
     /// Frees idle CPU/GPU scratch memory (mesh buffer pool, cached blur, entity batch capacity)
     /// and returns total MiB reclaimed.
