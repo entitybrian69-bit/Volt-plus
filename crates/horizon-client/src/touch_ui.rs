@@ -4813,6 +4813,45 @@ fn draw_button_icon_and_label(
             );
         }
     } else {
+        let trimmed = label.trim();
+        if matches!(
+            trimmed,
+            "⬛" | "⬜" | "■" | "□" | "◼" | "◻" | "▪" | "▫"
+        ) {
+            let alpha = ((fg_col >> 24) & 0xFF) as f32 / 255.0;
+            let sz = (rh.min(rw) * 0.24).clamp(10.0, 18.0);
+            let sx = rx + (rw - sz) * 0.5;
+            let sy = ry + (rh - sz) * 0.5;
+            let rad = (sz * 0.18).max(2.0);
+            let a_u8 = (alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+            match trimmed {
+                "⬛" | "◼" | "▪" => {
+                    ui.rounded(
+                        sx,
+                        sy,
+                        sz,
+                        sz,
+                        rad,
+                        crate::ui_theme::rgba(28, 30, 36, a_u8),
+                    );
+                    ui.border(
+                        sx,
+                        sy,
+                        sz,
+                        sz,
+                        rad,
+                        crate::ui_theme::rgba(195, 200, 212, (alpha * 130.0).round() as u8),
+                    );
+                }
+                "⬜" | "◻" | "▫" | "■" => {
+                    ui.rounded(sx, sy, sz, sz, rad, fg_col);
+                }
+                _ => {
+                    ui.border(sx, sy, sz, sz, rad, fg_col);
+                }
+            }
+            return;
+        }
         ui.centered_fit(
             crate::ui_theme::Face::SemiBold,
             (rh * 0.30).clamp(9.5, 14.5),
@@ -5186,7 +5225,10 @@ pub fn draw_hud_editor(
     ui.fill(0.0, h * 0.5, w, 1.0, rgba(154, 123, 255, 38));
 
     // JoystickMoveArea visual zone indicator when Move is selected
-    if ed.selected == Some(Control::Move) && ed.selected_custom.is_none() {
+    if ed.selected == Some(Control::Move)
+        && ed.selected_custom.is_none()
+        && tc.visible(Control::Move)
+    {
         let zone = match tc.settings.joystick_style.move_area {
             JoystickMoveArea::MidBottomLeft => Some([0.0, h * 0.35, w * 0.45, h * 0.65]),
             JoystickMoveArea::RightSideAnywhere => Some([w * 0.50, 0.0, w * 0.50, h]),

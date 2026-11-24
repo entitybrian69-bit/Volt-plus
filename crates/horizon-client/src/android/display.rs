@@ -193,6 +193,7 @@ pub struct ScreenPreferences {
     pub immersive: bool,
     pub avoid_cutout: bool,
     pub aspect: Aspect,
+    pub keep_screen_on: bool,
 }
 impl Default for ScreenPreferences {
     fn default() -> Self {
@@ -201,6 +202,7 @@ impl Default for ScreenPreferences {
             immersive: true,
             avoid_cutout: false,
             aspect: Aspect::Native,
+            keep_screen_on: false,
         }
     }
 }
@@ -211,11 +213,14 @@ mod screen_tests {
     fn missing_screen_preferences_default_to_immersive() {
         let defaults: ScreenPreferences = serde_json::from_str("{}").unwrap();
         assert!(defaults.immersive);
-        let saved: ScreenPreferences =
-            serde_json::from_str(r#"{"immersive":false,"aspect":"classic","avoid_cutout":true}"#)
-                .unwrap();
+        assert!(!defaults.keep_screen_on);
+        let saved: ScreenPreferences = serde_json::from_str(
+            r#"{"immersive":false,"aspect":"classic","avoid_cutout":true,"keep_screen_on":true}"#,
+        )
+        .unwrap();
         assert!(!saved.immersive);
         assert!(saved.avoid_cutout);
+        assert!(saved.keep_screen_on);
         assert_eq!(saved.aspect, Aspect::Classic);
     }
 }

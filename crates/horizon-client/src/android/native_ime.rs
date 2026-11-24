@@ -35,7 +35,7 @@ enum Command {
     ImportDocument,
     ImportFolderTree,
     CreateDocument(String, String),
-    Screen(bool, bool),
+    Screen(bool, bool, bool),
 }
 struct Ui {
     vm: JavaVM,
@@ -288,11 +288,23 @@ impl Ui {
             let _ = env.exception_clear();
         }
     }
-    fn apply_screen(&self, env: &mut JNIEnv<'_>, immersive: bool) -> jni::errors::Result<()> {
+    fn apply_screen(
+        &self,
+        env: &mut JNIEnv<'_>,
+        immersive: bool,
+        keep_screen_on: bool,
+    ) -> jni::errors::Result<()> {
         self.hide_system_pointer(env);
         let window = env
             .call_method(&self.activity, "getWindow", "()Landroid/view/Window;", &[])?
             .l()?;
+        const FLAG_KEEP_SCREEN_ON: i32 = 0x0000_0080;
+        env.call_method(
+            &window,
+            if keep_screen_on { "addFlags" } else { "clearFlags" },
+            "(I)V",
+            &[JValue::Int(FLAG_KEEP_SCREEN_ON)],
+        )?;
         let decor = env
             .call_method(&window, "getDecorView", "()Landroid/view/View;", &[])?
             .l()?;
@@ -366,10 +378,10 @@ impl Ui {
     }
     fn apply(&self, env: &mut JNIEnv<'_>, c: Command) -> jni::errors::Result<()> {
         match c {
-            Command::Screen(immersive, avoid) => {
+            Command::Screen(immersive, avoid, keep_screen_on) => {
                 self.avoid_cutout.store(avoid, Ordering::Release);
                 self.immersive.store(immersive, Ordering::Release);
-                if let Err(error) = self.apply_screen(env, immersive) {
+                if let Err(error) = self.apply_screen(env, immersive, keep_screen_on) {
                     let _ = env.exception_clear();
                     log::warn!("Android screen preferences: {error}");
                 }
@@ -869,9 +881,9 @@ pub fn create_document(suggested_name: &str, mime_type: &str) -> bool {
     true
 }
 
-pub fn configure_screen(immersive: bool, avoid_cutout: bool) {
+pub fn configure_screen(immersive: bool, avoid_cutout: bool, keep_screen_on: bool) {
     if let Some(ui) = UI.get() {
-        ui.enqueue(Command::Screen(immersive, avoid_cutout));
+        ui.enqueue(Command::Screen(immersive, avoid_cutout, keep_screen_on));
     }
 }
 pub fn refresh_bounds() {

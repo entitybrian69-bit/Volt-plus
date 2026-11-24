@@ -360,6 +360,7 @@ pub(super) enum Action {
     Dismiss,
     Immersive,
     Cutout,
+    KeepScreenOn,
     Aspect,
     ChooseAspect(crate::display::Aspect),
     DisplayHz,
@@ -1532,6 +1533,27 @@ impl Launcher {
                 let value = if self.catalog.config.scene_gyro_sensitivity == 0 { "Off".to_owned() }
                     else { format!("{}%", self.catalog.config.scene_gyro_sensitivity) };
                 ui.centered_fit(Face::Medium, 11.0, [gx + 35.0, gy, gyro_w - 70.0, 32.0], my3_text(), &format!("Gyroscope {value}"));
+                let nav_right = (w + nav_w) * 0.5;
+                let right_space = w - nav_right - 20.0;
+                let keep_on = self.catalog.config.screen.keep_screen_on;
+                let keep_label = if keep_on {
+                    "Keep screen on: ON"
+                } else {
+                    "Keep screen on"
+                };
+                let keep_rect = if right_space >= 92.0 {
+                    [nav_right + 8.0, full_h - 45.0, right_space.min(180.0), 34.0]
+                } else {
+                    [gx, h - 82.0, gyro_w, 32.0]
+                };
+                button(
+                    &mut ui,
+                    &mut self.targets,
+                    keep_rect,
+                    keep_label,
+                    Action::KeepScreenOn,
+                    keep_on,
+                );
             }
         } else if page == Page::Skins {
             self.wardrobe.draw(
@@ -5020,6 +5042,11 @@ impl Launcher {
                         SettingControl::Toggle(c.screen.avoid_cutout, Action::Cutout),
                     ),
                     (
+                        "Keep screen from turning off",
+                        "Prevent the display from sleeping while Volt Plus is open",
+                        SettingControl::Toggle(c.screen.keep_screen_on, Action::KeepScreenOn),
+                    ),
+                    (
                         "IN-GAME GRAPHICS, DISTANCES & MOTION",
                         "Chunk visibility, simulation radius, FOV, framerate & animation controls",
                         SettingControl::SectionHeader("Minecraft Video", Icon::Shaders),
@@ -7167,6 +7194,17 @@ impl Launcher {
                 self.catalog.config.screen.avoid_cutout ^= true;
                 self.catalog.config.save(&self.home)?;
                 self.configure_screen();
+            }
+            Some(Action::KeepScreenOn) => {
+                self.catalog.config.screen.keep_screen_on ^= true;
+                self.catalog.config.save(&self.home)?;
+                self.configure_screen();
+                self.catalog.status = if self.catalog.config.screen.keep_screen_on {
+                    "Keep screen on enabled: display stays awake."
+                } else {
+                    "Keep screen on disabled."
+                }
+                .into();
             }
             Some(Action::Aspect) => self.open_chooser(chooser::Kind::Aspect),
             Some(Action::ChooseAspect(aspect)) => {

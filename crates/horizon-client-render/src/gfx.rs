@@ -1083,6 +1083,133 @@ fn sprite_sampler_descriptor(anisotropy: u16) -> wgpu::SamplerDescriptor<'static
         ..Default::default()
     }
 }
+fn low_end_terrain_compat() -> bool {
+    crate::android_runtime::compatibility()
+        || cfg!(all(target_os = "android", target_pointer_width = "32"))
+}
+fn active_sprite_sampler_descriptor(anisotropy: u16) -> wgpu::SamplerDescriptor<'static> {
+    if low_end_terrain_compat() {
+        wgpu::SamplerDescriptor {
+            label: Some("Block sprites (nearest compat)"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            anisotropy_clamp: 1,
+            ..Default::default()
+        }
+    } else {
+        sprite_sampler_descriptor(anisotropy)
+    }
+}
+#[allow(clippy::too_many_arguments)]
+fn create_block_sprite_textures(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    gl: bool,
+    sprite_size: u32,
+    layers: u32,
+    split: u32,
+    sprite_storage: wgpu::TextureUsages,
+    prepared_sprites: Vec<(Vec<u8>, u32)>,
+) -> (Vec<wgpu::Texture>, u32) {
+    let low_end = low_end_terrain_compat();
+    let mut mip_levels = 1;
+    let mut uploads = low_end.then(|| Uploads::new(device));
+    let mut encoder = low_end.then(|| {
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Block sprites upload"),
+        })
+    });
+    let mip0_bytes = (sprite_size * sprite_size * 4) as usize;
+    let sprite_textures: Vec<wgpu::Texture> = prepared_sprites
+        .into_iter()
+        .enumerate()
+        .map(|(array, (mut mips, levels))| {
+            let first = array as u32 * split;
+            let used = layers.saturating_sub(first).clamp(1, split);
+            let count = array_layers(used, gl);
+            if low_end {
+                mip_levels = 1;
+                let tex = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("Block sprites"),
+                    size: wgpu::Extent3d {
+                        width: sprite_size,
+                        height: sprite_size,
+                        depth_or_array_layers: count,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_DST
+                        | wgpu::TextureUsages::COPY_SRC
+                        | sprite_storage,
+                    view_formats: &[],
+                });
+                let src_layer_bytes = (mips.len() / used as usize).max(mip0_bytes);
+                if let (Some(up), Some(enc)) = (uploads.as_mut(), encoder.as_mut()) {
+                    for layer in 0..used {
+                        let start = layer as usize * src_layer_bytes;
+                        let end = start + mip0_bytes;
+                        if end <= mips.len() {
+                            up.texture(
+                                enc,
+                                wgpu::TexelCopyTextureInfo {
+                                    texture: &tex,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d {
+                                        x: 0,
+                                        y: 0,
+                                        z: layer,
+                                    },
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                sprite_size,
+                                sprite_size,
+                                &mips[start..end],
+                            );
+                        }
+                    }
+                }
+                tex
+            } else {
+                mips.resize(mips.len() / used as usize * count as usize, 0);
+                mip_levels = levels;
+                device.create_texture_with_data(
+                    queue,
+                    &wgpu::TextureDescriptor {
+                        label: Some("Block sprites"),
+                        size: wgpu::Extent3d {
+                            width: sprite_size,
+                            height: sprite_size,
+                            depth_or_array_layers: count,
+                        },
+                        mip_level_count: levels,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING
+                            | wgpu::TextureUsages::COPY_DST
+                            // Shader packs' atlas copies them (pack_atlas.rs).
+                            | wgpu::TextureUsages::COPY_SRC
+                            | sprite_storage,
+                        view_formats: &[],
+                    },
+                    wgpu::util::TextureDataOrder::LayerMajor,
+                    &mips,
+                )
+            }
+        })
+        .collect();
+    if let (Some(mut up), Some(enc)) = (uploads, encoder) {
+        up.finish(&enc);
+        queue.submit(std::iter::once(enc.finish()));
+    }
+    (sprite_textures, mip_levels)
+}
 /// `Options.maxAnisotropyValue` for a `maxAnisotropyBit`: `1 << bit`, at most wgpu's 16.
 fn sampler_anisotropy(bit: i32) -> u16 {
     1u16 << bit.clamp(0, 4)
@@ -1432,10 +1559,13 @@ fn describe_adapter(adapter: &wgpu::Adapter) {
 /// Whether an adapter's texture arrays hold the block textures Horizon puts
 /// in one array.
 fn check_layers(adapter: &wgpu::Adapter, layers: u32) -> Result<u32> {
+    let requested = requested_split().or_else(|| {
+        low_end_terrain_compat().then(|| 256.max(layers.div_ceil(SPRITE_ARRAYS)))
+    });
     Ok(layer_split(
         adapter.limits().max_texture_array_layers,
         adapter.get_info().backend == wgpu::Backend::Gl,
-        requested_split(),
+        requested,
         layers,
     )?)
 }
@@ -2111,6 +2241,9 @@ impl Renderer {
                                     blend: Option<wgpu::BlendState>,
                                     settled: bool| {
             let mut constants = sprite_constants.to_vec();
+            if low_end_terrain_compat() {
+                constants.push(("TERRAIN_SIMPLE_SAMPLE", 1.0));
+            }
             if settled {
                 constants.extend([("TERRAIN_FILTERING", 0.0), ("TERRAIN_FULLY_VISIBLE", 1.0)]);
             } else if cfg!(target_os = "android") {
@@ -2448,8 +2581,8 @@ impl Renderer {
                 split,
             ),
         };
-        let mut mip_levels = 1;
-        let sprite_compute = animate::SpriteAnimator::compute(&adapter, &device);
+        let sprite_compute =
+            !low_end_terrain_compat() && animate::SpriteAnimator::compute(&adapter, &device);
         let sprite_storage = if sprite_compute {
             wgpu::TextureUsages::STORAGE_BINDING
         } else {
@@ -2490,42 +2623,16 @@ impl Renderer {
                     },
                 )
             });
-        let sprite_textures: Vec<wgpu::Texture> = prepared
-            .sprites
-            .into_iter()
-            .enumerate()
-            .map(|(array, (mut mips, levels))| {
-                let first = array as u32 * split;
-                let used = layers.saturating_sub(first).clamp(1, split);
-                let count = array_layers(used, gl);
-                // The extra layers are empty.
-                mips.resize(mips.len() / used as usize * count as usize, 0);
-                mip_levels = levels;
-                device.create_texture_with_data(
-                    &queue,
-                    &wgpu::TextureDescriptor {
-                        label: Some("Block sprites"),
-                        size: wgpu::Extent3d {
-                            width: sprite_size,
-                            height: sprite_size,
-                            depth_or_array_layers: count,
-                        },
-                        mip_level_count: levels,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING
-                            | wgpu::TextureUsages::COPY_DST
-                            // Shader packs' atlas copies them (pack_atlas.rs).
-                            | wgpu::TextureUsages::COPY_SRC
-                            | sprite_storage,
-                        view_formats: &[],
-                    },
-                    wgpu::util::TextureDataOrder::LayerMajor,
-                    &mips,
-                )
-            })
-            .collect();
+        let (sprite_textures, mip_levels) = create_block_sprite_textures(
+            &device,
+            &queue,
+            gl,
+            sprite_size,
+            layers,
+            split,
+            sprite_storage,
+            prepared.sprites,
+        );
         let animations = animate::SpriteAnimator::new(
             &device,
             animations,
@@ -2556,7 +2663,7 @@ impl Renderer {
                 ..Default::default()
             });
         let sprite_views = sprite_views(&sprite_textures, &sprite_unused, None);
-        let sprite_sampler = device.create_sampler(&sprite_sampler_descriptor(1));
+        let sprite_sampler = device.create_sampler(&active_sprite_sampler_descriptor(1));
         let lightmap = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Lightmap"),
             size: wgpu::Extent3d {
@@ -4376,8 +4483,8 @@ impl Renderer {
                 split,
             ),
         };
-        let mut mip_levels = 1;
-        let sprite_compute = animate::SpriteAnimator::compute(&self.adapter, &self.device);
+        let sprite_compute =
+            !low_end_terrain_compat() && animate::SpriteAnimator::compute(&self.adapter, &self.device);
         let sprite_storage = if sprite_compute {
             wgpu::TextureUsages::STORAGE_BINDING
         } else {
@@ -4415,40 +4522,16 @@ impl Renderer {
                     },
                 )
             });
-        let sprite_textures: Vec<wgpu::Texture> = prepared
-            .sprites
-            .into_iter()
-            .enumerate()
-            .map(|(array, (mut mips, levels))| {
-                let first = array as u32 * split;
-                let used = layers.saturating_sub(first).clamp(1, split);
-                let count = array_layers(used, gl);
-                mips.resize(mips.len() / used as usize * count as usize, 0);
-                mip_levels = levels;
-                self.device.create_texture_with_data(
-                    &self.queue,
-                    &wgpu::TextureDescriptor {
-                        label: Some("Block sprites"),
-                        size: wgpu::Extent3d {
-                            width: sprite_size,
-                            height: sprite_size,
-                            depth_or_array_layers: count,
-                        },
-                        mip_level_count: levels,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Rgba8Unorm,
-                        usage: wgpu::TextureUsages::TEXTURE_BINDING
-                            | wgpu::TextureUsages::COPY_DST
-                            | wgpu::TextureUsages::COPY_SRC
-                            | sprite_storage,
-                        view_formats: &[],
-                    },
-                    wgpu::util::TextureDataOrder::LayerMajor,
-                    &mips,
-                )
-            })
-            .collect();
+        let (sprite_textures, mip_levels) = create_block_sprite_textures(
+            &self.device,
+            &self.queue,
+            gl,
+            sprite_size,
+            layers,
+            split,
+            sprite_storage,
+            prepared.sprites,
+        );
         let animations = animate::SpriteAnimator::new(
             &self.device,
             animations,
@@ -5806,7 +5889,7 @@ impl Renderer {
         self.max_anisotropy = anisotropy;
         self.sprite_sampler = self
             .device
-            .create_sampler(&sprite_sampler_descriptor(anisotropy));
+            .create_sampler(&active_sprite_sampler_descriptor(anisotropy));
         self.rebuild_terrain_group();
     }
     fn rebuild_terrain_group(&mut self) {

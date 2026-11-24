@@ -60,6 +60,7 @@ override SPRITE_SPLIT: u32 = 2048u;
 // 3 keeps the ordinary runtime texture-filter setting.
 override TERRAIN_FILTERING: u32 = 3u;
 override TERRAIN_FULLY_VISIBLE: bool = false;
+override TERRAIN_SIMPLE_SAMPLE: bool = false;
 // A sprite sampled with the given gradients, from whichever array holds its layer.
 fn sprite_grad(uv: vec2<f32>, layer: u32, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
     let l = i32(layer % SPRITE_SPLIT);
@@ -146,6 +147,9 @@ fn tile_uv(uv: vec2<f32>) -> vec2<f32> {
     return uv - max(ceil(uv) - 1.0, vec2(0.0));
 }
 fn sprite(tiled: vec2<f32>, layer: u32) -> vec4<f32> {
+    if TERRAIN_SIMPLE_SAMPLE {
+        return sprite_level(tile_uv(tiled), layer, 0.0);
+    }
     // terrain.fsh's two sampling paths: sampleRGSS for RGSS, sampleNearest otherwise.
     // The gradients come from the unwrapped UV, so the mip level holds across block seams.
     let du = dpdx(tiled);

@@ -1955,7 +1955,18 @@ pub fn draw_goy_static_button(
             }
         }
     }
-    if !label.is_empty() && a.sprites.contains_key("font/ascii") {
+    let trimmed = label.trim();
+    if matches!(trimmed, "⬛" | "⬜" | "■" | "□" | "◼" | "◻" | "▪" | "▫") {
+        let a_u8 = (opacity.clamp(0.2, 1.0) * 255.0) as u8;
+        let sz = (w.min(h) * 0.24).clamp(8.0, 24.0);
+        let sx = x + (w - sz) * 0.5;
+        let sy = y + (h - sz) * 0.5;
+        let col = match trimmed {
+            "⬛" | "◼" | "▪" => rgba(28, 30, 36, a_u8),
+            _ => rgba(245, 243, 255, a_u8),
+        };
+        b.fill(a, sx, sy, sz, sz, col);
+    } else if !label.is_empty() && a.sprites.contains_key("font/ascii") {
         let width = HudBatch::text_width(a, label);
         let start = b.vertices.len();
         b.text(

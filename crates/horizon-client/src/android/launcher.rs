@@ -385,6 +385,7 @@ impl Launcher {
         crate::native_ime::configure_screen(
             self.catalog.config.screen.immersive,
             self.catalog.config.screen.avoid_cutout,
+            self.catalog.config.screen.keep_screen_on,
         );
         winit::platform::android::set_native_content_aspect(
             self.catalog.config.screen.aspect.ratio(),

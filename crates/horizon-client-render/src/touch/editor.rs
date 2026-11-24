@@ -115,8 +115,14 @@ impl TouchControls {
     pub fn open_editor(&mut self) {
         self.clear();
         let is_default = self.settings.is_default_preset();
+        let move_visible = self.visible(Control::Move);
+        let custom_only = !move_visible && !self.settings.custom_buttons.is_empty();
         self.editor = Some(Editor {
-            selected: Some(Control::Move),
+            selected: if move_visible {
+                Some(Control::Move)
+            } else {
+                None
+            },
             option: None,
             apply_all: false,
             original: self.settings.clone(),
@@ -134,7 +140,7 @@ impl TouchControls {
             kb_scroll_x: 0.0,
             pod_expanded: true,
             pod_anim: 1.0,
-            show_hidden: true,
+            show_hidden: !custom_only,
             active_drag: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
