@@ -681,7 +681,7 @@ impl Settings {
             self.horizon.lod_distance = self
                 .horizon
                 .lod_distance
-                .max(self.volt_boost.distant_lod_distance as i32);
+                .max(u32::from(self.volt_boost.distant_lod_distance));
         }
     }
     /// The `options.txt` text (Options.save).

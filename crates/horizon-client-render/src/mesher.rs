@@ -1531,7 +1531,6 @@ pub fn merge_coplanar_solid_quads(solid: &mut Vec<TerrainVertex>) {
                             }
                         }
                     }
-                    aq.u_max = cq.u_max;
                     consumed[j] = true;
                     break;
                 }

@@ -6244,9 +6244,13 @@ impl Renderer {
         if menu_blur.is_none() {
             self.invalidate_menu_blur();
         }
+        #[cfg(target_os = "android")]
+        let not_recording = self.record.is_none();
+        #[cfg(not(target_os = "android"))]
+        let not_recording = true;
         if frame.menu_blur_cache
             && self.screenshot.is_none()
-            && self.record.is_none()
+            && not_recording
             && menu_blur.is_some_and(|r| self.has_cached_menu_blur(r))
         {
             self.hud.prepare(

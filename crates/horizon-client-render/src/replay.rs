@@ -888,10 +888,13 @@ impl ReplayPlayback {
     pub fn toggle_free_camera(&mut self) {
         self.free_camera = !self.free_camera;
         if self.free_camera {
-            let f = self.current_snapshot();
-            self.free_cam_pos = [f.pos[0], f.pos[1] + 1.62, f.pos[2]];
-            self.free_cam_yaw = f.yaw;
-            self.free_cam_pitch = f.pitch;
+            let (pos, yaw, pitch) = {
+                let f = self.current_snapshot();
+                (f.pos, f.yaw, f.pitch)
+            };
+            self.free_cam_pos = [pos[0], pos[1] + 1.62, pos[2]];
+            self.free_cam_yaw = yaw;
+            self.free_cam_pitch = pitch;
         }
     }
 
