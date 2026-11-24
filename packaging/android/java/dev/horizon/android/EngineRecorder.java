@@ -50,6 +50,12 @@ final class EngineRecorder {
     private static int height;
     private static int frames;
     private static long startedAt;
+    private static volatile long sessionStartUs;
+    private static volatile long firstFrameQueuedUs;
+    private static long firstVideoMonotonicUs = -1L;
+    private static long firstRawPtsUs = Long.MIN_VALUE;
+    private static long lastWrittenVideoPtsUs = -1L;
+    private static volatile long stopRequestedAtMs;
     private static long written;
     private static long lastPublish;
     private static boolean started;
@@ -126,12 +132,18 @@ final class EngineRecorder {
             encoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
             encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
             input = encoder.createInputSurface();
+            sessionStartUs = System.nanoTime() / 1000L;
+            firstFrameQueuedUs = 0L;
+            firstVideoMonotonicUs = -1L;
+            firstRawPtsUs = Long.MIN_VALUE;
+            lastWrittenVideoPtsUs = -1L;
+            stopRequestedAtMs = 0L;
             if (withMic || extAudio) {
                 tempVideo = File.createTempFile("volt-raw-video-", ".mp4", appContext.getCacheDir());
                 out = new MediaMuxer(
                         tempVideo.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
                 if (withMic) {
-                    mic = new MicCapture(appContext.getCacheDir());
+                    mic = new MicCapture(appContext.getCacheDir(), sessionStartUs);
                     mic.start();
                 }
             } else {
@@ -187,13 +199,57 @@ final class EngineRecorder {
         return "recording;" + width + "x" + height;
     }
 
+    static void noteFrameQueued() {
+        if (firstFrameQueuedUs == 0L) {
+            firstFrameQueuedUs = System.nanoTime() / 1000L;
+        }
+    }
+
+    static long sessionStartUs() {
+        return sessionStartUs;
+    }
+
+    static synchronized long firstVideoMonotonicUs() {
+        return firstVideoMonotonicUs;
+    }
+
+    static void beginStopInput() {
+        MediaCodec encoder;
+        synchronized (EngineRecorder.class) {
+            if (!started) {
+                return;
+            }
+            if (!stopping) {
+                stopping = true;
+                stopRequestedAtMs = System.currentTimeMillis();
+                encoder = codec;
+            } else {
+                encoder = null;
+            }
+        }
+        if (encoder != null) {
+            try {
+                encoder.signalEndOfInputStream();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
     /** Stops capture synchronously (off the UI/game thread) and returns the recorded video file when {@code externalAudio} is set. */
     static File stopAndWaitTempFile() {
+        beginStopInput();
+        return awaitTempFile();
+    }
+
+    static File awaitTempFile() {
         synchronized (EngineRecorder.class) {
             if (!started) {
                 return null;
             }
             stopping = true;
+            if (stopRequestedAtMs == 0L) {
+                stopRequestedAtMs = System.currentTimeMillis();
+            }
         }
         stopCodecAndDrain();
         finishMuxer();
@@ -268,6 +324,7 @@ final class EngineRecorder {
                 return "stopping;finishing the file";
             }
             stopping = true;
+            stopRequestedAtMs = System.currentTimeMillis();
         }
         Thread finisher = new Thread(EngineRecorder::finish, "Volt engine recorder stop");
         finisher.setDaemon(true);
@@ -277,13 +334,23 @@ final class EngineRecorder {
 
     /** Drains the last frames, closes the codec and finalises the MP4. Never on the game. */
     private static void finish() {
-        stopCodecAndDrain();
+        MediaCodec encoder;
+        synchronized (EngineRecorder.class) {
+            encoder = codec;
+        }
+        if (encoder != null) {
+            try {
+                encoder.signalEndOfInputStream();
+            } catch (Throwable ignored) {
+            }
+        }
         if (mic != null) {
             try {
                 mic.stopAndWait();
             } catch (Throwable ignored) {
             }
         }
+        stopCodecAndDrain();
         boolean finished = finishMuxer();
         boolean empty = written == 0L;
         long size = 0L;
@@ -291,13 +358,18 @@ final class EngineRecorder {
         if (!empty && tempVideo != null && appContext != null) {
             openTarget(appContext);
             File micFile = mic == null ? null : mic.file();
+            long audioShiftUs =
+                    firstVideoMonotonicUs > 0L ? (sessionStartUs - firstVideoMonotonicUs) : 0L;
             if (targetFile != null) {
                 boolean merged =
                         micFile != null
                                 && micFile.exists()
                                 && micFile.length() > 0
                                 && RecorderService.Muxer.merge(
-                                        tempVideo, micFile, targetFile.getFileDescriptor());
+                                        tempVideo,
+                                        micFile,
+                                        targetFile.getFileDescriptor(),
+                                        audioShiftUs);
                 if (!merged) {
                     copyFileToFd(tempVideo, targetFile.getFileDescriptor());
                 }
@@ -403,8 +475,10 @@ final class EngineRecorder {
                     break;
                 }
                 if (stopping && index == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                    // Nothing left to drain once the encoder was told to finish.
-                    break;
+                    long stoppedAt = stopRequestedAtMs;
+                    if (stoppedAt > 0L && System.currentTimeMillis() - stoppedAt > 2_000L) {
+                        break;
+                    }
                 }
             }
         } catch (Throwable error) {
@@ -413,9 +487,6 @@ final class EngineRecorder {
     }
 
     private static void startMuxer(MediaCodec encoder) {
-        if (stopping) {
-            return;
-        }
         synchronized (EngineRecorder.class) {
             if (track >= 0 || muxer == null) {
                 return;
@@ -426,17 +497,35 @@ final class EngineRecorder {
     }
 
     private static void write(ByteBuffer buffer, MediaCodec.BufferInfo info) {
-        // `stop` holds the lock while it joins this thread: never wait for it here.
-        if (stopping) {
-            return;
-        }
         synchronized (EngineRecorder.class) {
             if (track < 0 || muxer == null) {
                 return;
             }
+            if (firstVideoMonotonicUs < 0L) {
+                long nowUs = System.nanoTime() / 1000L;
+                long rawPts = info.presentationTimeUs;
+                boolean monotonic =
+                        nowUs > 10_000_000L
+                                && rawPts > 10_000_000L
+                                && Math.abs(nowUs - rawPts) < 10_000_000L;
+                firstRawPtsUs = rawPts;
+                if (monotonic) {
+                    firstVideoMonotonicUs = rawPts;
+                } else {
+                    long queuedUs = firstFrameQueuedUs;
+                    firstVideoMonotonicUs = queuedUs > 0L ? queuedUs : nowUs;
+                }
+            }
+            long pts = Math.max(0L, info.presentationTimeUs - firstRawPtsUs);
+            if (lastWrittenVideoPtsUs >= 0L && pts <= lastWrittenVideoPtsUs) {
+                pts = lastWrittenVideoPtsUs + 1L;
+            }
+            lastWrittenVideoPtsUs = pts;
+            MediaCodec.BufferInfo outInfo = new MediaCodec.BufferInfo();
+            outInfo.set(info.offset, info.size, pts, info.flags);
             buffer.position(info.offset);
             buffer.limit(info.offset + info.size);
-            muxer.writeSampleData(track, buffer, info);
+            muxer.writeSampleData(track, buffer, outInfo);
             written += info.size;
         }
         long now = System.currentTimeMillis();
@@ -691,15 +780,16 @@ final class EngineRecorder {
     /** Microphone AAC capture for raw gameplay recordings when Microphone audio is chosen. */
     private static final class MicCapture {
         private final File file;
+        private final long originUs;
         private final int sampleRate = 44_100;
         private AudioRecord record;
         private MediaCodec codec;
-        private MediaMuxer muxer;
         private Thread thread;
         private volatile boolean running;
 
-        MicCapture(File cacheDir) throws Exception {
+        MicCapture(File cacheDir, long originUs) throws Exception {
             this.file = File.createTempFile("volt-mic-", ".mp4", cacheDir);
+            this.originUs = originUs;
         }
 
         File file() {
@@ -739,72 +829,13 @@ final class EngineRecorder {
         }
 
         private void pump() {
-            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-            byte[] pcm = new byte[8192];
-            int audioTrack = -1;
-            boolean formatSent = false;
-            long total = 0L;
-            try {
-                while (running) {
-                    int read = record.read(pcm, 0, pcm.length);
-                    if (read > 0) {
-                        int index = codec.dequeueInputBuffer(10_000);
-                        if (index >= 0) {
-                            ByteBuffer input = codec.getInputBuffer(index);
-                            if (input != null) {
-                                input.clear();
-                                int len = Math.min(read, input.capacity());
-                                input.put(pcm, 0, len);
-                                long pts = total * 1_000_000L / (2L * sampleRate);
-                                codec.queueInputBuffer(index, 0, len, pts, 0);
-                                total += len;
-                            }
-                        }
-                    } else if (read < 0) {
-                        break;
-                    }
-                    int outIndex;
-                    while ((outIndex = codec.dequeueOutputBuffer(info, 0)) >= 0) {
-                        ByteBuffer out = codec.getOutputBuffer(outIndex);
-                        if (out != null && info.size > 0) {
-                            if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                                info.size = 0;
-                            }
-                            if (info.size > 0) {
-                                if (!formatSent) {
-                                    MediaFormat outFmt = codec.getOutputFormat();
-                                    muxer =
-                                            new MediaMuxer(
-                                                    file.getAbsolutePath(),
-                                                    MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
-                                    audioTrack = muxer.addTrack(outFmt);
-                                    muxer.start();
-                                    formatSent = true;
-                                }
-                                out.position(info.offset);
-                                out.limit(info.offset + info.size);
-                                muxer.writeSampleData(audioTrack, out, info);
-                            }
-                        }
-                        codec.releaseOutputBuffer(outIndex, false);
-                    }
-                }
-            } catch (Throwable ignored) {
-            } finally {
-                try {
-                    if (muxer != null && formatSent) {
-                        muxer.stop();
-                    }
-                } catch (Throwable ignored) {
-                }
-                try {
-                    if (muxer != null) {
-                        muxer.release();
-                    }
-                } catch (Throwable ignored) {
-                }
-                muxer = null;
-            }
+            RecorderService.AudioCapture.pumpPcmToMp4(
+                    record,
+                    codec,
+                    file,
+                    sampleRate,
+                    originUs,
+                    () -> running);
         }
 
         void stopAndWait() {

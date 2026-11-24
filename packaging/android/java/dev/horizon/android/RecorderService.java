@@ -97,6 +97,8 @@ public final class RecorderService extends Service {
     private int frames = 30;
     private int audioMode;
     private long startedAt;
+    private long sessionStartUs;
+    private long videoStartMonotonicUs;
     private boolean rawGameplay;
     private volatile boolean stopping;
     private volatile boolean failed;
@@ -256,7 +258,9 @@ public final class RecorderService extends Service {
                 width = ScreenRecorder.runWidth;
                 height = ScreenRecorder.runHeight;
                 frames = ScreenRecorder.runFps;
-                audio = new AudioCapture(projection, getCacheDir());
+                sessionStartUs = EngineRecorder.sessionStartUs();
+                videoStartMonotonicUs = 0L;
+                audio = new AudioCapture(projection, getCacheDir(), sessionStartUs);
                 audio.start();
                 startedAt = System.currentTimeMillis();
                 ScreenRecorder.startedAt = startedAt;
@@ -339,10 +343,12 @@ public final class RecorderService extends Service {
                             null,
                             workerHandler);
             if (audioMode == 2) {
-                audio = new AudioCapture(projection, getCacheDir());
+                sessionStartUs = System.nanoTime() / 1000L;
+                audio = new AudioCapture(projection, getCacheDir(), sessionStartUs);
                 audio.start();
             }
             recorder.start();
+            videoStartMonotonicUs = System.nanoTime() / 1000L;
             startedAt = System.currentTimeMillis();
             ScreenRecorder.runWidth = width;
             ScreenRecorder.runHeight = height;
@@ -495,8 +501,16 @@ public final class RecorderService extends Service {
     private void finish(String reason) {
         boolean stopped = false;
         if (rawGameplay) {
-            tempVideo = EngineRecorder.stopAndWaitTempFile();
+            EngineRecorder.beginStopInput();
+            if (audio != null) {
+                try {
+                    audio.stopAndWait();
+                } catch (Throwable ignored) {
+                }
+            }
+            tempVideo = EngineRecorder.awaitTempFile();
             stopped = tempVideo != null && tempVideo.exists() && tempVideo.length() > 0;
+            videoStartMonotonicUs = EngineRecorder.firstVideoMonotonicUs();
             rawGameplay = false;
             ScreenRecorder.rawGameplayOnly = false;
         }
@@ -622,7 +636,12 @@ public final class RecorderService extends Service {
                 ScreenRecorder.publish("error", "", 0L, 0L, "no place to save the recording");
                 return "nothing saved";
             }
-            boolean merged = Muxer.merge(tempVideo, audioFile, targetFile.getFileDescriptor());
+            long audioShiftUs =
+                    videoStartMonotonicUs > 0L && sessionStartUs > 0L
+                            ? (sessionStartUs - videoStartMonotonicUs)
+                            : 0L;
+            boolean merged =
+                    Muxer.merge(tempVideo, audioFile, targetFile.getFileDescriptor(), audioShiftUs);
             finalizeOpened(merged ? "with game audio" : "game audio could not be merged");
             return merged ? "saved with game audio" : "saved video only";
         } catch (Throwable error) {
@@ -745,19 +764,24 @@ public final class RecorderService extends Service {
 
     /** The game's own audio, captured as AAC in a temporary MP4 (Android 10 and newer). */
     static final class AudioCapture {
+        interface RunningCheck {
+            boolean isRunning();
+        }
+
         private final MediaProjection projection;
         private final File file;
+        private final long originUs;
         private final int sampleRate = 44_100;
         private AudioRecord record;
         private MediaCodec codec;
-        private MediaMuxer muxer;
         private Thread thread;
         private volatile boolean running;
         private boolean started;
 
-        AudioCapture(MediaProjection projection, File cache) throws Exception {
+        AudioCapture(MediaProjection projection, File cache, long originUs) throws Exception {
             this.projection = projection;
             this.file = File.createTempFile("volt-audio-", ".mp4", cache);
+            this.originUs = originUs;
         }
 
         File file() {
@@ -821,54 +845,182 @@ public final class RecorderService extends Service {
         }
 
         private void pump() {
+            pumpPcmToMp4(record, codec, file, sampleRate, originUs, () -> running);
+        }
+
+        static void pumpPcmToMp4(
+                AudioRecord record,
+                MediaCodec codec,
+                File outFile,
+                int sampleRate,
+                long originUs,
+                RunningCheck check) {
             android.media.MediaCodec.BufferInfo info = new android.media.MediaCodec.BufferInfo();
+            android.media.AudioTimestamp ts = new android.media.AudioTimestamp();
             byte[] pcm = new byte[8192];
+            MediaMuxer muxer = null;
             int track = -1;
             boolean formatSent = false;
-            long total = 0L;
+            long totalFrames = 0L;
+            long anchorPtsUs = -1L;
+            long lastQueuedPtsUs = -1L;
+            long lastMuxedPtsUs = -1L;
             try {
-                while (running) {
+                while (check.isRunning()) {
                     int read = record.read(pcm, 0, pcm.length);
                     if (read > 0) {
-                        int index = codec.dequeueInputBuffer(10_000);
-                        if (index >= 0) {
-                            ByteBuffer input = codec.getInputBuffer(index);
-                            if (input != null) {
-                                input.clear();
-                                input.put(pcm, 0, Math.min(read, input.capacity()));
-                                long time = total * 1_000_000L / (2L * sampleRate);
-                                codec.queueInputBuffer(
-                                        index, 0, Math.min(read, input.capacity()), time, 0);
-                                total += Math.min(read, input.capacity());
+                        int alignedRead = read & ~1;
+                        if (alignedRead <= 0) {
+                            continue;
+                        }
+                        long readEndUs = System.nanoTime() / 1000L;
+                        long framesRead = alignedRead / 2L;
+                        long bufferDurUs = framesRead * 1_000_000L / sampleRate;
+                        long chunkMonotonicUs = readEndUs - bufferDurUs;
+                        if (record.getTimestamp(
+                                        ts, android.media.AudioTimestamp.TIMEBASE_MONOTONIC)
+                                == AudioRecord.SUCCESS
+                                && ts.nanoTime > 0L) {
+                            long hwUs =
+                                    (ts.nanoTime / 1000L)
+                                            + ((totalFrames - ts.framePosition)
+                                                    * 1_000_000L
+                                                    / sampleRate);
+                            if (Math.abs(hwUs - chunkMonotonicUs) < 500_000L) {
+                                chunkMonotonicUs = hwUs;
                             }
                         }
+                        long wallPtsUs = Math.max(0L, chunkMonotonicUs - originUs);
+                        if (anchorPtsUs < 0L) {
+                            anchorPtsUs = wallPtsUs;
+                        } else if (Math.abs(wallPtsUs - anchorPtsUs) > 20_000L) {
+                            anchorPtsUs = Math.max(lastQueuedPtsUs + 1_000L, wallPtsUs);
+                        }
+                        int offset = 0;
+                        long offsetFrames = 0L;
+                        while (offset < alignedRead && check.isRunning()) {
+                            int index = codec.dequeueInputBuffer(10_000);
+                            if (index >= 0) {
+                                ByteBuffer input = codec.getInputBuffer(index);
+                                if (input != null) {
+                                    input.clear();
+                                    int len = Math.min(alignedRead - offset, input.capacity()) & ~1;
+                                    if (len <= 0) {
+                                        codec.queueInputBuffer(
+                                                index, 0, 0, Math.max(0L, lastQueuedPtsUs + 1L), 0);
+                                        break;
+                                    }
+                                    input.put(pcm, offset, len);
+                                    long pts =
+                                            anchorPtsUs + (offsetFrames * 1_000_000L / sampleRate);
+                                    if (lastQueuedPtsUs >= 0L && pts <= lastQueuedPtsUs) {
+                                        pts = lastQueuedPtsUs + 1_000L;
+                                    }
+                                    lastQueuedPtsUs = pts;
+                                    codec.queueInputBuffer(index, 0, len, pts, 0);
+                                    offset += len;
+                                    offsetFrames += len / 2L;
+                                } else {
+                                    break;
+                                }
+                            } else {
+                                int outIndex;
+                                while ((outIndex = codec.dequeueOutputBuffer(info, 0)) >= 0) {
+                                    if (info.size > 0
+                                            && (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG)
+                                                    == 0) {
+                                        ByteBuffer out = codec.getOutputBuffer(outIndex);
+                                        if (out != null) {
+                                            if (!formatSent) {
+                                                muxer =
+                                                        new MediaMuxer(
+                                                                outFile.getAbsolutePath(),
+                                                                MediaMuxer.OutputFormat
+                                                                        .MUXER_OUTPUT_MPEG_4);
+                                                track = muxer.addTrack(codec.getOutputFormat());
+                                                muxer.start();
+                                                formatSent = true;
+                                            }
+                                            lastMuxedPtsUs =
+                                                    writeAudioSample(
+                                                            muxer, track, out, info, lastMuxedPtsUs);
+                                        }
+                                    }
+                                    codec.releaseOutputBuffer(outIndex, false);
+                                }
+                            }
+                        }
+                        anchorPtsUs += bufferDurUs;
+                        totalFrames += framesRead;
                     } else if (read < 0) {
                         break;
                     }
                     int outIndex;
                     while ((outIndex = codec.dequeueOutputBuffer(info, 0)) >= 0) {
-                        ByteBuffer out = codec.getOutputBuffer(outIndex);
-                        if (out != null && info.size > 0) {
-                            if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                                info.size = 0;
-                            }
-                            if (info.size > 0) {
+                        if (info.size > 0
+                                && (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                            ByteBuffer out = codec.getOutputBuffer(outIndex);
+                            if (out != null) {
                                 if (!formatSent) {
-                                    MediaFormat outFormat = codec.getOutputFormat();
                                     muxer =
                                             new MediaMuxer(
-                                                    file.getAbsolutePath(),
+                                                    outFile.getAbsolutePath(),
                                                     MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
-                                    track = muxer.addTrack(outFormat);
+                                    track = muxer.addTrack(codec.getOutputFormat());
                                     muxer.start();
                                     formatSent = true;
                                 }
-                                out.position(info.offset);
-                                out.limit(info.offset + info.size);
-                                muxer.writeSampleData(track, out, info);
+                                lastMuxedPtsUs =
+                                        writeAudioSample(muxer, track, out, info, lastMuxedPtsUs);
                             }
                         }
                         codec.releaseOutputBuffer(outIndex, false);
+                    }
+                }
+                int eosIndex = codec.dequeueInputBuffer(50_000);
+                if (eosIndex >= 0) {
+                    long eosPts = Math.max(0L, lastQueuedPtsUs + 1_000L);
+                    codec.queueInputBuffer(
+                            eosIndex, 0, 0, eosPts, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                    long eosDeadlineMs = System.currentTimeMillis() + 500L;
+                    while (System.currentTimeMillis() < eosDeadlineMs) {
+                        int outIndex = codec.dequeueOutputBuffer(info, 20_000);
+                        if (outIndex >= 0) {
+                            if (info.size > 0
+                                    && (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
+                                ByteBuffer out = codec.getOutputBuffer(outIndex);
+                                if (out != null) {
+                                    if (!formatSent) {
+                                        muxer =
+                                                new MediaMuxer(
+                                                        outFile.getAbsolutePath(),
+                                                        MediaMuxer.OutputFormat
+                                                                .MUXER_OUTPUT_MPEG_4);
+                                        track = muxer.addTrack(codec.getOutputFormat());
+                                        muxer.start();
+                                        formatSent = true;
+                                    }
+                                    lastMuxedPtsUs =
+                                            writeAudioSample(
+                                                    muxer, track, out, info, lastMuxedPtsUs);
+                                }
+                            }
+                            boolean eos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
+                            codec.releaseOutputBuffer(outIndex, false);
+                            if (eos) {
+                                break;
+                            }
+                        } else if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                            if (!formatSent) {
+                                muxer =
+                                        new MediaMuxer(
+                                                outFile.getAbsolutePath(),
+                                                MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+                                track = muxer.addTrack(codec.getOutputFormat());
+                                muxer.start();
+                                formatSent = true;
+                            }
+                        }
                     }
                 }
             } catch (Throwable ignored) {
@@ -885,8 +1037,25 @@ public final class RecorderService extends Service {
                     }
                 } catch (Throwable ignored) {
                 }
-                muxer = null;
             }
+        }
+
+        private static long writeAudioSample(
+                MediaMuxer muxer,
+                int track,
+                ByteBuffer out,
+                MediaCodec.BufferInfo info,
+                long lastMuxedPtsUs) {
+            long pts = Math.max(0L, info.presentationTimeUs);
+            if (lastMuxedPtsUs >= 0L && pts <= lastMuxedPtsUs) {
+                pts = lastMuxedPtsUs + 1L;
+            }
+            MediaCodec.BufferInfo copy = new MediaCodec.BufferInfo();
+            copy.set(info.offset, info.size, pts, info.flags);
+            out.position(info.offset);
+            out.limit(info.offset + info.size);
+            muxer.writeSampleData(track, out, copy);
+            return pts;
         }
 
         void stopAndWait() {
@@ -927,7 +1096,8 @@ public final class RecorderService extends Service {
 
     /** Copies the video track of one MP4 and the audio track of another into a third. */
     static final class Muxer {
-        static boolean merge(File video, File audio, java.io.FileDescriptor out) {
+        static boolean merge(
+                File video, File audio, java.io.FileDescriptor out, long audioShiftUs) {
             MediaExtractor videoSource = new MediaExtractor();
             MediaExtractor audioSource = new MediaExtractor();
             MediaMuxer muxer = null;
@@ -939,15 +1109,30 @@ public final class RecorderService extends Service {
                 if (videoTrack < 0 || audioTrack < 0) {
                     return false;
                 }
-                muxer = new MediaMuxer(out, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
                 videoSource.selectTrack(videoTrack);
                 audioSource.selectTrack(audioTrack);
+                ByteBuffer probe = ByteBuffer.allocateDirect(1 << 18);
+                boolean hasAudio = false;
+                while (audioSource.readSampleData(probe, 0) >= 0) {
+                    if (audioSource.getSampleTime() + audioShiftUs >= -12_000L) {
+                        hasAudio = true;
+                        break;
+                    }
+                    audioSource.advance();
+                }
+                if (!hasAudio) {
+                    return false;
+                }
+                muxer = new MediaMuxer(out, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
                 int outVideo = muxer.addTrack(videoSource.getTrackFormat(videoTrack));
                 int outAudio = muxer.addTrack(audioSource.getTrackFormat(audioTrack));
                 muxer.start();
                 android.media.MediaCodec.BufferInfo info = new android.media.MediaCodec.BufferInfo();
-                copyTrack(videoSource, muxer, outVideo, info);
-                copyTrack(audioSource, muxer, outAudio, info);
+                long videoSpanUs = copyVideoTrack(videoSource, muxer, outVideo, info);
+                if (videoSpanUs < 0L) {
+                    return false;
+                }
+                copyAudioTrack(audioSource, muxer, outAudio, info, audioShiftUs, videoSpanUs);
                 muxer.stop();
                 return true;
             } catch (Throwable error) {
@@ -981,20 +1166,69 @@ public final class RecorderService extends Service {
             return -1;
         }
 
-        private static void copyTrack(
+        private static long copyVideoTrack(
                 MediaExtractor source,
                 MediaMuxer muxer,
                 int track,
                 android.media.MediaCodec.BufferInfo info) {
             ByteBuffer buffer = ByteBuffer.allocateDirect(1 << 20);
+            long firstUs = Long.MIN_VALUE;
+            long lastUs = -1L;
             while (true) {
                 int size = source.readSampleData(buffer, 0);
                 if (size < 0) {
                     break;
                 }
+                long rawUs = source.getSampleTime();
+                if (firstUs == Long.MIN_VALUE) {
+                    firstUs = rawUs;
+                }
+                long pts = Math.max(0L, rawUs - firstUs);
+                if (lastUs >= 0L && pts <= lastUs) {
+                    pts = lastUs + 1L;
+                }
+                lastUs = pts;
                 info.offset = 0;
                 info.size = size;
-                info.presentationTimeUs = source.getSampleTime();
+                info.presentationTimeUs = pts;
+                info.flags = source.getSampleFlags();
+                muxer.writeSampleData(track, buffer, info);
+                source.advance();
+            }
+            return lastUs;
+        }
+
+        private static void copyAudioTrack(
+                MediaExtractor source,
+                MediaMuxer muxer,
+                int track,
+                android.media.MediaCodec.BufferInfo info,
+                long audioShiftUs,
+                long videoSpanUs) {
+            ByteBuffer buffer = ByteBuffer.allocateDirect(1 << 18);
+            long lastUs = -1L;
+            long maxUs = videoSpanUs + 50_000L;
+            while (true) {
+                int size = source.readSampleData(buffer, 0);
+                if (size < 0) {
+                    break;
+                }
+                long pts = source.getSampleTime() + audioShiftUs;
+                if (pts < -12_000L) {
+                    source.advance();
+                    continue;
+                }
+                pts = Math.max(0L, pts);
+                if (videoSpanUs > 0L && pts > maxUs) {
+                    break;
+                }
+                if (lastUs >= 0L && pts <= lastUs) {
+                    pts = lastUs + 1_000L;
+                }
+                lastUs = pts;
+                info.offset = 0;
+                info.size = size;
+                info.presentationTimeUs = pts;
                 info.flags = source.getSampleFlags();
                 muxer.writeSampleData(track, buffer, info);
                 source.advance();

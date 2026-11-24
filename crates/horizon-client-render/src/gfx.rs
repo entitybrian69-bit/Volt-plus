@@ -904,7 +904,7 @@ pub struct Renderer {
     record: Option<record_target::RecordTarget>,
     /// A surface the recorder just handed over, set up on the next frame.
     #[cfg(target_os = "android")]
-    record_pending: Option<(wgpu::Surface<'static>, [u32; 2])>,
+    record_pending: Option<(wgpu::Surface<'static>, [u32; 2], u32)>,
     /// Which capture the game asked for; the caller polls it to know when to reattach.
     #[cfg(target_os = "android")]
     record_serial: u64,
@@ -4124,11 +4124,12 @@ impl Renderer {
         &mut self,
         surface: Option<wgpu::Surface<'static>>,
         size: [u32; 2],
+        fps: u32,
         serial: u64,
         window: usize,
     ) {
         self.record = None;
-        self.record_pending = surface.map(|surface| (surface, size));
+        self.record_pending = surface.map(|surface| (surface, size, fps));
         self.record_serial = serial;
         self.record_window = window;
     }
@@ -6052,10 +6053,10 @@ impl Renderer {
             return Ok(false);
         }
         #[cfg(target_os = "android")]
-        if let Some((surface, size)) = self.record_pending.take() {
+        if let Some((surface, size, fps)) = self.record_pending.take() {
             // A codec surface that cannot be configured stops the capture, not the game.
             self.record =
-                record_target::RecordTarget::new(&self.adapter, &self.device, surface, size);
+                record_target::RecordTarget::new(&self.adapter, &self.device, surface, size, fps);
             if self.record.is_none() {
                 self.record_serial = 0;
                 self.record_window = 0;
@@ -9085,6 +9086,13 @@ impl Renderer {
             #[cfg(target_os = "android")]
             if let Some(record) = record_frame {
                 self.queue.present(record);
+                if self
+                    .record
+                    .as_mut()
+                    .is_some_and(record_target::RecordTarget::mark_first_presented)
+                {
+                    crate::android_runtime::note_record_frame();
+                }
             }
             if self.hdr.is_some()
                 && let Some(marker) = self.hdr_marker.take()

@@ -198,6 +198,16 @@ pub fn take_launcher_return() -> bool {
     RETURN_TO_LAUNCHER.swap(false, Ordering::AcqRel)
 }
 
+static RECORD_FRAME_HOOK: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+pub fn install_record_frame_hook(hook: fn()) {
+    let _ = RECORD_FRAME_HOOK.set(hook);
+}
+pub fn note_record_frame() {
+    if let Some(hook) = RECORD_FRAME_HOOK.get() {
+        hook();
+    }
+}
+
 #[cfg(test)]
 mod input_tests {
     use super::*;

@@ -12,9 +12,11 @@ pub(super) struct RecordTarget {
     config: wgpu::SurfaceConfiguration,
     post: world_post::Post,
     format: wgpu::TextureFormat,
-    /// When the encoder last got a frame: a 120 Hz display must not push twice what the
-    /// recording asked for.
-    last: Option<std::time::Instant>,
+    fps: u32,
+    /// When the next frame should reach the encoder so a higher display refresh rate
+    /// matches the chosen recording frame rate without oscillating below it.
+    next_frame_at: Option<std::time::Instant>,
+    notified_first: bool,
     failed: bool,
 }
 
@@ -26,6 +28,7 @@ impl RecordTarget {
         device: &wgpu::Device,
         surface: wgpu::Surface<'static>,
         size: [u32; 2],
+        fps: u32,
     ) -> Option<Self> {
         let caps = surface.get_capabilities(adapter);
         if !caps.usages.contains(wgpu::TextureUsages::RENDER_ATTACHMENT) {
@@ -87,13 +90,24 @@ impl RecordTarget {
             config,
             post,
             format,
-            last: None,
+            fps: if fps == 0 { 60 } else { fps.clamp(15, 165) },
+            next_frame_at: None,
+            notified_first: false,
             failed: false,
         })
     }
 
     pub(super) fn size(&self) -> [u32; 2] {
         [self.config.width, self.config.height]
+    }
+
+    pub(super) fn mark_first_presented(&mut self) -> bool {
+        if self.notified_first {
+            false
+        } else {
+            self.notified_first = true;
+            true
+        }
     }
 
     /// Copies `source` (the frame before its HUD, `source_size` pixels) into the encoder's
@@ -109,13 +123,13 @@ impl RecordTarget {
         if self.failed {
             return None;
         }
-        // At most sixty frames a second reach the encoder, however fast the screen is.
-        if let Some(last) = self.last {
-            if last.elapsed().as_secs_f32() < 1.0 / 60.0 {
+        let now = std::time::Instant::now();
+        let interval = std::time::Duration::from_secs_f64(1.0 / f64::from(self.fps));
+        if let Some(target) = self.next_frame_at {
+            if now + std::time::Duration::from_millis(2) < target {
                 return None;
             }
         }
-        self.last = Some(std::time::Instant::now());
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame)
             | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -137,6 +151,10 @@ impl RecordTarget {
             // Busy, occluded or failed: this frame simply is not recorded.
             _ => return None,
         };
+        let next = self
+            .next_frame_at
+            .map_or(now + interval, |target| (target + interval).max(now));
+        self.next_frame_at = Some(next);
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
             format: Some(self.format),
             ..Default::default()

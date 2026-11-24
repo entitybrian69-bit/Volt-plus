@@ -214,6 +214,11 @@ public final class ScreenRecorder {
         return EngineRecorder.surface();
     }
 
+    /** Records the CLOCK_MONOTONIC timestamp when the first frame hits the engine surface. */
+    public static void noteEngineFrame() {
+        EngineRecorder.noteFrameQueued();
+    }
+
     /**
      * Asks for screen capture at {@code w x h}, {@code f} frames a second. The size is a request:
      * {@link RecorderService} fits it to the display and the device's encoder. Returns a

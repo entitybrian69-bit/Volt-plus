@@ -221,6 +221,7 @@ pub fn refresh(watching: bool) {
             window,
             width: status.width,
             height: status.height,
+            fps: status.fps,
             serial: recorder::next_capture_serial(),
         }));
     } else if !status.phase.active() && recorder::capture_target().is_some() {
@@ -393,8 +394,17 @@ fn start_engine(width: u32, height: u32, frames: i32, audio: i32) {
         window,
         width,
         height,
+        fps: frames.max(15) as u32,
         serial: recorder::next_capture_serial(),
     }));
+}
+
+fn note_engine_frame() {
+    let _ = crate::platform::with_context(|env, activity| {
+        let class = recorder_class(env, activity)?;
+        env.call_static_method(class, "noteEngineFrame", "()V", &[])?;
+        Ok(())
+    });
 }
 
 /// `recording;1280x720`: the size the encoder settled on, from `startEngine`'s answer.
@@ -418,12 +428,16 @@ fn release_capture() {
 /// while a recording can be running; a surface that cannot be made ends the recording with a
 /// sentence instead of leaving an empty video behind.
 pub fn sync_capture(renderer: &mut horizon_client_render::gfx::Renderer) {
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        horizon_client::android_runtime::install_record_frame_hook(note_engine_frame);
+    });
     static ATTEMPTED: Mutex<u64> = Mutex::new(0);
     let mut attempted = ATTEMPTED.lock().unwrap_or_else(|e| e.into_inner());
     let want = recorder::capture_target();
     let Some(target) = want else {
         if renderer.record_serial() != 0 || renderer.record_window() != 0 {
-            renderer.set_record_surface(None, [0, 0], 0, 0);
+            renderer.set_record_surface(None, [0, 0], 0, 0, 0);
         }
         *attempted = 0;
         return;
@@ -443,6 +457,7 @@ pub fn sync_capture(renderer: &mut horizon_client_render::gfx::Renderer) {
         Some(surface) => renderer.set_record_surface(
             Some(surface),
             [target.width, target.height],
+            target.fps,
             target.serial,
             target.window,
         ),
