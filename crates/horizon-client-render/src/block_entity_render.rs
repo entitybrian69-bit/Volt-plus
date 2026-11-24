@@ -597,25 +597,6 @@ fn first_line(line: &str, max_width: f32, advance: &dyn Fn(char) -> f32) -> Stri
     line.to_owned()
 }
 
-static SIGN_TEXT_CULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-pub fn set_sign_text_cull(on: bool) {
-    SIGN_TEXT_CULL.store(on, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub fn sign_text_visible(cull: bool, pos: [i32; 3], camera: DVec3) -> bool {
-    if !cull {
-        return true;
-    }
-    DVec3::new(
-        f64::from(pos[0]) + 0.5,
-        f64::from(pos[1]) + 0.5,
-        f64::from(pos[2]) + 0.5,
-    )
-    .distance_squared(camera)
-        <= 24.0 * 24.0
-}
-
 /// `AbstractSignRenderer.isOutlineVisible`: the camera within 16 blocks of
 /// the sign's centre.
 fn sign_text_near(pos: [i32; 3], camera: DVec3) -> bool {
@@ -1038,13 +1019,6 @@ impl BlockEntityRenderer {
         packed: u8,
         out: &mut Vec<Vertex>,
     ) {
-        if !sign_text_visible(
-            SIGN_TEXT_CULL.load(std::sync::atomic::Ordering::Relaxed),
-            pos,
-            scene.camera,
-        ) {
-            return;
-        }
         let Some(data) = (scene.sign)(pos) else {
             return;
         };

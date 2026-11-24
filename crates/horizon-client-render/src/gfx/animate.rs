@@ -276,6 +276,9 @@ impl SpriteAnimator {
     /// storage texture and reading two storage buffers (not OpenGL before
     /// 4.3).
     pub fn compute(adapter: &wgpu::Adapter, device: &wgpu::Device) -> bool {
+        if crate::android_runtime::compatibility() {
+            return false;
+        }
         let limits = device.limits();
         adapter
             .get_downlevel_capabilities()

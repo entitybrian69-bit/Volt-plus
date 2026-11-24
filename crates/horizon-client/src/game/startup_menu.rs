@@ -708,13 +708,6 @@ impl Loading {
                 ),
                 // Mods' settings pages open only in a running game.
                 Event::ModSettings(_) | Event::NativeSettings(_) | Event::NativeButton(..) => {}
-                Event::PurgeRam => {
-                    let _ = horizon_client::mesher::purge_mesh_pool();
-                }
-                Event::ClearReplays => {
-                    let _ = horizon_client::replay::clear_all_replays(&super::Game::replays_dir());
-                }
-                Event::OpenReplays => {}
                 // The startup menu runs before the game opens a control socket.
                 Event::ButtonClick => {
                     #[cfg(target_os = "android")]
@@ -2580,6 +2573,7 @@ impl Loading {
             batch,
             false,
         );
+        batch.controls_at = Some(batch.vertices.len() as u32);
         #[cfg(target_os = "android")]
         {
             crate::screen_record::refresh(self.menu.touch.floating_menu);

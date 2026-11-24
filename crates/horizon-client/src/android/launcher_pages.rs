@@ -368,6 +368,7 @@ pub(super) enum Action {
     ChooseCacheBudget(u32),
     ToggleBundled(&'static str),
     WorldFiles,
+    ScreenshotFiles,
     GameFiles,
     WorkerLimit,
     ChooseWorkerLimit(u32),
@@ -476,19 +477,6 @@ pub(super) enum Action {
     CloseUpdateScreen,
     TriggerUpdateInstall,
     CheckForUpdates,
-    ReplayRefresh,
-    ReplayImport,
-    ReplayToggleSort,
-    ReplayCycleWorldFilter,
-    ReplayOpen(usize),
-    ReplayExport(usize),
-    ReplayStartRename(usize),
-    ReplaySubmitRename,
-    ReplayAskDelete(usize),
-    ReplayConfirmDelete,
-    ReplayAskClearAll,
-    ReplayConfirmClearAll,
-    ReplayCancelModal,
 }
 
 pub(super) fn button(
@@ -1308,6 +1296,14 @@ impl Launcher {
         let label = ui.fit_text(Face::Medium, 11.0, &account_name, 45.0);
         ui.text(Face::Medium, 11.0, 49.0, 63.0, my3_text(), &label);
         self.targets.push((account_rect, Action::Account));
+        let discord_space = w - 174.0 - 8.0 - 218.0;
+        let discord_rect = if discord_space >= 104.0 {
+            [218.0, 11.0, discord_space.min(148.0), 34.0]
+        } else {
+            [118.0, 55.0, (w - 130.0).clamp(96.0, 148.0), 34.0]
+        };
+        button(&mut ui, &mut self.targets, discord_rect,
+            "Join our Discord", Action::Discord, false);
         button(&mut ui, &mut self.targets, [w - 174.0, 12.0, 162.0, 34.0],
             "Background images", Action::OpenWallpapers, false);
 
@@ -4769,7 +4765,7 @@ impl Launcher {
                 "Settings",
             );
 
-            let cards: [(Icon, &str, &str, Action); 8] = [
+            let cards: [(Icon, &str, &str, Action); 7] = [
                 (
                     Icon::Monitor,
                     "Video Settings",
@@ -4795,12 +4791,6 @@ impl Launcher {
                     Action::Page(Page::ControlsStudio),
                 ),
                 (
-                    Icon::Play,
-                    "Replays",
-                    "View, rename, export & manage saved .vreplay clips",
-                    Action::SettingsCat(SettingsCategory::Replays),
-                ),
-                (
                     Icon::Flask,
                     "Experimental Stuff",
                     "Unstable features. We put the weird shit here.",
@@ -4822,25 +4812,25 @@ impl Launcher {
 
             let grid_top = 98.0 + slide_y;
             let gap_x = 14.0;
-            let gap_y = 10.0;
+            let gap_y = 12.0;
             let card_h = if compact {
-                ((h - grid_top - 52.0 - gap_y * 7.0) / 8.0).clamp(40.0, 62.0)
+                ((h - grid_top - 52.0 - gap_y * 6.0) / 7.0).clamp(44.0, 68.0)
             } else {
-                ((h - grid_top - 52.0 - gap_y * 3.0) / 4.0).clamp(56.0, 82.0)
+                ((h - grid_top - 52.0 - gap_y * 2.0) / 3.0).clamp(64.0, 90.0)
             };
 
             for (idx, (icon, title, subtitle, action)) in cards.into_iter().enumerate() {
                 let (cx, cy, card_w) = if compact {
                     (content_x, grid_top + idx as f32 * (card_h + gap_y), content_w)
-                } else {
+                } else if idx < 4 {
                     let col = idx % 2;
                     let row = idx / 2;
                     let w2 = (content_w - gap_x) * 0.5;
-                    (
-                        content_x + col as f32 * (w2 + gap_x),
-                        grid_top + row as f32 * (card_h + gap_y),
-                        w2,
-                    )
+                    (content_x + col as f32 * (w2 + gap_x), grid_top + row as f32 * (card_h + gap_y), w2)
+                } else {
+                    let col = idx - 4;
+                    let w3 = (content_w - gap_x * 2.0) / 3.0;
+                    (content_x + col as f32 * (w3 + gap_x), grid_top + 2.0 * (card_h + gap_y), w3)
                 };
                 let rect = [cx, cy, card_w, card_h];
 
@@ -5121,7 +5111,7 @@ impl Launcher {
             }
             SettingsCategory::Launcher => {
                 let c = &self.catalog.config;
-                let count = 10;
+                let count = 11;
                 let extra_ime = if ime_top_dp.is_some() { 180.0 } else { 0.0 };
                 let max_scroll =
                     (count as f32 * step_y + extra_ime - (list_bottom - list_top)).max(0.0);
@@ -5157,7 +5147,7 @@ impl Launcher {
                 };
                 let game_anim_off = c.disable_game_animations || touch_cfg.disable_game_animations;
 
-                let rows: [(&str, &str, SettingControl<'_>); 10] = [
+                let rows: [(&str, &str, SettingControl<'_>); 11] = [
                     (
                         "Launcher UI scale (Phone DPI)",
                         "Adapts launcher cards, text and buttons to your screen DPI",
@@ -5214,8 +5204,13 @@ impl Launcher {
                     ),
                     (
                         "Open game & world folders",
-                        "Manage saves, resource packs and mods in Android Files",
+                        "Manage saves, resource packs, mods and screenshots in Android Files",
                         SettingControl::Button("Open Files", Action::GameFiles, false),
+                    ),
+                    (
+                        "Screenshots directory",
+                        "Open the screenshots folder in Android Files",
+                        SettingControl::Button("Screenshots", Action::ScreenshotFiles, false),
                     ),
                 ];
 
@@ -6485,341 +6480,6 @@ impl Launcher {
                 }
                 ui.set_clip(None);
             }
-            SettingsCategory::Replays => {
-                use horizon_client::replay::{format_bytes, format_duration};
-                self.catalog.replay_scroll = self.catalog.scroll;
-                let toolbar_y = list_top;
-                let toolbar_h = 34.0;
-                let used = format_bytes(self.catalog.replay_used_bytes);
-                let budget = format_bytes(self.catalog.replay_budget_bytes);
-                let usage_frac = if self.catalog.replay_budget_bytes > 0 {
-                    (self.catalog.replay_used_bytes as f32
-                        / self.catalog.replay_budget_bytes as f32)
-                        .clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-
-                // Storage bar + toolbar buttons
-                ui.rounded(content_x, toolbar_y, content_w, toolbar_h, 12.0, my3_card_bg());
-                ui.border(content_x, toolbar_y, content_w, toolbar_h, 12.0, my3_card_border());
-                let meter_w = (content_w * 0.28).clamp(90.0, 170.0);
-                let meter_x = content_x + 12.0;
-                let meter_y = toolbar_y + 22.0;
-                ui.text(
-                    Face::Medium,
-                    11.5,
-                    meter_x,
-                    toolbar_y + 6.0,
-                    my3_text(),
-                    &format!("Storage: {used} / {budget}"),
-                );
-                ui.rounded(meter_x, meter_y, meter_w, 5.0, 2.5, my3_surface_high());
-                ui.rounded(
-                    meter_x,
-                    meter_y,
-                    (meter_w * usage_frac).max(4.0),
-                    5.0,
-                    2.5,
-                    if usage_frac > 0.85 { 0xFFE03044 } else { my3_accent() },
-                );
-
-                let sort_label = format!("Sort: {}", self.catalog.replay_sort.label());
-                let world_label = self
-                    .catalog
-                    .replay_world_filter
-                    .as_deref()
-                    .unwrap_or("All Worlds")
-                    .to_string();
-                let mut bx = content_x + content_w - 8.0;
-                for (lbl, act, accent) in [
-                    ("Clear", Action::ReplayAskClearAll, false),
-                    ("Import", Action::ReplayImport, true),
-                    (world_label.as_str(), Action::ReplayCycleWorldFilter, false),
-                    (sort_label.as_str(), Action::ReplayToggleSort, false),
-                ] {
-                    let bw = (ui.measure(Face::Medium, 11.5, lbl) + 18.0).clamp(58.0, 130.0);
-                    bx -= bw + 6.0;
-                    if bx > meter_x + meter_w + 6.0 {
-                        let r = [bx, toolbar_y + 4.0, bw, toolbar_h - 8.0];
-                        button(ui, &mut self.targets, r, lbl, act, accent);
-                    }
-                }
-
-                let clips_top = toolbar_y + toolbar_h + 10.0;
-                let clip_h = 74.0;
-                let clip_step = clip_h + 10.0;
-                let count = self.catalog.replay_items.len();
-                let max_scroll = (count as f32 * clip_step - (list_bottom - clips_top)).max(0.0);
-                self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
-                self.catalog.replay_scroll = self.catalog.scroll;
-                self.list_view = Some([clips_top, list_bottom, max_scroll]);
-
-                ui.set_clip(Some([
-                    content_x - 2.0,
-                    clips_top,
-                    content_w + 4.0,
-                    (list_bottom - clips_top).max(1.0),
-                ]));
-
-                if self.catalog.replay_items.is_empty() {
-                    let eh = 112.0;
-                    ui.rounded(content_x, clips_top + 12.0, content_w, eh, 16.0, my3_card_bg());
-                    ui.border(content_x, clips_top + 12.0, content_w, eh, 16.0, my3_card_border());
-                    ui.text(
-                        Face::SemiBold,
-                        15.0,
-                        content_x + 20.0,
-                        clips_top + 32.0,
-                        my3_text(),
-                        "No saved replays yet",
-                    );
-                    ui.text(
-                        Face::Regular,
-                        12.5,
-                        content_x + 20.0,
-                        clips_top + 56.0,
-                        my3_muted(),
-                        "Enable Replay Recording in Volt + Boost settings or import a .vreplay file.",
-                    );
-                    button(
-                        ui,
-                        &mut self.targets,
-                        [content_x + 20.0, clips_top + 82.0, 138.0, 28.0],
-                        "Import .vreplay",
-                        Action::ReplayImport,
-                        true,
-                    );
-                } else {
-                    for idx in 0..self.catalog.replay_items.len() {
-                        let y = clips_top + idx as f32 * clip_step - self.catalog.scroll;
-                        if y + clip_h < clips_top || y > list_bottom {
-                            continue;
-                        }
-                        let item = &self.catalog.replay_items[idx];
-                        ui.rounded(content_x, y, content_w, clip_h, 14.0, my3_card_bg());
-                        ui.border(content_x, y, content_w, clip_h, 14.0, my3_card_border());
-
-                        // Thumbnail preview block (sampled color grid or damaged badge)
-                        let tx = content_x + 10.0;
-                        let ty = y + 10.0;
-                        let tw = 88.0;
-                        let th = clip_h - 20.0;
-                        ui.rounded(tx, ty, tw, th, 9.0, my3_surface_high());
-                        if item.damaged {
-                            ui.rounded(tx, ty, tw, th, 9.0, 0x33E03044);
-                            ui.centered_fit(
-                                Face::SemiBold,
-                                11.0,
-                                [tx, ty, tw, th],
-                                0xFFE03044,
-                                "DAMAGED",
-                            );
-                        } else if !item.thumbnail_rgba.is_empty() && item.thumbnail_w > 0 && item.thumbnail_h > 0 {
-                            let step_x = (item.thumbnail_w as usize / 4).max(1);
-                            let step_y = (item.thumbnail_h as usize / 3).max(1);
-                            let cw = tw / 4.0;
-                            let ch = th / 3.0;
-                            for gy in 0..3 {
-                                for gx in 0..4 {
-                                    let px = (gx * step_x).min(item.thumbnail_w as usize - 1);
-                                    let py = (gy * step_y).min(item.thumbnail_h as usize - 1);
-                                    let off = (py * item.thumbnail_w as usize + px) * 4;
-                                    if off + 3 < item.thumbnail_rgba.len() {
-                                        let r = u32::from(item.thumbnail_rgba[off]);
-                                        let g = u32::from(item.thumbnail_rgba[off + 1]);
-                                        let b = u32::from(item.thumbnail_rgba[off + 2]);
-                                        let col = 0xFF00_0000 | (r << 16) | (g << 8) | b;
-                                        ui.rounded(
-                                            tx + gx as f32 * cw,
-                                            ty + gy as f32 * ch,
-                                            cw + 0.5,
-                                            ch + 0.5,
-                                            2.0,
-                                            col,
-                                        );
-                                    }
-                                }
-                            }
-                        } else {
-                            ui.icon(
-                                Icon::Play,
-                                tx + (tw - 20.0) * 0.5,
-                                ty + (th - 20.0) * 0.5,
-                                20.0,
-                                my3_accent(),
-                            );
-                        }
-
-                        let info_x = tx + tw + 12.0;
-                        let title_max = (content_w - tw - 260.0).max(90.0);
-                        let fitted_name = ui.fit_text(Face::SemiBold, 14.0, &item.name, title_max);
-                        ui.text(Face::SemiBold, 14.0, info_x, y + 14.0, my3_text(), &fitted_name);
-                        let meta_line = if item.damaged {
-                            format!(
-                                "Damaged clip ({}) · {}",
-                                format_bytes(item.file_size_bytes),
-                                item.error_message.as_deref().unwrap_or("integrity check failed")
-                            )
-                        } else {
-                            format!(
-                                "{} · {} · {}",
-                                item.world_name,
-                                format_duration(item.duration_ms),
-                                format_bytes(item.file_size_bytes)
-                            )
-                        };
-                        let fitted_meta = ui.fit_text(Face::Regular, 12.0, &meta_line, title_max);
-                        ui.text(
-                            Face::Regular,
-                            12.0,
-                            info_x,
-                            y + 38.0,
-                            if item.damaged { 0xFFE06070 } else { my3_muted() },
-                            &fitted_meta,
-                        );
-
-                        // Row action buttons: View (if healthy), Export, Rename, Delete
-                        let mut rx = content_x + content_w - 10.0;
-                        let bh = 28.0;
-                        let by = y + (clip_h - bh) * 0.5;
-                        for (lbl, act, accent, enabled) in [
-                            ("Delete", Action::ReplayAskDelete(idx), false, true),
-                            ("Rename", Action::ReplayStartRename(idx), false, !item.damaged),
-                            ("Export", Action::ReplayExport(idx), false, true),
-                            ("View", Action::ReplayOpen(idx), true, !item.damaged),
-                        ] {
-                            if !enabled {
-                                continue;
-                            }
-                            let bw = if lbl == "View" { 56.0 } else { 58.0 };
-                            rx -= bw + 6.0;
-                            let rect = [rx, by, bw, bh];
-                            button(ui, &mut self.targets, rect, lbl, act, accent);
-                            self.list_targets.push((rect, act));
-                        }
-                    }
-                }
-                ui.set_clip(None);
-
-                // Inline modals for Rename / Delete Confirm / Clear All Confirm
-                if self.catalog.replay_rename_target.is_some()
-                    || self.catalog.replay_delete_confirm.is_some()
-                    || self.catalog.replay_clear_confirm
-                {
-                    ui.rounded(0.0, 0.0, ui.width, ui.height, 0.0, 0x9900_0000);
-                    let mw = (content_w * 0.72).clamp(260.0, 420.0);
-                    let mh = 152.0;
-                    let mx = (ui.width - mw) * 0.5;
-                    let my = (ui.height - mh) * 0.5;
-                    ui.rounded(mx, my, mw, mh, 16.0, my3_card_bg());
-                    ui.border(mx, my, mw, mh, 16.0, my3_accent());
-
-                    if self.catalog.replay_rename_target.is_some() {
-                        ui.text(
-                            Face::SemiBold,
-                            15.0,
-                            mx + 18.0,
-                            my + 18.0,
-                            my3_text(),
-                            "Rename Replay Clip",
-                        );
-                        ui.rounded(mx + 18.0, my + 48.0, mw - 36.0, 34.0, 8.0, my3_surface_high());
-                        ui.border(mx + 18.0, my + 48.0, mw - 36.0, 34.0, 8.0, my3_accent());
-                        let text_preview = if self.catalog.replay_rename_input.is_empty() {
-                            "Enter replay name..."
-                        } else {
-                            self.catalog.replay_rename_input.as_str()
-                        };
-                        ui.text(Face::Regular, 13.0, mx + 26.0, my + 58.0, my3_text(), text_preview);
-                        button(
-                            ui,
-                            &mut self.targets,
-                            [mx + 18.0, my + mh - 46.0, 96.0, 30.0],
-                            "Cancel",
-                            Action::ReplayCancelModal,
-                            false,
-                        );
-                        button(
-                            ui,
-                            &mut self.targets,
-                            [mx + mw - 114.0, my + mh - 46.0, 96.0, 30.0],
-                            "Save",
-                            Action::ReplaySubmitRename,
-                            true,
-                        );
-                    } else if let Some(target) = &self.catalog.replay_delete_confirm {
-                        let fname = target
-                            .file_name()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("this replay");
-                        ui.text(
-                            Face::SemiBold,
-                            15.0,
-                            mx + 18.0,
-                            my + 18.0,
-                            my3_text(),
-                            "Delete Replay Clip?",
-                        );
-                        let msg = ui.fit_text(
-                            Face::Regular,
-                            12.5,
-                            &format!("Permanently remove '{fname}'?"),
-                            mw - 36.0,
-                        );
-                        ui.text(Face::Regular, 12.5, mx + 18.0, my + 52.0, my3_muted(), &msg);
-                        button(
-                            ui,
-                            &mut self.targets,
-                            [mx + 18.0, my + mh - 46.0, 96.0, 30.0],
-                            "Cancel",
-                            Action::ReplayCancelModal,
-                            false,
-                        );
-                        button(
-                            ui,
-                            &mut self.targets,
-                            [mx + mw - 114.0, my + mh - 46.0, 96.0, 30.0],
-                            "Delete",
-                            Action::ReplayConfirmDelete,
-                            true,
-                        );
-                    } else if self.catalog.replay_clear_confirm {
-                        ui.text(
-                            Face::SemiBold,
-                            15.0,
-                            mx + 18.0,
-                            my + 18.0,
-                            my3_text(),
-                            "Clear All Replays?",
-                        );
-                        ui.text(
-                            Face::Regular,
-                            12.5,
-                            mx + 18.0,
-                            my + 52.0,
-                            my3_muted(),
-                            "This permanently deletes every saved .vreplay clip.",
-                        );
-                        button(
-                            ui,
-                            &mut self.targets,
-                            [mx + 18.0, my + mh - 46.0, 96.0, 30.0],
-                            "Cancel",
-                            Action::ReplayCancelModal,
-                            false,
-                        );
-                        button(
-                            ui,
-                            &mut self.targets,
-                            [mx + mw - 114.0, my + mh - 46.0, 96.0, 30.0],
-                            "Clear All",
-                            Action::ReplayConfirmClearAll,
-                            true,
-                        );
-                    }
-                }
-            }
             // Not reachable from the category grid yet.
             SettingsCategory::Overview | SettingsCategory::Account => {}
         }
@@ -6922,16 +6582,8 @@ impl Launcher {
                 events.exit();
             }
             Some(Action::SettingsCat(cat)) => {
-                if self.catalog.settings_category == SettingsCategory::Replays {
-                    self.catalog.replay_scroll = self.catalog.scroll;
-                }
                 self.catalog.settings_category = cat;
-                if cat == SettingsCategory::Replays {
-                    self.catalog.refresh_replays(&self.home);
-                    self.catalog.scroll = self.catalog.replay_scroll;
-                } else {
-                    self.catalog.scroll = 0.0;
-                }
+                self.catalog.scroll = 0.0;
                 self.anim.trigger_page_transition();
             }
             Some(Action::OpenProject(index)) => {
@@ -7535,8 +7187,14 @@ impl Launcher {
             }
             Some(Action::GameFiles) => {
                 self.catalog.status = if crate::platform::open_documents(crate::document_store::ROOT) {
-                    "Game files opened. Worlds, mods, packs, shaders and reports are available here."
+                    "Game files opened. Worlds, mods, packs, shaders, screenshots and reports are available here."
                 } else { "Open system Files > Volt Plus." }.into();
+            }
+            Some(Action::ScreenshotFiles) => {
+                let id = crate::document_store::folder_id(self.catalog.config.profile, "screenshots");
+                self.catalog.status = if crate::platform::open_documents(&id) {
+                    "Screenshots directory opened in Android Files."
+                } else { "Open system Files > Volt Plus > Screenshots." }.into();
             }
             Some(Action::WorldFiles) => {
                 let id = crate::document_store::folder_id(self.catalog.config.profile, "worlds");
@@ -7641,7 +7299,7 @@ impl Launcher {
                 .into();
             }
             Some(Action::Discord) => {
-                self.catalog.status = if crate::platform::open_url("https://discord.gg/CjyWBu2mC7")
+                self.catalog.status = if crate::platform::open_url("https://discord.gg/WsBxGsKyhU")
                 {
                     "Discord opened in browser."
                 } else {
@@ -8609,104 +8267,6 @@ impl Launcher {
                 self.catalog.fm_modal = None;
                 self.catalog.editing = None;
                 crate::platform::hide();
-            }
-            Some(Action::ReplayRefresh) => {
-                self.catalog.refresh_replays(&self.home);
-            }
-            Some(Action::ReplayImport) => {
-                let dir = self.catalog.replays_dir(&self.home);
-                let _ = std::fs::create_dir_all(&dir);
-                if let Err(e) = crate::documents::begin_into_dir(dir) {
-                    self.catalog.status = e;
-                }
-            }
-            Some(Action::ReplayToggleSort) => {
-                self.catalog.replay_sort = self.catalog.replay_sort.toggle();
-                self.catalog.refresh_replays(&self.home);
-            }
-            Some(Action::ReplayCycleWorldFilter) => {
-                let worlds = &self.catalog.replay_worlds;
-                self.catalog.replay_world_filter = match &self.catalog.replay_world_filter {
-                    None => worlds.first().cloned(),
-                    Some(cur) => {
-                        let idx = worlds.iter().position(|w| w == cur);
-                        idx.and_then(|i| worlds.get(i + 1).cloned())
-                    }
-                };
-                self.catalog.refresh_replays(&self.home);
-            }
-            Some(Action::ReplayOpen(idx)) => {
-                if let Some(item) = self.catalog.replay_items.get(idx).cloned() {
-                    if item.damaged {
-                        self.catalog.status = "Cannot open a damaged replay clip.".into();
-                    } else {
-                        horizon_client::android_runtime::set_pending_replay_path(Some(item.path));
-                        self.action(events)?;
-                    }
-                }
-            }
-            Some(Action::ReplayExport(idx)) => {
-                if let Some(item) = self.catalog.replay_items.get(idx).cloned() {
-                    let suggested = item
-                        .path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("clip.vreplay")
-                        .to_string();
-                    if let Err(e) = crate::documents::begin_file_export(
-                        self.home.clone(),
-                        item.path,
-                        suggested,
-                        "application/octet-stream".into(),
-                    ) {
-                        self.catalog.status = e;
-                    }
-                }
-            }
-            Some(Action::ReplayStartRename(idx)) => {
-                if let Some(item) = self.catalog.replay_items.get(idx).cloned() {
-                    self.catalog.replay_rename_target = Some(item.path);
-                    self.catalog.replay_rename_input = item.name;
-                    self.catalog.editing = Some("replay_rename");
-                    crate::platform::show(&self.catalog.replay_rename_input);
-                }
-            }
-            Some(Action::ReplaySubmitRename) => {
-                crate::platform::hide();
-                self.catalog.submit_replay_rename(&self.home);
-            }
-            Some(Action::ReplayAskDelete(idx)) => {
-                if let Some(item) = self.catalog.replay_items.get(idx) {
-                    self.catalog.replay_delete_confirm = Some(item.path.clone());
-                }
-            }
-            Some(Action::ReplayConfirmDelete) => {
-                if let Some(path) = self.catalog.replay_delete_confirm.take() {
-                    match horizon_client::replay::delete_clip(&path) {
-                        Ok(()) => self.catalog.status = "Replay clip deleted.".into(),
-                        Err(e) => self.catalog.status = format!("Delete failed: {e}"),
-                    }
-                    self.catalog.refresh_replays(&self.home);
-                }
-            }
-            Some(Action::ReplayAskClearAll) => {
-                self.catalog.replay_clear_confirm = true;
-            }
-            Some(Action::ReplayConfirmClearAll) => {
-                self.catalog.replay_clear_confirm = false;
-                let dir = self.catalog.replays_dir(&self.home);
-                let removed = horizon_client::replay::clear_all_replays(&dir).unwrap_or(0);
-                self.catalog.status = format!("Cleared {removed} replay(s).");
-                self.catalog.refresh_replays(&self.home);
-            }
-            Some(Action::ReplayCancelModal) => {
-                self.catalog.replay_rename_target = None;
-                self.catalog.replay_delete_confirm = None;
-                self.catalog.replay_clear_confirm = false;
-                if self.catalog.editing == Some("replay_rename") {
-                    self.catalog.editing = None;
-                    crate::platform::hide();
-                }
             }
             None => {}
         }

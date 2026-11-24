@@ -206,6 +206,7 @@ impl Launcher {
         // First run: ensure independent MCPE and GoyControl storage directories exist,
         // and initialize MCPE Controls as the default active control system on fresh installs.
         let game_home = catalog.config.game_home(&home);
+        crate::document_store::ensure_fm_dirs(&home, &game_home);
         horizon_client::touch::Settings::ensure_system_storage(
             &game_home,
             horizon_client::touch::ControlStyle::Mcpe,
@@ -369,14 +370,7 @@ impl Launcher {
         self.catalog.refresh(&self.home);
         self.login.refresh_status();
         crate::diagnostics::heartbeat("returned_to_launcher", || serde_json::json!({}));
-        if horizon_client::android_runtime::take_replays_return() {
-            self.catalog.page = Page::Settings;
-            self.catalog.settings_category = crate::catalog::SettingsCategory::Replays;
-            self.catalog.refresh_replays(&self.home);
-            self.catalog.scroll = self.catalog.replay_scroll;
-        } else {
-            self.catalog.page = Page::Play;
-        }
+        self.catalog.page = Page::Play;
         if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
             self.error = Some(message);
         }
@@ -515,9 +509,6 @@ impl Launcher {
         } else if self.catalog.page == Page::Settings
             && self.catalog.settings_category != crate::catalog::SettingsCategory::Overview
         {
-            if self.catalog.settings_category == crate::catalog::SettingsCategory::Replays {
-                self.catalog.replay_scroll = self.catalog.scroll;
-            }
             self.catalog.settings_category =
                 if self.catalog.settings_category == crate::catalog::SettingsCategory::Theme {
                     crate::catalog::SettingsCategory::Launcher

@@ -1487,8 +1487,6 @@ pub enum Page {
     /// Horizon Settings: every page Horizon adds, as a mod's settings
     /// screen hangs off vanilla's Options.
     Horizon,
-    /// Volt + Boost: deep performance tuning and replay recording.
-    VoltPlusBoost,
     /// AI Agent: agent control on or off, whether an agent is connected, the connection details.
     Agent,
     /// SkinCustomizationScreen: the skin layers and Main Hand.
@@ -1677,12 +1675,6 @@ pub enum Event {
     /// The narrator option changed (after its `Changed`): the option's
     /// `onValueUpdate`, `GameNarrator.updateNarratorStatus`.
     Narrator,
-    /// Volt + Boost: purge unused runtime RAM/caches and report freed MB.
-    PurgeRam,
-    /// Volt + Boost: clear all saved replay clips after confirmation.
-    ClearReplays,
-    /// Volt + Boost: leave current session and open Launcher Settings -> Replays.
-    OpenReplays,
 }
 /// `SliderableValueSet.applyValueImmediately`: these apply 600 ms after
 /// the last change (`OptionInstanceSliderButton.delayedApplyAt`).
@@ -1762,7 +1754,6 @@ pub struct OptionsUi {
     pub volt_video: crate::volt_video_ui::VoltVideoUi,
     pub volt_mods: crate::volt_pages_ui::VoltModsUi,
     pub volt_horizon: crate::volt_pages_ui::VoltHorizonUi,
-    pub volt_boost: crate::volt_boost_ui::VoltBoostUi,
     pub split_profiles: crate::split_profiles::SplitProfiles,
     /// HDR calibration while its page is open.
     pub calibration: Option<crate::hdr_calibration::Calibration>,
@@ -1825,7 +1816,6 @@ impl Default for OptionsUi {
             volt_video: Default::default(),
             volt_mods: Default::default(),
             volt_horizon: Default::default(),
-            volt_boost: Default::default(),
             split_profiles: Default::default(),
             calibration: None,
             calibration_fullscreen: None,
@@ -1999,7 +1989,6 @@ fn option_widget(s: &Settings, opt: Opt, x: f32, y: f32, w: f32) -> Widget {
 fn horizon_page_tooltip(page: Page) -> Option<&'static str> {
     Some(match page {
         Page::Horizon => "horizon.pages.settings.tooltip",
-        Page::VoltPlusBoost => "horizon.pages.volt_plus_boost.tooltip",
         Page::Graphics => "horizon.pages.graphics.tooltip",
         Page::GraphicsAdvanced => "horizon.pages.graphics_advanced.tooltip",
         Page::Controller => "horizon.pages.controller.tooltip",
@@ -2506,9 +2495,6 @@ impl OptionsUi {
         if page == Page::Horizon {
             self.volt_horizon.reset();
         }
-        if page == Page::VoltPlusBoost {
-            self.volt_boost.on_open();
-        }
         if page == Page::Language {
             self.language_choice = None;
             self.language_search.set_value("");
@@ -2572,7 +2558,6 @@ impl OptionsUi {
             Page::Touch => "Touch Controls",
             Page::Credits => "credits_and_attribution.screen.title",
             Page::Horizon => "horizon.pages.settings",
-            Page::VoltPlusBoost => "horizon.pages.volt_plus_boost",
             Page::Agent => "horizon.pages.agent",
             Page::SplitProfiles => "horizon.pages.split_profiles",
         }
@@ -3157,7 +3142,6 @@ impl OptionsUi {
                     // Vanilla's Telemetry Data and Credits slots: Horizon's
                     // settings and its mods, as a mod adds its button here.
                     // Credits & Attribution (WinScreen's credits) follows them.
-                    ("horizon.pages.open.volt_plus_boost", Some(Page::VoltPlusBoost)),
                     ("horizon.pages.open.horizon_settings", Some(Page::Horizon)),
                     ("horizon.pages.open.mods", Some(Page::Mods)),
                     ("options.credits_and_attribution", Some(Page::Credits)),
@@ -3911,11 +3895,6 @@ impl OptionsUi {
             }
             return;
         }
-        if self.page() == Page::VoltPlusBoost {
-            self.size = (w, h);
-            self.volt_boost.draw(s, batch, atlas, cursor, (w, h));
-            return;
-        }
         if self.page() == Page::SplitProfiles {
             self.split_profiles
                 .draw(batch, atlas, cursor, self.in_world, self.pad_style);
@@ -4620,12 +4599,6 @@ impl OptionsUi {
             };
             return self.volt_horizon_actions(s, actions);
         }
-        if self.page() == Page::VoltPlusBoost {
-            self.size = size;
-            self.framebuffer = framebuffer;
-            let actions = self.volt_boost.click(s, (x, y), size, drag, right);
-            return self.volt_boost_actions(s, actions);
-        }
         if self.page() == Page::Packs {
             let mut events = Vec::new();
             if drag {
@@ -5046,26 +5019,6 @@ impl OptionsUi {
         }
         events
     }
-    fn volt_boost_actions(
-        &mut self,
-        s: &mut Settings,
-        actions: Vec<crate::volt_boost_ui::VoltBoostAction>,
-    ) -> Vec<Event> {
-        use crate::volt_boost_ui::VoltBoostAction;
-        let mut events = Vec::new();
-        for action in actions {
-            match action {
-                VoltBoostAction::ButtonClick => events.push(Event::ButtonClick),
-                VoltBoostAction::Changed => events.push(Event::Changed),
-                VoltBoostAction::SliderDrag => events.push(Event::SliderDrag),
-                VoltBoostAction::PurgeRam => events.push(Event::PurgeRam),
-                VoltBoostAction::ClearReplays => events.push(Event::ClearReplays),
-                VoltBoostAction::OpenReplays => events.push(Event::OpenReplays),
-                VoltBoostAction::Done => events.extend(self.back(s)),
-            }
-        }
-        events
-    }
     pub fn release(&mut self) -> Vec<Event> {
         self.scrollbar_drag_y = None;
         if let Some(p) = &mut self.pack_screen {
@@ -5078,9 +5031,8 @@ impl OptionsUi {
         let volt_slider = self.volt_video.release();
         self.volt_mods.release();
         self.volt_horizon.release();
-        let boost_slider = self.volt_boost.release();
         let calibration_slider = self.calibration.as_mut().is_some_and(|c| c.release());
-        if slider || graphics_slider || volt_slider || boost_slider || calibration_slider {
+        if slider || graphics_slider || volt_slider || calibration_slider {
             vec![Event::ButtonClick, Event::Changed]
         } else {
             Vec::new()
@@ -5199,10 +5151,6 @@ impl OptionsUi {
                 .scroll(s, size, &self.settings_search.value, amount);
             return Vec::new();
         }
-        if self.page() == Page::VoltPlusBoost {
-            self.volt_boost.scroll(amount);
-            return Vec::new();
-        }
         let plain = self.resource_error.is_none()
             && !(self.pack_screen.is_some() && self.stack.last() == Some(&Page::Packs));
         if !plain {
@@ -5281,7 +5229,6 @@ impl OptionsUi {
         self.volt_video.can_change_value = false;
         self.volt_mods.focus = None;
         self.volt_horizon.focus = None;
-        self.volt_boost.focus = None;
     }
     /// A touchscreen scroll moves the list, never the last focused or hovered
     /// option. Keep physical wheel handling in `wheel` separate.
@@ -5317,10 +5264,6 @@ impl OptionsUi {
         if self.page() == Page::Horizon {
             self.volt_horizon
                 .scroll(s, size, &self.settings_search.value, amount);
-            return;
-        }
-        if self.page() == Page::VoltPlusBoost {
-            self.volt_boost.scroll(amount);
             return;
         }
         match &mut self.pack_screen {
@@ -5754,27 +5697,6 @@ impl OptionsUi {
                 _ => None,
             };
             return self.volt_horizon_actions(s, actions);
-        }
-
-        if self.page() == Page::VoltPlusBoost {
-            let named = match key {
-                K::Escape => Some(winit::keyboard::NamedKey::Escape),
-                K::BrowserBack => Some(winit::keyboard::NamedKey::BrowserBack),
-                K::ArrowDown => Some(winit::keyboard::NamedKey::ArrowDown),
-                K::Tab => Some(winit::keyboard::NamedKey::Tab),
-                K::ArrowUp => Some(winit::keyboard::NamedKey::ArrowUp),
-                K::ArrowLeft => Some(winit::keyboard::NamedKey::ArrowLeft),
-                K::ArrowRight => Some(winit::keyboard::NamedKey::ArrowRight),
-                K::Enter | K::NumpadEnter => Some(winit::keyboard::NamedKey::Enter),
-                K::Space => Some(winit::keyboard::NamedKey::Space),
-                _ => None,
-            };
-            let actions = if let Some(nk) = named {
-                self.volt_boost.key(s, &winit::keyboard::Key::Named(nk))
-            } else {
-                Vec::new()
-            };
-            return self.volt_boost_actions(s, actions);
         }
 
         if key == K::Escape {
@@ -6999,7 +6921,7 @@ mod tests {
         let mut ui = OptionsUi::default();
         ui.show(Page::Video);
         let size = (480.0, 320.0);
-        ui.settings_search.set_value(&lang::get(Opt::RenderDistance.caption()));
+        ui.settings_search.set_value("render distance");
         assert!(
             ui.volt_video
                 .test_row_rect(

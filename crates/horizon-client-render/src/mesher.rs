@@ -22,75 +22,7 @@ use horizon_world::{
     registry::BlockStateId,
 };
 pub use sides::{Part, Sides, group_parts};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-
-static SMART_LEAF_CULL: AtomicBool = AtomicBool::new(false);
-static COPLANAR_QUAD_MERGE: AtomicBool = AtomicBool::new(false);
-static ZERO_STUTTER_MESH_POOL: AtomicBool = AtomicBool::new(false);
-static MESH_POOL: Mutex<Vec<SectionMesh>> = Mutex::new(Vec::new());
-
-pub fn set_smart_leaf_cull(on: bool) {
-    SMART_LEAF_CULL.store(on, Ordering::Relaxed);
-}
-pub fn smart_leaf_cull() -> bool {
-    SMART_LEAF_CULL.load(Ordering::Relaxed)
-}
-
-pub fn set_coplanar_quad_merge(on: bool) {
-    COPLANAR_QUAD_MERGE.store(on, Ordering::Relaxed);
-}
-pub fn coplanar_quad_merge() -> bool {
-    COPLANAR_QUAD_MERGE.load(Ordering::Relaxed)
-}
-
-pub fn set_zero_stutter_mesh_pool(on: bool) {
-    ZERO_STUTTER_MESH_POOL.store(on, Ordering::Relaxed);
-    if !on {
-        purge_mesh_pool();
-    }
-}
-pub fn zero_stutter_mesh_pool() -> bool {
-    ZERO_STUTTER_MESH_POOL.load(Ordering::Relaxed)
-}
-
-pub fn take_pooled_mesh() -> SectionMesh {
-    if ZERO_STUTTER_MESH_POOL.load(Ordering::Relaxed)
-        && let Some(mut mesh) = MESH_POOL.lock().unwrap_or_else(|e| e.into_inner()).pop()
-    {
-        mesh.clear();
-        return mesh;
-    }
-    SectionMesh::default()
-}
-
-pub fn recycle_pooled_mesh(mut mesh: SectionMesh) {
-    if !ZERO_STUTTER_MESH_POOL.load(Ordering::Relaxed) {
-        return;
-    }
-    let mut pool = MESH_POOL.lock().unwrap_or_else(|e| e.into_inner());
-    if pool.len() < 64 {
-        mesh.clear();
-        pool.push(mesh);
-    }
-}
-
-pub fn mesh_pool_retained_bytes() -> usize {
-    MESH_POOL
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .map(SectionMesh::capacity_bytes)
-        .sum()
-}
-
-pub fn purge_mesh_pool() -> usize {
-    let mut pool = MESH_POOL.lock().unwrap_or_else(|e| e.into_inner());
-    let bytes: usize = pool.iter().map(SectionMesh::capacity_bytes).sum();
-    pool.clear();
-    pool.shrink_to_fit();
-    bytes
-}
+use std::sync::Arc;
 
 /// An entity, item and effect vertex (the entity pipelines), with a face
 /// normal for `entity.wgsl`'s directional light.
@@ -1269,17 +1201,11 @@ impl Mesher<'_> {
                                 ni.solid || ni.leaves
                             });
                             if other_surrounded {
-                                if SMART_LEAF_CULL.load(Ordering::Relaxed) {
-                                    // Smart Leaf Cull skips interior opaque core seams too,
-                                    // preserving only air-facing outer foliage silhouettes.
-                                    visible[d as usize] = false;
-                                } else {
-                                    // Boundary between the outer cutout leaf shell and the buried
-                                    // canopy core: render as opaque so looking through outer leaf
-                                    // holes shows tinted foliage while Early-Z/FPK kills overdraw.
-                                    visible[d as usize] = true;
-                                    force_opaque_face[d as usize] = true;
-                                }
+                                // Boundary between the outer cutout leaf shell and the buried
+                                // canopy core: render as opaque so looking through outer leaf
+                                // holes shows tinted foliage while Early-Z/FPK kills overdraw.
+                                visible[d as usize] = true;
+                                force_opaque_face[d as usize] = true;
                             } else {
                                 // Shared seam between two outer-shell leaf blocks: cull internal
                                 // double-faces while keeping all outer air-facing sides cutout.
@@ -1317,9 +1243,6 @@ impl Mesher<'_> {
                     }
                 }
             }
-        }
-        if COPLANAR_QUAD_MERGE.load(Ordering::Relaxed) {
-            merge_coplanar_solid_quads(&mut out.solid);
         }
         out.finish_sprite_layers();
         out
@@ -1417,162 +1340,3 @@ pub type Region = [[Option<Arc<Chunk>>; 3]; 3];
 pub fn borrow(region: &Region) -> [[Option<&Chunk>; 3]; 3] {
     std::array::from_fn(|z| std::array::from_fn(|x| region[z][x].as_deref()))
 }
-
-/// Coplanar Quad Merge: merges adjacent axis-aligned opaque solid quads in `solid`
-/// that share the same plane, normal/face nibble, sprite layer, light, and color,
-/// and have compatible UVs (either uniform or tiling within fixed-point `[0, 1.999]`).
-pub fn merge_coplanar_solid_quads(solid: &mut Vec<TerrainVertex>) {
-    if solid.len() < 8 || !solid.len().is_multiple_of(4) {
-        return;
-    }
-    let quad_count = solid.len() / 4;
-    let mut consumed = vec![false; quad_count];
-    let mut out = Vec::with_capacity(solid.len());
-
-    #[derive(Clone, Copy)]
-    struct AxisQuad {
-        axis: usize,      // 0=X, 1=Y, 2=Z
-        plane: f32,       // constant coordinate on `axis`
-        u_ax: usize,      // merge axis
-        v_ax: usize,      // orthogonal axis
-        u_min: f32,
-        u_max: f32,
-        v_min: f32,
-        v_max: f32,
-    }
-
-    fn classify(q: &[TerrainVertex; 4]) -> Option<AxisQuad> {
-        let layer = q[0].layer;
-        if (layer & OPAQUE_LAYER) == 0 {
-            return None;
-        }
-        if q.iter().any(|v| v.layer != layer || v.color != q[0].color || v.light != q[0].light) {
-            return None;
-        }
-        for axis in 0..3 {
-            let p = q[0].pos[axis];
-            if q.iter().all(|v| (v.pos[axis] - p).abs() < 1e-4) {
-                let (u_ax, v_ax) = match axis {
-                    0 => (2, 1),
-                    1 => (0, 2),
-                    _ => (0, 1),
-                };
-                let (mut u_min, mut u_max) = (f32::INFINITY, f32::NEG_INFINITY);
-                let (mut v_min, mut v_max) = (f32::INFINITY, f32::NEG_INFINITY);
-                for vert in q {
-                    u_min = u_min.min(vert.pos[u_ax]);
-                    u_max = u_max.max(vert.pos[u_ax]);
-                    v_min = v_min.min(vert.pos[v_ax]);
-                    v_max = v_max.max(vert.pos[v_ax]);
-                }
-                if (u_max - u_min) > 1e-3 && (v_max - v_min) > 1e-3 {
-                    return Some(AxisQuad {
-                        axis,
-                        plane: p,
-                        u_ax,
-                        v_ax,
-                        u_min,
-                        u_max,
-                        v_min,
-                        v_max,
-                    });
-                }
-            }
-        }
-        None
-    }
-
-    for i in 0..quad_count {
-        if consumed[i] {
-            continue;
-        }
-        let mut base: [TerrainVertex; 4] = solid[i * 4..i * 4 + 4].try_into().unwrap();
-        let Some(mut aq) = classify(&base) else {
-            out.extend_from_slice(&base);
-            consumed[i] = true;
-            continue;
-        };
-        consumed[i] = true;
-
-        // Try merging with the next adjacent quad along +u_ax (up to 2 blocks wide to fit u16 UV).
-        for j in (i + 1)..quad_count {
-            if consumed[j] {
-                continue;
-            }
-            let cand: [TerrainVertex; 4] = solid[j * 4..j * 4 + 4].try_into().unwrap();
-            let Some(cq) = classify(&cand) else {
-                continue;
-            };
-            if cq.axis == aq.axis
-                && (cq.plane - aq.plane).abs() < 1e-4
-                && (cq.v_min - aq.v_min).abs() < 1e-4
-                && (cq.v_max - aq.v_max).abs() < 1e-4
-                && (cq.u_min - aq.u_max).abs() < 1e-4
-                && cand[0].layer == base[0].layer
-                && cand[0].color == base[0].color
-                && cand[0].light == base[0].light
-                && (cq.u_max - aq.u_min) <= 2.0 + 1e-3
-            {
-                let uv_uniform = base.iter().all(|v| v.uv == base[0].uv)
-                    && cand.iter().all(|v| v.uv == base[0].uv);
-                let uv_tileable = base.iter().all(|v| {
-                    let u = f32::from(v.uv[0]) / UV_STEPS;
-                    u <= 1.001
-                });
-                if uv_uniform || uv_tileable {
-                    for k in 0..4 {
-                        if (base[k].pos[aq.u_ax] - aq.u_max).abs() < 1e-4 {
-                            base[k].pos[aq.u_ax] = cq.u_max;
-                            if !uv_uniform {
-                                let new_u = (f32::from(base[k].uv[0]) / UV_STEPS
-                                    + (cq.u_max - aq.u_max))
-                                    .clamp(0.0, f32::from(u16::MAX) / UV_STEPS);
-                                base[k].uv[0] = (new_u * UV_STEPS).round() as u16;
-                            }
-                        }
-                    }
-                    consumed[j] = true;
-                    break;
-                }
-            }
-        }
-        out.extend_from_slice(&base);
-    }
-    *solid = out;
-}
-
-#[cfg(test)]
-mod volt_boost_mesher_tests {
-    use super::*;
-
-    #[test]
-    fn coplanar_quad_merge_reduces_adjacent_identical_quads() {
-        let mut solid = Vec::new();
-        for x in 0..4 {
-            let fx = x as f32;
-            solid.extend_from_slice(&[
-                TerrainVertex::new([fx, 1.0, 0.0], [0.0, 0.0], 5 | OPAQUE_LAYER, 0xFFFF_FFFF, 0xF0),
-                TerrainVertex::new([fx + 1.0, 1.0, 0.0], [1.0, 0.0], 5 | OPAQUE_LAYER, 0xFFFF_FFFF, 0xF0),
-                TerrainVertex::new([fx + 1.0, 1.0, 1.0], [1.0, 1.0], 5 | OPAQUE_LAYER, 0xFFFF_FFFF, 0xF0),
-                TerrainVertex::new([fx, 1.0, 1.0], [0.0, 1.0], 5 | OPAQUE_LAYER, 0xFFFF_FFFF, 0xF0),
-            ]);
-        }
-        assert_eq!(solid.len(), 16);
-        merge_coplanar_solid_quads(&mut solid);
-        assert_eq!(solid.len(), 8); // 4 quads merged into 2
-    }
-
-    #[test]
-    fn zero_stutter_mesh_pool_retains_and_purges_bytes() {
-        set_zero_stutter_mesh_pool(true);
-        let mut m = SectionMesh::default();
-        m.solid.reserve(256);
-        recycle_pooled_mesh(m);
-        assert!(mesh_pool_retained_bytes() > 0);
-        let freed = purge_mesh_pool();
-        assert!(freed > 0);
-        assert_eq!(mesh_pool_retained_bytes(), 0);
-        set_zero_stutter_mesh_pool(false);
-    }
-}
-

@@ -50,7 +50,6 @@ pub use entity_batch::{
 };
 pub use pack_post::PackPost;
 pub use view::{View, ViewSet};
-pub use weather::{fast_weather, set_fast_weather};
 
 /// Cloneable GPU state for building `pack_post::PackPost` off the Android UI thread.
 pub struct ShaderPackBuildContext {
@@ -985,10 +984,6 @@ pub struct Renderer {
     oit: Option<oit::Oit>,
     /// Advance animated block textures (Horizon setting; vanilla always does).
     pub animated_textures: bool,
-    pub volt_reflex: bool,
-    pub smart_10hz_atlas: bool,
-    last_atlas_tick: u64,
-    pub sealed_cave_occlusion: bool,
     present_modes: Vec<wgpu::PresentMode>,
 }
 /// Every layer's mip levels, layer major (`first` is the first layer's
@@ -2006,6 +2001,7 @@ impl Renderer {
             count: None,
         };
         let vf = wgpu::ShaderStages::VERTEX_FRAGMENT;
+        let fs = wgpu::ShaderStages::FRAGMENT;
         let sprite_array = wgpu::BindingType::Texture {
             sample_type: wgpu::TextureSampleType::Float { filterable: true },
             view_dimension: wgpu::TextureViewDimension::D2Array,
@@ -2033,7 +2029,7 @@ impl Renderer {
                 ),
                 entry(
                     1,
-                    vf,
+                    fs,
                     wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2Array,
@@ -2042,7 +2038,7 @@ impl Renderer {
                 ),
                 entry(
                     1 + 1,
-                    vf,
+                    fs,
                     wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 ),
                 entry(
@@ -2059,16 +2055,16 @@ impl Renderer {
                     vf,
                     wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 ),
-                entry(5, vf, sprite_array),
-                entry(6, vf, sprite_array),
-                entry(7, vf, sprite_array),
-                entry(8, vf, sprite_array),
-                entry(9, vf, sprite_array),
-                entry(10, vf, sprite_array),
-                entry(11, vf, sprite_array),
+                entry(5, fs, sprite_array),
+                entry(6, fs, sprite_array),
+                entry(7, fs, sprite_array),
+                entry(8, fs, sprite_array),
+                entry(9, fs, sprite_array),
+                entry(10, fs, sprite_array),
+                entry(11, fs, sprite_array),
                 entry(
                     12,
-                    vf,
+                    fs,
                     wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -2231,7 +2227,8 @@ impl Renderer {
         );
         // Keep opaque terrain free of discard so mobile hidden-surface removal can reject occluded pixels.
         let opaque_terrain = (cfg!(target_os = "android")
-            && adapter.get_info().backend == wgpu::Backend::Vulkan)
+            && adapter.get_info().backend == wgpu::Backend::Vulkan
+            && !crate::android_runtime::compatibility())
             .then(|| {
                 let checks = GpuChecks::push(&device);
                 let internal = device.push_error_scope(wgpu::ErrorFilter::Internal);
@@ -2762,7 +2759,7 @@ impl Renderer {
                 ),
                 entry(
                     1,
-                    vf,
+                    fs,
                     wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -2771,7 +2768,7 @@ impl Renderer {
                 ),
                 entry(
                     2,
-                    vf,
+                    fs,
                     wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 ),
                 entry(
@@ -2790,7 +2787,7 @@ impl Renderer {
                 ),
                 entry(
                     5,
-                    vf,
+                    fs,
                     wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -2799,12 +2796,12 @@ impl Renderer {
                 ),
                 entry(
                     6,
-                    vf,
+                    fs,
                     wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 ),
                 entry(
                     7,
-                    vf,
+                    fs,
                     wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,
@@ -3950,10 +3947,6 @@ impl Renderer {
             oit: None,
             fullbright: false,
             animated_textures: true,
-            volt_reflex: false,
-            smart_10hz_atlas: false,
-            last_atlas_tick: 0,
-            sealed_cave_occlusion: false,
             present_modes,
         })
     }
@@ -4620,13 +4613,7 @@ impl Renderer {
             Some(PresentMode::Immediate) => wgpu::PresentMode::Immediate,
             _ => wgpu::PresentMode::Fifo,
         };
-        let desired_latency = if self.volt_reflex {
-            1
-        } else if vsync {
-            2
-        } else {
-            3
-        };
+        let desired_latency = if vsync { 2 } else { 3 };
         if self.config.present_mode != mode
             || self.config.desired_maximum_frame_latency != desired_latency
         {
@@ -4638,43 +4625,6 @@ impl Renderer {
                 self.surface_unconfigured = true;
             }
         }
-    }
-    pub fn set_volt_reflex(&mut self, on: bool) {
-        if self.volt_reflex != on {
-            self.volt_reflex = on;
-            let desired_latency = if on {
-                1
-            } else if self.config.present_mode == wgpu::PresentMode::Fifo {
-                2
-            } else {
-                3
-            };
-            if self.config.desired_maximum_frame_latency != desired_latency {
-                self.config.desired_maximum_frame_latency = desired_latency;
-                if self.surface.is_some() {
-                    self.configure_surface();
-                } else {
-                    self.surface_unconfigured = true;
-                }
-            }
-        }
-    }
-    pub fn draw_calls(&self) -> u32 {
-        self.section_draw_calls.max(self.drawn_sections) as u32
-    }
-    /// Frees idle CPU/GPU scratch memory (mesh buffer pool, cached blur, entity batch capacity)
-    /// and returns total MiB reclaimed.
-    pub fn purge_unused_ram(&mut self) -> f32 {
-        let mut freed_bytes = crate::mesher::purge_mesh_pool();
-        if self.menu_blur.take().is_some() {
-            freed_bytes += 4 * 1024 * 1024;
-        }
-        let vis_spare = self.visible.capacity().saturating_sub(self.visible.len())
-            * std::mem::size_of::<usize>();
-        self.visible.clear();
-        self.visible.shrink_to_fit();
-        freed_bytes += vis_spare;
-        (freed_bytes as f32) / (1024.0 * 1024.0)
     }
     /// Follows the window to `width` x `height`. A size the swapchain can't take
     /// ([`drawable_size`]) keeps the last one and draws nothing until the next.
@@ -5009,6 +4959,25 @@ impl Renderer {
         self.section_uploads.finish(&encoder);
         Some(encoder.finish())
     }
+    /// Draws `quads` quads from `buffer` starting at vertex `first_vertex`, rebasing
+    /// vertex buffer 0 when the GPU lacks `base_vertex` (GLES 3.0).
+    fn draw_quads_rebased(
+        pass: &mut wgpu::RenderPass<'_>,
+        buffer: &wgpu::Buffer,
+        stride: u64,
+        first_vertex: u32,
+        quads: u32,
+        base_vertex: bool,
+    ) {
+        if base_vertex || first_vertex == 0 {
+            pass.set_vertex_buffer(0, buffer.slice(..));
+            pass.draw_indexed(0..quads * 6, first_vertex as i32, 0..1);
+        } else {
+            let offset = u64::from(first_vertex) * stride;
+            pass.set_vertex_buffer(0, buffer.slice(offset..));
+            pass.draw_indexed(0..quads * 6, 0, 0..1);
+        }
+    }
     /// Draws `count` section draws from `first` with the arena and section
     /// origins bound: one indirect multi-draw, or a loop without it.
     /// Consecutive draws in one arena page share a vertex buffer binding,
@@ -5035,13 +5004,16 @@ impl Renderer {
             let indices = index_page.map_or(&self.indices, |p| self.sorted_indices.buffer(p));
             pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
             if !self.base_vertex {
-                // GLES 3.0 lacks base-vertex draws. Rebase the bound attribute
-                // stream instead, keeping section-local indices and instance origins.
+                // GLES 3.0 lacks base-vertex and base-instance draws. Rebase both the
+                // vertex and instance attribute streams instead.
                 for d in &draws[i..i + run] {
                     let offset = u64::from(d[3]) * std::mem::size_of::<TerrainVertex>() as u64;
+                    let instance_offset = u64::from(d[4]) * 16;
                     pass.set_vertex_buffer(0, self.arena.buffer(page).slice(offset..));
-                    pass.draw_indexed(d[2]..d[2] + d[0], 0, d[4]..d[4] + 1);
+                    pass.set_vertex_buffer(1, self.instances.slice(instance_offset..));
+                    pass.draw_indexed(d[2]..d[2] + d[0], 0, 0..1);
                 }
+                pass.set_vertex_buffer(1, self.instances.slice(..));
             } else if self.multi_draw {
                 let offset = (i - base as usize) as u64 * 20;
                 pass.multi_draw_indexed_indirect(indirect, offset, run as u32);
@@ -6196,20 +6168,15 @@ impl Renderer {
             // A screenshot of a swapchain without COPY_SRC (OpenGL), or a raw
             // recording copying pre-HUD frames from a swapchain without
             // TEXTURE_BINDING, draws into a texture that has them, then onto the swapchain.
-            (Some(f), None) => {
-                #[cfg(target_os = "android")]
-                let recording_copy = self.record.is_some() && !scaled_presentation;
-                #[cfg(not(target_os = "android"))]
-                let recording_copy = false;
-                self.readback
-                    .target_for(
-                        &self.device,
-                        &f.texture,
-                        self.screenshot.is_some() && !scaled_presentation,
-                        recording_copy,
-                    )
-                    .unwrap_or_else(|| f.texture.clone())
-            }
+            (Some(f), None) => self
+                .readback
+                .target_for(
+                    &self.device,
+                    &f.texture,
+                    self.screenshot.is_some() && !scaled_presentation,
+                    self.record.is_some() && !scaled_presentation,
+                )
+                .unwrap_or_else(|| f.texture.clone()),
             (None, _) => self.offscreen.clone().ok_or("no offscreen target")?,
         };
         #[cfg(target_os = "android")]
@@ -6244,13 +6211,9 @@ impl Renderer {
         if menu_blur.is_none() {
             self.invalidate_menu_blur();
         }
-        #[cfg(target_os = "android")]
-        let not_recording = self.record.is_none();
-        #[cfg(not(target_os = "android"))]
-        let not_recording = true;
         if frame.menu_blur_cache
             && self.screenshot.is_none()
-            && not_recording
+            && self.record.is_none()
             && menu_blur.is_some_and(|r| self.has_cached_menu_blur(r))
         {
             self.hud.prepare(
@@ -6336,13 +6299,8 @@ impl Renderer {
             stages.begin_prepare(&mut encoder);
         }
         if self.animated_textures {
-            let allow_atlas = !self.smart_10hz_atlas
-                || frame.ticks.saturating_sub(self.last_atlas_tick) >= 2;
-            if allow_atlas {
-                self.last_atlas_tick = frame.ticks;
-                self.hud
-                    .animate_sprites(&mut self.uploads, &mut encoder, frame.ticks);
-            }
+            self.hud
+                .animate_sprites(&mut self.uploads, &mut encoder, frame.ticks);
         }
         self.update_lightmap(
             &mut encoder,
@@ -6548,7 +6506,7 @@ impl Renderer {
         let mirror_low = mirror_plane
             .zip(eye)
             .map(|(plane, eye)| 2.0 * (plane - frame.camera.y as f32) - eye.y);
-        let culling = !frame.title && (frame.cave_culling || self.sealed_cave_occlusion);
+        let culling = !frame.title && frame.cave_culling;
         // Sections wholly inside distance fog are not drawn (`fog_culled_radius`).
         let own_fog = !fog_is_only_cover(FogCullCover::from_frame(
             frame,
@@ -8179,44 +8137,56 @@ impl Renderer {
             if text_quads > 0 && !oit_on {
                 pass.set_pipeline(&self.text_polygon_offset_pipeline);
                 pass.set_bind_group(0, &self.entity_group, &[]);
-                pass.set_vertex_buffer(0, self.entity_buffer.slice(..));
-                pass.draw_indexed(0..text_quads * 6, (entity_quads * 4) as i32, 0..1);
+                Self::draw_quads_rebased(
+                    &mut pass,
+                    &self.entity_buffer,
+                    std::mem::size_of::<Vertex>() as u64,
+                    entity_quads * 4,
+                    text_quads,
+                    self.base_vertex,
+                );
                 pass.set_bind_group(0, &self.group, &[]);
             }
             if translucent_item_quads > 0 && !oit_on {
                 pass.set_pipeline(&self.translucent_item_pipeline);
                 pass.set_bind_group(0, &self.entity_group, &[]);
-                pass.set_vertex_buffer(0, self.entity_buffer.slice(..));
-                pass.draw_indexed(
-                    0..translucent_item_quads * 6,
-                    ((base_quads - translucent_item_quads) * 4) as i32,
-                    0..1,
+                Self::draw_quads_rebased(
+                    &mut pass,
+                    &self.entity_buffer,
+                    std::mem::size_of::<Vertex>() as u64,
+                    (base_quads - translucent_item_quads) * 4,
+                    translucent_item_quads,
+                    self.base_vertex,
                 );
                 pass.set_bind_group(0, &self.group, &[]);
             }
             if crumbling_quads > 0 && !oit_on {
                 pass.set_pipeline(&self.crumbling_pipeline);
                 pass.set_bind_group(0, &self.entity_group, &[]);
-                pass.set_vertex_buffer(0, self.entity_buffer.slice(..));
-                pass.draw_indexed(
-                    0..crumbling_quads * 6,
-                    ((entity_quads + text_quads) * 4) as i32,
-                    0..1,
+                Self::draw_quads_rebased(
+                    &mut pass,
+                    &self.entity_buffer,
+                    std::mem::size_of::<Vertex>() as u64,
+                    (entity_quads + text_quads) * 4,
+                    crumbling_quads,
+                    self.base_vertex,
                 );
                 pass.set_bind_group(0, &self.group, &[]);
             }
             if shadow_quads > 0 && !oit_on {
                 pass.set_pipeline(&self.shadow_blob_pipeline);
                 pass.set_bind_group(0, &self.entity_group, &[]);
-                pass.set_vertex_buffer(0, self.entity_buffer.slice(..));
-                pass.draw_indexed(
-                    0..shadow_quads * 6,
-                    ((base_quads
+                Self::draw_quads_rebased(
+                    &mut pass,
+                    &self.entity_buffer,
+                    std::mem::size_of::<Vertex>() as u64,
+                    (base_quads
                         - translucent_item_quads
                         - translucent_particle_quads
                         - shadow_quads)
-                        * 4) as i32,
-                    0..1,
+                        * 4,
+                    shadow_quads,
+                    self.base_vertex,
                 );
                 pass.set_bind_group(0, &self.group, &[]);
             }
@@ -8225,12 +8195,13 @@ impl Renderer {
             if water_mask_quads > 0 && !oit_on {
                 pass.set_pipeline(&self.water_mask_pipeline);
                 pass.set_bind_group(0, &self.entity_group, &[]);
-                pass.set_vertex_buffer(0, self.entity_buffer.slice(..));
-                pass.draw_indexed(
-                    0..water_mask_quads * 6,
-                    ((entity_quads + text_quads + crumbling_quads + translucent_crumbling_quads)
-                        * 4) as i32,
-                    0..1,
+                Self::draw_quads_rebased(
+                    &mut pass,
+                    &self.entity_buffer,
+                    std::mem::size_of::<Vertex>() as u64,
+                    (entity_quads + text_quads + crumbling_quads + translucent_crumbling_quads) * 4,
+                    water_mask_quads,
+                    self.base_vertex,
                 );
                 pass.set_bind_group(0, &self.group, &[]);
             }
@@ -8247,28 +8218,37 @@ impl Renderer {
             if swirl_quads > 0 && !oit_on {
                 pass.set_pipeline(&self.energy_swirl_pipeline);
                 pass.set_bind_group(0, &self.entity_group, &[]);
-                pass.set_vertex_buffer(0, self.entity_buffer.slice(..));
-                pass.draw_indexed(
-                    0..swirl_quads * 6,
-                    ((entity_quads
+                Self::draw_quads_rebased(
+                    &mut pass,
+                    &self.entity_buffer,
+                    std::mem::size_of::<Vertex>() as u64,
+                    (entity_quads
                         + text_quads
                         + crumbling_quads
                         + translucent_crumbling_quads
                         + water_mask_quads)
-                        * 4) as i32,
-                    0..1,
+                        * 4,
+                    swirl_quads,
+                    self.base_vertex,
                 );
                 pass.set_bind_group(0, &self.group, &[]);
             }
             if additive_quads > 0 && !oit_on {
                 pass.set_pipeline(&self.additive_pipeline);
                 pass.set_bind_group(0, &self.entity_group, &[]);
-                pass.set_vertex_buffer(0, self.entity_buffer.slice(..));
-                pass.draw_indexed(0..additive_quads * 6, (world_quads * 4) as i32, 0..1);
+                Self::draw_quads_rebased(
+                    &mut pass,
+                    &self.entity_buffer,
+                    std::mem::size_of::<Vertex>() as u64,
+                    world_quads * 4,
+                    additive_quads,
+                    self.base_vertex,
+                );
                 if self.hdr.is_some() {
                     // The dragon's eyes and death rays, marked as entities are.
                     pass.set_pipeline(&self.hdr_mark_pipeline);
-                    pass.draw_indexed(0..additive_quads * 6, (world_quads * 4) as i32, 0..1);
+                    let bv = if self.base_vertex { (world_quads * 4) as i32 } else { 0 };
+                    pass.draw_indexed(0..additive_quads * 6, bv, 0..1);
                 }
                 pass.set_bind_group(0, &self.group, &[]);
             }
@@ -8520,21 +8500,21 @@ impl Renderer {
                 pass.set_pipeline(&self.entity_pipeline);
                 pass.set_bind_group(0, &self.entity_group, &[]);
                 pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.set_vertex_buffer(0, self.entity_buffer.slice(..));
-                pass.draw_indexed(
-                    0..translucent_particle_quads * 6,
-                    ((base_quads - translucent_item_quads - translucent_particle_quads) * 4) as i32,
-                    0..1,
+                let particle_first =
+                    (base_quads - translucent_item_quads - translucent_particle_quads) * 4;
+                Self::draw_quads_rebased(
+                    &mut pass,
+                    &self.entity_buffer,
+                    std::mem::size_of::<Vertex>() as u64,
+                    particle_first,
+                    translucent_particle_quads,
+                    self.base_vertex,
                 );
                 if self.hdr.is_some() {
                     // Fireworks: their sparks are translucent-layer particles.
                     pass.set_pipeline(&self.hdr_mark_pipeline);
-                    pass.draw_indexed(
-                        0..translucent_particle_quads * 6,
-                        ((base_quads - translucent_item_quads - translucent_particle_quads) * 4)
-                            as i32,
-                        0..1,
-                    );
+                    let bv = if self.base_vertex { particle_first as i32 } else { 0 };
+                    pass.draw_indexed(0..translucent_particle_quads * 6, bv, 0..1);
                 }
                 pass.set_bind_group(0, &self.group, &[]);
             }
@@ -8546,11 +8526,13 @@ impl Renderer {
             if translucent_crumbling_quads > 0 && !oit_on {
                 pass.set_pipeline(&self.crumbling_pipeline);
                 pass.set_bind_group(0, &self.entity_group, &[]);
-                pass.set_vertex_buffer(0, self.entity_buffer.slice(..));
-                pass.draw_indexed(
-                    0..translucent_crumbling_quads * 6,
-                    ((entity_quads + text_quads + crumbling_quads) * 4) as i32,
-                    0..1,
+                Self::draw_quads_rebased(
+                    &mut pass,
+                    &self.entity_buffer,
+                    std::mem::size_of::<Vertex>() as u64,
+                    (entity_quads + text_quads + crumbling_quads) * 4,
+                    translucent_crumbling_quads,
+                    self.base_vertex,
                 );
             }
             if cloud_quads > 0 && !pack_draws_clouds && !oit_on {
@@ -8589,11 +8571,13 @@ impl Renderer {
             if see_through_quads > 0 {
                 pass.set_pipeline(&self.see_through_pipeline);
                 pass.set_bind_group(0, &self.entity_group, &[]);
-                pass.set_vertex_buffer(0, self.entity_buffer.slice(..));
-                pass.draw_indexed(
-                    0..see_through_quads * 6,
-                    ((world_quads + additive_quads + hand_quads) * 4) as i32,
-                    0..1,
+                Self::draw_quads_rebased(
+                    &mut pass,
+                    &self.entity_buffer,
+                    std::mem::size_of::<Vertex>() as u64,
+                    (world_quads + additive_quads + hand_quads) * 4,
+                    see_through_quads,
+                    self.base_vertex,
                 );
             }
         }
@@ -8791,11 +8775,13 @@ impl Renderer {
             pass.set_pipeline(&self.entity_pipeline);
             pass.set_bind_group(0, &self.hand_group, &[]);
             pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.set_vertex_buffer(0, self.entity_buffer.slice(..));
-            pass.draw_indexed(
-                0..hand_quads * 6,
-                ((world_quads + additive_quads) * 4) as i32,
-                0..1,
+            Self::draw_quads_rebased(
+                &mut pass,
+                &self.entity_buffer,
+                std::mem::size_of::<Vertex>() as u64,
+                (world_quads + additive_quads) * 4,
+                hand_quads,
+                self.base_vertex,
             );
             drop(pass);
             if let Some(hdr) = &self.hdr {
@@ -8855,14 +8841,20 @@ impl Renderer {
             });
             pass.set_bind_group(0, &self.entity_group, &[]);
             pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.set_vertex_buffer(0, self.screen_buffer.slice(..));
             for (i, quad) in frame.screen.iter().enumerate() {
                 let blend = match quad.blend {
                     crate::screen_effects::Blend::Alpha => 0,
                     crate::screen_effects::Blend::Vignette => 4,
                 };
                 pass.set_pipeline(&self.screen_pipelines[blend + (quad.sampling & 3) as usize]);
-                pass.draw_indexed(0..6, (i * 4) as i32, 0..1);
+                Self::draw_quads_rebased(
+                    &mut pass,
+                    &self.screen_buffer,
+                    std::mem::size_of::<crate::screen_effects::ScreenVertex>() as u64,
+                    (i * 4) as u32,
+                    1,
+                    self.base_vertex,
+                );
             }
         }
         // GameRenderer.render3dHud: the debug crosshair after the hand and
@@ -8896,21 +8888,12 @@ impl Renderer {
             let first = debug_depth + debug_top;
             pass.draw(0..4, first..first + crosshair);
         }
-        // The recorder's frame: the game as it is now, before any of the HUD.
-        #[cfg(target_os = "android")]
-        let record_frame = if surface_frame.is_some() && self.screenshot.is_none() {
-            let device = &self.device;
-            let size = [self.config.width, self.config.height];
-            match self.record.as_mut() {
-                Some(record) => record.present(device, &mut encoder, &view_target, size),
-                None => None,
-            }
-        } else {
-            None
-        };
-        #[cfg(not(target_os = "android"))]
-        let record_frame: Option<wgpu::SurfaceTexture> = None;
-        let blur_at = menu_blur.map_or(0, |_| frame.hud.blur_at);
+        let controls_at = frame
+            .hud
+            .controls_at
+            .unwrap_or(frame.hud.vertices.len() as u32)
+            .min(frame.hud.vertices.len() as u32);
+        let blur_at = menu_blur.map_or(0, |_| frame.hud.blur_at.min(controls_at));
         self.hud.draw_range(
             &mut encoder,
             &view_target,
@@ -8940,7 +8923,30 @@ impl Renderer {
             &self.depth,
             frame.hud,
             [self.config.width, self.config.height],
-            blur_at..frame.hud.vertices.len() as u32,
+            blur_at..controls_at,
+        );
+        // The recorder's frame: world, HUD, hotbar, and all game menus, before touch
+        // controls, virtual pointer, and launcher/hub overlays.
+        #[cfg(target_os = "android")]
+        let record_frame = if surface_frame.is_some() && self.screenshot.is_none() {
+            let device = &self.device;
+            let size = [self.config.width, self.config.height];
+            match self.record.as_mut() {
+                Some(record) => record.present(device, &mut encoder, &view_target, size),
+                None => None,
+            }
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "android"))]
+        let record_frame: Option<wgpu::SurfaceTexture> = None;
+        self.hud.draw_range(
+            &mut encoder,
+            &view_target,
+            &self.depth,
+            frame.hud,
+            [self.config.width, self.config.height],
+            controls_at..frame.hud.vertices.len() as u32,
         );
         if culling && let Some(cull) = &mut self.cull {
             cull.end(&self.device, &mut encoder);
@@ -10677,31 +10683,5 @@ fn reported(l: horizon_hdr::wayland::Luminances) -> crate::graphics::Reported {
     crate::graphics::Reported {
         paper_white: 203,
         peak: peak.clamp(200, 10_000),
-    }
-}
-
-/// Evaluates whether the sky pass should run given `cave_sky_cull`, current sky light,
-/// and whether the camera is sealed inside subterranean blocks.
-pub fn cave_sky_visible(
-    cave_sky_cull: bool,
-    sky_open: bool,
-    sky_light: u8,
-    in_sealed_cave: bool,
-) -> bool {
-    if cave_sky_cull && in_sealed_cave && sky_light == 0 {
-        return false;
-    }
-    sky_open
-}
-
-#[cfg(test)]
-mod volt_boost_gfx_tests {
-    use super::*;
-
-    #[test]
-    fn cave_sky_cull_skips_sky_when_sealed_underground() {
-        assert!(cave_sky_visible(false, true, 0, true));
-        assert!(!cave_sky_visible(true, true, 0, true));
-        assert!(cave_sky_visible(true, true, 12, true));
     }
 }

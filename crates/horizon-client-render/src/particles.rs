@@ -1086,14 +1086,6 @@ pub struct ParticleEngine {
     /// The item particles' sprites (`BreakingItemParticle`'s slime ball, snowball
     /// and cobweb models, resolved for the ground), one per model layer.
     pub item_sprites: HashMap<ParticleType, Vec<String>>,
-    /// Volt + Boost controls: hard particle cap, burst lag shield, storm wind boost,
-    /// and distant particle frame gate.
-    pub max_budget: usize,
-    pub burst_lag_shield: bool,
-    pub storm_wind_boost: bool,
-    pub particle_frame_gate: crate::volt_boost::FrameGate,
-    pub particle_gate_distance: u32,
-    tick_counter: u64,
 }
 /// `ParticleGroup.MAX_PARTICLES` (per render group; one group here).
 const MAX_PARTICLES: usize = 16384;
@@ -1123,12 +1115,6 @@ impl ParticleEngine {
             sounds: Vec::new(),
             made: Default::default(),
             item_sprites: HashMap::new(),
-            max_budget: MAX_PARTICLES,
-            burst_lag_shield: false,
-            storm_wind_boost: false,
-            particle_frame_gate: crate::volt_boost::FrameGate::Off,
-            particle_gate_distance: 24,
-            tick_counter: 0,
         };
         engine.reload(root, atlas, translucent);
         engine
@@ -3321,22 +3307,7 @@ impl ParticleEngine {
             }
         }
     }
-    pub fn trim_unused_capacity(&mut self) -> usize {
-        let before = (self.particles.capacity() - self.particles.len())
-            * std::mem::size_of::<Particle>()
-            + (self.pending.capacity() - self.pending.len()) * std::mem::size_of::<Particle>();
-        self.particles.shrink_to_fit();
-        self.pending.shrink_to_fit();
-        before
-    }
-    fn cap_pending_burst(&self, pending: &mut Vec<Particle>) -> usize {
-        if self.burst_lag_shield && pending.len() > 128 {
-            pending.truncate(128);
-        }
-        self.max_budget.min(MAX_PARTICLES)
-    }
     pub fn tick(&mut self, level: &ParticleLevel) {
-        self.tick_counter = self.tick_counter.wrapping_add(1);
         self.tick_starters();
         for (options, feet, width, height, life) in std::mem::take(&mut self.emitters) {
             self.emit(&options, feet, width, height);
@@ -3345,28 +3316,12 @@ impl ParticleEngine {
             }
         }
         let mut particles = std::mem::take(&mut self.particles);
-        let cam = self.camera;
-        let gate = self.particle_frame_gate;
-        let gate_dist = self.particle_gate_distance;
-        let storm_boost = self.storm_wind_boost;
-        let tick_idx = self.tick_counter;
-        for (idx, p) in particles.iter_mut().enumerate() {
-            let dx = p.position[0] - cam[0];
-            let dy = p.position[1] - cam[1];
-            let dz = p.position[2] - cam[2];
-            let dist = ((dx * dx + dy * dy + dz * dz) as f32).sqrt();
-            if gate.is_active() && !gate.should_run(tick_idx, dist, gate_dist) {
-                continue;
-            }
-            if storm_boost && dist > 18.0 && (idx as u64 + tick_idx) & 1 == 1 {
-                continue;
-            }
+        for p in &mut particles {
             self.tick_particle(p, level);
         }
         particles.retain(|p| !p.removed);
         self.particles = particles;
-        let mut pending = std::mem::take(&mut self.pending);
-        let cap = self.cap_pending_burst(&mut pending);
+        let pending = std::mem::take(&mut self.pending);
         for mut p in pending {
             if p.pre_tick {
                 p.pre_tick = false;
@@ -3375,12 +3330,11 @@ impl ParticleEngine {
             }
             // ParticleGroup.add: the last quarter fills with decreasing probability.
             let size = self.particles.len();
-            if size >= cap {
+            if size >= MAX_PARTICLES {
                 continue;
             }
-            if size >= (cap * 3) / 4 && cap >= 64 {
-                let quarter = (cap / 4).max(1) as f32;
-                let free = (cap - size) as f32 / quarter;
+            if size >= 12288 {
+                let free = (MAX_PARTICLES - size) as f32 / 4096.0;
                 if self.random.next_float() >= free * free {
                     continue;
                 }
@@ -4606,19 +4560,5 @@ mod tests {
         let a = [0.0, 0.6, 0.25, 1.0];
         assert_eq!(lifetime_alpha(a, 0, 40, 0.0), 0.0);
         assert!((lifetime_alpha(a, 40, 40, 0.0) - 0.6).abs() < 1e-6);
-    }
-
-    #[test]
-    fn particle_budget_and_burst_lag_shield_enforce_caps() {
-        let mut engine = ParticleEngine::new(Path::new("."), &HashMap::new(), &HashSet::new());
-        engine.max_budget = 64;
-        engine.burst_lag_shield = true;
-        for _ in 0..300 {
-            engine.add_with(&ParticleOptions::simple(ParticleType::Flame), [0.0; 3], [0.0; 3], true, true);
-        }
-        let mut pending = std::mem::take(&mut engine.pending);
-        let cap = engine.cap_pending_burst(&mut pending);
-        assert!(pending.len() <= 128);
-        assert_eq!(cap, 64);
     }
 }

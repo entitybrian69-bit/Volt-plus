@@ -51,6 +51,7 @@ pub(crate) fn start(
         return Err("Game and resource directories must be absolute".into());
     }
     let previous = std::env::current_dir()?;
+    let _ = std::fs::create_dir_all(request.game_home.join("screenshots"));
     std::env::set_current_dir(&request.game_home)?;
     if request.open_gl {
         horizon_client::android_runtime::configure_graphics(true);

@@ -1025,6 +1025,9 @@ pub struct HudBatch {
     pub game_time: f32,
     /// Screen's first vertex: the preceding HUD is part of its blurred background.
     pub blur_at: u32,
+    /// Android touch controls / virtual pointer / floating hub start vertex: everything
+    /// before this belongs to the game's HUD, hotbar, and menus.
+    pub controls_at: Option<u32>,
     /// Player object profiles encountered while painting text this frame.
     pub inline_profiles: Vec<serde_json::Value>,
 }
@@ -1086,6 +1089,7 @@ impl HudBatch {
             glint_alpha: 0.75,
             game_time: 0.0,
             blur_at: 0,
+            controls_at: None,
             inline_profiles: Vec::new(),
         }
     }
@@ -3229,6 +3233,7 @@ mod tests {
                 glint_alpha: 0.75,
                 game_time: 0.0,
                 blur_at: 0,
+                controls_at: None,
                 inline_profiles: Vec::new(),
             };
             for (image_width, image_height) in [(195, 136), (176, 166), (176, 222)] {

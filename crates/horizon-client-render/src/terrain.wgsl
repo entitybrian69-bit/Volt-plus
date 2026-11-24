@@ -102,9 +102,13 @@ fn sample_nearest(uv: vec2<f32>, layer: u32, pixel: vec2<f32>, du: vec2<f32>, dv
     let center = round(texel_coords) - 0.5;
     var offset = texel_coords - center;
     if TERRAIN_FILTERING == 0u {
-        offset = (offset - 0.5) * (pixel * inverseSqrt(max(du * du + dv * dv, vec2(1e-24)))) + 0.5;
+        // Compute in texel space so fp16/mediump mobile compilers never flush small UV
+        // derivatives or the floor clamp to 0.0 (which turns inverseSqrt into Inf/NaN).
+        let du_t = du * globals.filtering.y;
+        let dv_t = dv * globals.filtering.y;
+        offset = (offset - 0.5) * inverseSqrt(max(du_t * du_t + dv_t * dv_t, vec2(1e-4))) + 0.5;
     } else {
-        offset = (offset - 0.5) * pixel / max(texel_screen, vec2(1e-12)) + 0.5;
+        offset = (offset - 0.5) / max(texel_screen * globals.filtering.y, vec2(1e-4)) + 0.5;
     }
     offset = clamp(offset, vec2(0.0), vec2(1.0));
     let du_safe = clamp(du, vec2(-0.5), vec2(0.5));

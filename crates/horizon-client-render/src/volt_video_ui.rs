@@ -1482,9 +1482,6 @@ impl VoltVideoUi {
                 let track_w = (ctrl.w - 12.0).max(16.0);
                 let v = ((pos.0 - track_x) / track_w).clamp(0.0, 1.0);
                 item.set_slider(s, v);
-                if item == Item::Vanilla(Opt::Preset) {
-                    apply_preset(s);
-                }
                 if let Some((_, sv)) = self.slider_anim.iter_mut().find(|(k, _)| *k == item) {
                     *sv = item.slider(s).unwrap_or(v);
                 }
@@ -1586,9 +1583,6 @@ impl VoltVideoUi {
                         let track_w = (ctrl.w - 12.0).max(16.0);
                         let v = ((pos.0 - track_x) / track_w).clamp(0.0, 1.0);
                         entry.item.set_slider(s, v);
-                        if entry.item == Item::Vanilla(Opt::Preset) {
-                            apply_preset(s);
-                        }
                         self.dragging = Some(entry.item);
                         actions.push(VoltAction::SliderDrag);
                     } else {
@@ -1955,7 +1949,7 @@ pub(crate) fn fit_with_ellipsis(atlas: &HudAtlas, text: &str, max_width: f32) ->
 
 #[cfg(test)]
 impl VoltVideoUi {
-    pub(crate) fn test_geometry(w: f32, h: f32) -> ([f32; 4], [([VoltTab; 5], [[f32; 4]; 5]); 1], [f32; 4], [f32; 4]) {
+    pub(crate) fn test_geometry(w: f32, h: f32) -> ([f32; 4], [([VoltTab; 5], [[f32; 4]; 5])], [f32; 4], [f32; 4]) {
         let g = Self::geometry(w, h);
         let tabs = g.tabs.map(|(t, _)| t);
         let rects = g.tabs.map(|(_, r)| r.array());
@@ -2085,7 +2079,7 @@ mod tests {
             .unwrap();
         let right_x = p_ctrl[0] + p_ctrl[2] - 6.0;
         let y = p_rect[1] + 8.0;
-        ui.click(&mut s, &atlas, (right_x, y), size, [960, 640], false, false, &mut search);
+        ui.click(&mut s, &atlas, right_x, y, size, [960, 640], false, false);
         let after_forward = s.horizon.preset;
         assert_ne!(after_forward, Preset::Custom);
 
@@ -2097,12 +2091,12 @@ mod tests {
         let a = ui.click(
             &mut s,
             &atlas,
-            (rd_ctrl[0] + rd_ctrl[2] - 10.0, rd_y),
+            rd_ctrl[0] + rd_ctrl[2] - 10.0,
+            rd_y,
             size,
             [960, 640],
             false,
             false,
-            &mut search,
         );
         assert_eq!(a, vec![VoltAction::SliderDrag]);
         assert!(ui.release());

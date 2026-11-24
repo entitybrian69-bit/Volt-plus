@@ -206,8 +206,6 @@ pub struct Settings {
     pub shader_packs: Vec<crate::shader_pack_list::Entry>,
     /// The picked pack's options while its Shader Options page is open.
     pub shader_options: Option<crate::shader_options::ShaderOptions>,
-    /// Volt + Boost deep tuning and replay settings (`volt-plus-boost.json`).
-    pub volt_boost: crate::volt_boost::VoltPlusBoostSettings,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -294,7 +292,6 @@ impl Default for Settings {
             mods: Default::default(),
             shader_packs: Vec::new(),
             shader_options: None,
-            volt_boost: Default::default(),
         }
     }
 }
@@ -354,9 +351,6 @@ impl Settings {
             .unwrap_or_default();
         let keypad = crate::keypad::Settings::load(&path.with_file_name("horizon-keypad.json"));
         let touch = crate::touch::Settings::load_from(&path.with_file_name("horizon-touch.json"));
-        let volt_boost = crate::volt_boost::VoltPlusBoostSettings::load(
-            &path.with_file_name(crate::volt_boost::FILE_NAME),
-        );
         let settings = match fs::read(path) {
             Ok(bytes) => Self {
                 horizon,
@@ -365,7 +359,6 @@ impl Settings {
                 keypad,
                 extras,
                 mods,
-                volt_boost,
                 ..Self::parse(&String::from_utf8_lossy(&bytes))
             },
             Err(_) => Self {
@@ -375,7 +368,6 @@ impl Settings {
                 keypad,
                 extras,
                 mods,
-                volt_boost,
                 ..Self::default()
             },
         };
@@ -515,7 +507,6 @@ impl Settings {
             notification_display_time: f.double("notificationDisplayTime") as f32,
             main_hand_left: f.name("mainHand") == "left",
             resource_packs: f.list("resourcePacks"),
-            volt_boost: crate::volt_boost::VoltPlusBoostSettings::default(),
             keys,
             file: f,
         }
@@ -659,30 +650,9 @@ impl Settings {
             controller: self.controller.clone(),
             extras: self.extras.clone(),
             mods: self.mods.clone(),
-            volt_boost: self.volt_boost.clone(),
             video_modes: self.video_modes.clone(),
             ..Self::from_file(file)
         })
-    }
-    /// Synchronizes overlapping engine fields from `self.volt_boost` when Volt + Boost
-    /// options are explicitly changed by the player.
-    pub fn sync_from_volt_boost(&mut self) {
-        self.chunk_fade = self.volt_boost.chunk_fade_mode.seconds();
-        self.entity_shadows = self.volt_boost.entity_shadows;
-        self.max_fps = self.volt_boost.fps_cap.clamp(30, 260);
-        self.menu_blur = match self.volt_boost.menu_backdrop {
-            crate::volt_boost::MenuBackdropMode::Full => 5,
-            crate::volt_boost::MenuBackdropMode::Blurred => 3,
-            crate::volt_boost::MenuBackdropMode::Static
-            | crate::volt_boost::MenuBackdropMode::Off => 0,
-        };
-        if self.volt_boost.distant_lod_boost {
-            self.horizon.far_detail = crate::graphics::FarDetail::Reduced;
-            self.horizon.lod_distance = self
-                .horizon
-                .lod_distance
-                .max(u32::from(self.volt_boost.distant_lod_distance));
-        }
     }
     /// The `options.txt` text (Options.save).
     pub fn serialize(&self) -> String {
@@ -699,9 +669,6 @@ impl Settings {
             let _ = self.touch.save_to(&dir.join("horizon-touch.json"));
             self.extras.save(dir);
             self.mods.save(dir);
-            let _ = self
-                .volt_boost
-                .save(&dir.join(crate::volt_boost::FILE_NAME));
         }
     }
     /// Volume of a sound source (master excluded).

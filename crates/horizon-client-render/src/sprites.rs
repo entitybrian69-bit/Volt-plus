@@ -103,7 +103,11 @@ pub struct Sprites {
 /// Edge length of vanilla's block textures: the smallest array layer.
 pub const SPRITE_SIZE: u32 = 16;
 /// The largest sprite array (all layers of the top mip level) when the settings leave it to
-/// Horizon: resource packs with bigger textures are sampled down to fit.
+/// Horizon: resource packs with bigger textures are sampled down to fit. 32-bit builds cap
+/// this lower so large texture packs do not exhaust process or driver memory.
+#[cfg(target_pointer_width = "32")]
+pub const DEFAULT_TEXTURE_BUDGET: u64 = 64 << 20;
+#[cfg(not(target_pointer_width = "32"))]
 pub const DEFAULT_TEXTURE_BUDGET: u64 = 256 << 20;
 /// The budget in bytes the next resource load keeps to (`set_texture_budget`).
 static TEXTURE_BUDGET: std::sync::atomic::AtomicU64 =

@@ -1,62 +1,32 @@
 name: Volt control input tests
 on:
   push:
-    branches: [arena/e973ac10-volt-plus, arena/16c8aaea-volt-plus]
+    branches: [arena/e973ac10-volt-plus]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   input-tests:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Install native dependencies
-        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev libudev-dev
       - name: Check pinned upstream sources
         run: python3 -m unittest discover -s tests -p 'test_upstream_control_sources.py'
       - name: Run input adapter tests
         run: |
           set -o pipefail
           cargo test -p horizon-client-input --lib java_ 2>&1 | tee "$RUNNER_TEMP/control-tests.log"
-      - name: Run Volt + Boost & Replay tests
-        run: |
-          set -o pipefail
-          cargo test -p horizon-threads --lib 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
-          cargo test -p horizon-client-render --lib volt_boost 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
-          cargo test -p horizon-client-render --lib replay 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
-          cargo test -p horizon-client-render --lib options_ui::tests 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
-          cargo test -p horizon-client --lib volt_boost 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
       - name: Summarize test errors
         if: failure()
         run: |
           python3 - <<'PY'
-          import os, re
+          import os
           from pathlib import Path
           path = Path(os.environ['RUNNER_TEMP']) / 'control-tests.log'
           if path.exists():
-              lines = [re.sub(r'\x1b\[[0-9;]*m', '', l).strip() for l in path.read_text(errors='replace').splitlines()]
-              emitted = 0
-              if 'failures:' in lines:
-                  start = lines.index('failures:')
-                  block = '\n'.join(lines[start:start + 60])[:3800]
-                  print('::error::' + block.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))
-                  emitted += 1
-              seen = set()
-              for idx, clean in enumerate(lines):
-                  if not (re.search(r'\berror\b', clean) or 'panicked at' in clean) or clean in seen:
-                      continue
-                  seen.add(clean)
-                  detail = [clean]
-                  for f in lines[idx + 1:idx + 8]:
-                      if not f or f in seen:
-                          break
-                      detail.append(f)
-                  msg = ('\n'.join(detail))[:3800].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-                  print('::error::' + msg)
-                  emitted += 1
-                  if emitted >= 9:
-                      break
-              tail = '\n'.join(lines[-40:])[:3800]
-              print('::notice::' + tail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'))
+              for line in path.read_text(errors='replace').splitlines()[-55:]:
+                  print('::notice::' + line[:400].replace('%', '%25'))
           PY

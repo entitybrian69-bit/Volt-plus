@@ -329,7 +329,6 @@ mod win;
 mod wind;
 mod wither;
 mod world_loading;
-mod volt_boost_runtime;
 mod zombie_reinforcements;
 mod zombie_villagers;
 use event_loop::EventLoopCtl;
@@ -2890,7 +2889,6 @@ struct Game<'a> {
     fangs: fangs::FangState,
     /// The local player as a model (third person, the inventory).
     player_model: Option<Mob>,
-    volt_rt: volt_boost_runtime::VoltBoostRuntime,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Dim {
@@ -8047,7 +8045,6 @@ impl Game<'_> {
             self.draw_debug_overlay(b, safe_size);
             self.frame_graph
                 .draw(self.settings.horizon.overlay, b, &self.gui.atlas);
-            self.draw_volt_overlays(b);
         });
         self.draw_pad_cursor(&mut batch);
         self.resolve_inline_profiles(&batch.inline_profiles);
@@ -10586,14 +10583,10 @@ impl Game<'_> {
         // the round blob would be a second one. The Nether and the End have no sun to cast them.
         let pack_shadows =
             self.dim == Dim::Overworld && self.renderer.as_ref().is_some_and(|r| r.native_shadow());
-        let shadow_sprite = (self.settings.entity_shadows
-            && self.volt_rt.active.entity_shadows
-            && !pack_shadows)
+        let shadow_sprite = (self.settings.entity_shadows && !pack_shadows)
             .then(|| self.gui.atlas.sprites.get("misc/shadow").copied())
             .flatten();
         if let Some(sprite) = shadow_sprite {
-            let shadow_max_dist_sq =
-                f64::from(self.volt_rt.active.entity_shadow_distance.max(4)).powi(2);
             // DimensionType.ambientLight: the_nether 0.1, the_end 0.25.
             let ambient = match self.dim {
                 Dim::Nether => 0.1,
@@ -10626,9 +10619,6 @@ impl Game<'_> {
             // Text, block and item displays (DisplayRenderer's shadow radius).
             casters.extend(self.text_displays.values().filter_map(|d| d.shadow(a)));
             for (pos, radius, strength) in casters {
-                if (pos - camera).length_squared() > shadow_max_dist_sq {
-                    continue;
-                }
                 horizon_client::shadows::shadow(
                     &self.world,
                     self.res.facts(),
@@ -10700,35 +10690,12 @@ impl Game<'_> {
                     v.intersects(o - glam::Vec3::ONE, o + glam::Vec3::splat(2.0))
                 })
             };
-            let be_cap = if self.volt_rt.active.block_entity_cap == 0 {
-                usize::MAX
-            } else {
-                self.volt_rt.active.block_entity_cap as usize
-            };
-            let be_gate = self.volt_rt.active.block_entity_frame_gate;
-            let be_gate_dist = self.volt_rt.active.block_entity_gate_distance;
-            let be_tick = self.volt_rt.entity_frame_counter;
             let visible =
                 r.visible_block_entities(self.settings.chunk_fade)
                     .filter(|(p, state)| {
-                        if !self.res.block_entity_render().renders(*state) {
-                            return false;
-                        }
-                        if !(off_screen(*state) || in_view(p)) {
-                            return false;
-                        }
-                        if be_gate.is_active() {
-                            let dx = f64::from(p[0]) + 0.5 - camera.x;
-                            let dy = f64::from(p[1]) + 0.5 - camera.y;
-                            let dz = f64::from(p[2]) + 0.5 - camera.z;
-                            let dist = (dx * dx + dy * dy + dz * dz).sqrt() as f32;
-                            if !be_gate.should_run(be_tick, dist, be_gate_dist) {
-                                return false;
-                            }
-                        }
-                        true
-                    })
-                    .take(be_cap);
+                        self.res.block_entity_render().renders(*state)
+                            && (off_screen(*state) || in_view(p))
+                    });
             if self.entity_culler.is_some() || self.pack_ids.is_some() {
                 for block in visible {
                     let start = out.len();
@@ -12187,7 +12154,6 @@ impl Game<'_> {
         horizon_client::crash::clear_detail("World");
         self.debug_charts.reset();
         self.boss_overlay.reset();
-        self.on_world_left_volt_boost();
         // GameRenderer.resetData (Minecraft.clearClientLevel).
         self.item_activation.reset();
         self.kept_block_entities.get_mut().clear();
@@ -13666,7 +13632,6 @@ impl Game<'_> {
             std::sync::atomic::Ordering::Relaxed,
         );
         self.apply_ui_settings();
-        self.apply_volt_boost_settings();
     }
     /// `LevelExtractor.allChanged`: every loaded section is rebuilt.
     fn all_sections_changed(&mut self) {
@@ -14876,7 +14841,7 @@ impl Game<'_> {
         // Load the profile's scheme before drawing the first frame or outline.
         #[cfg(target_os = "android")]
         self.pad.touch.viewport(size[0], size[1]);
-        let raw_menu_blur = self.effective_menu_blur(self.menu_blur());
+        let raw_menu_blur = self.menu_blur();
         #[cfg(target_os = "android")]
         let in_world_stationary_overlay = !self.shows_panorama()
             && self.player.is_some()
@@ -15127,6 +15092,7 @@ impl Game<'_> {
             Vec::new()
         };
         let mut hud = horizon_client::spans::time("hud", || self.hud(size));
+        hud.controls_at = Some(hud.vertices.len() as u32);
         #[cfg(target_os = "android")]
         {
             self.pad.touch.auxiliary_only =
@@ -15412,9 +15378,6 @@ impl Game<'_> {
             title,
             sky_blocked: self.potions.effects.get("blindness").is_some()
                 || self.potions.effects.get("darkness").is_some()
-                || (self.volt_rt.active.cave_sky_cull
-                    && (self.world.light(block[0], block[1], block[2]) >> 4) == 0
-                    && block[1] < 56)
                 || matches!(
                     horizon_client::fog::fog_type(
                         &self.world,
@@ -15444,13 +15407,7 @@ impl Game<'_> {
             debug_lines_on_top: &debug_lines_on_top,
             debug_crosshair: &debug_crosshair,
             hud: &hud,
-            glint_alpha: if self.volt_rt.active.glint_trim_mode
-                == horizon_client::volt_boost::GlintTrimMode::Off
-            {
-                0.0
-            } else {
-                self.glint_frame.alpha
-            },
+            glint_alpha: self.glint_frame.alpha,
             glint_ticks: self.glint_frame.scroll_ticks(),
             clouds: (!title
                 && self.dim == Dim::Overworld
@@ -15538,9 +15495,7 @@ impl Game<'_> {
             chunk_fade: if horizon_client::ui_theme::motion::game_animations_disabled() {
                 0.0
             } else {
-                self.settings
-                    .chunk_fade
-                    .min(self.volt_rt.active.chunk_fade_mode.seconds())
+                self.settings.chunk_fade
             },
         };
         let result = match self.renderer.as_mut() {
@@ -16187,13 +16142,8 @@ impl Game<'_> {
                 let frame_dt = Duration::from_secs_f32((self.frame_ticks / 20.0).max(0.0));
                 let interactive = self.screen != Screen::Playing
                     || self.last_input.elapsed() < Duration::from_millis(120);
-                let upload_cap = if self.volt_rt.active.chunk_upload_cap > 0 {
-                    self.volt_rt.active.chunk_upload_cap as usize
-                } else {
-                    g.chunk_updates as usize
-                };
                 let mut budget = horizon_client::gfx::upload_budget::UploadBudget::with_frame_state(
-                    upload_cap,
+                    g.chunk_updates as usize,
                     u64::from(g.upload_budget_kib) * 1024,
                     mobile_uploads,
                     renderer.last_wait,
@@ -16758,21 +16708,6 @@ impl Game<'_> {
                 return;
             };
             self.pad.touch.viewport(size.width, size.height);
-            {
-                let b = HudBatch::new([size.width, size.height]);
-                let tx = touch.location.x as f32 / b.scale;
-                let ty = touch.location.y as f32 / b.scale;
-                if self.handle_volt_replay_touch(
-                    touch.id,
-                    touch.phase,
-                    tx,
-                    ty,
-                    b.width,
-                    b.height,
-                ) {
-                    return;
-                }
-            }
             if self.screen == Screen::Options
                 && self.options_waiting_for_key()
                 && !self.pad.touch_ui.virtual_mouse
@@ -17466,9 +17401,6 @@ impl Game<'_> {
                     if let Some(r) = &self.renderer {
                         let b = HudBatch::new([r.config.width, r.config.height]);
                         self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
-                        if self.handle_volt_replay_drag(self.cursor.0, self.cursor.1, b.width, b.height) {
-                            return Ok(());
-                        }
                         #[cfg(target_os = "android")]
                         if native_pointer {
                             self.pad.physical_cursor = Some(self.cursor);
@@ -17781,15 +17713,6 @@ impl Game<'_> {
                     }
                     match self.screen {
                         Screen::Playing => {
-                            if button == MouseButton::Left
-                                && self.handle_volt_replay_click(
-                                    self.cursor.0,
-                                    self.cursor.1,
-                                    pressed,
-                                )
-                            {
-                                return Ok(());
-                            }
                             if pressed && !self.captured {
                                 self.capture(true);
                                 #[cfg(not(target_os = "android"))]
@@ -18176,11 +18099,6 @@ impl Game<'_> {
                     let PhysicalKey::Code(key) = event.physical_key else {
                         return Ok(());
                     };
-                    if event.state == ElementState::Pressed
-                        && self.handle_volt_replay_viewer_key(key)
-                    {
-                        return Ok(());
-                    }
                     self.mod_key(key, event.state == ElementState::Pressed, event.repeat);
                     self.native_key_event(key, event.state == ElementState::Pressed, event.repeat);
                     // Screen.keyPressed sees the physical key, repeats included.
@@ -18327,7 +18245,6 @@ impl Game<'_> {
                     self.extras_frame(elapsed);
                     self.mods_frame(elapsed);
                     self.poll_moved_extras();
-                    self.tick_volt_boost_frame();
                     self.extras_retry()?;
                     self.apply_mouse_look();
                     self.pad_look(elapsed.as_secs_f32());
@@ -19115,7 +19032,6 @@ impl<'a> Game<'a> {
             camera_type: Default::default(),
             fangs: Default::default(),
             player_model: None,
-            volt_rt: Default::default(),
         })
     }
 }
@@ -19513,7 +19429,6 @@ impl Game<'_> {
         if self.res.rest.get().is_none() {
             return Err("world resources are unavailable".into());
         }
-        self.on_world_joined_volt_boost();
         Ok(())
     }
 }

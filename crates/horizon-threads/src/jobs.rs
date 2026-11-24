@@ -277,40 +277,10 @@ impl Pool {
     }
 }
 
-static WORKER_COALESCING: AtomicBool = AtomicBool::new(false);
-static COALESCED_WAKES_SAVED: AtomicU64 = AtomicU64::new(0);
-
-/// Enables or disables background worker wakeup coalescing.
-pub fn set_worker_coalescing(enabled: bool) {
-    WORKER_COALESCING.store(enabled, Ordering::Relaxed);
-}
-
-pub fn worker_coalescing_enabled() -> bool {
-    WORKER_COALESCING.load(Ordering::Relaxed)
-}
-
-pub fn coalesced_wakes_saved() -> u64 {
-    COALESCED_WAKES_SAVED.load(Ordering::Relaxed)
-}
-
 impl Inner {
     fn notify(&self, all: bool) {
-        let ep = self.epoch.fetch_add(1, Ordering::SeqCst);
-        let sleepers = self.sleepers.load(Ordering::SeqCst);
-        if sleepers > 0 {
-            let total = self.threads.load(Ordering::Relaxed).max(1);
-            let active = total.saturating_sub(sleepers);
-            // When Background Worker Coalescing is enabled and at least one worker
-            // is already awake pulling jobs from the queue, coalesce rapid individual
-            // `notify(false)` calls every 4th epoch to reduce wake/sleep thrash.
-            if !all
-                && WORKER_COALESCING.load(Ordering::Relaxed)
-                && active > 0
-                && !ep.is_multiple_of(4)
-            {
-                COALESCED_WAKES_SAVED.fetch_add(1, Ordering::Relaxed);
-                return;
-            }
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        if self.sleepers.load(Ordering::SeqCst) > 0 {
             // A worker between counting itself asleep and waiting holds
             // `sleep`: taking it here means it is waiting when told.
             drop(lock(&self.sleep));
