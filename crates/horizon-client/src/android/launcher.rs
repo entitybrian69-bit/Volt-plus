@@ -369,7 +369,14 @@ impl Launcher {
         self.catalog.refresh(&self.home);
         self.login.refresh_status();
         crate::diagnostics::heartbeat("returned_to_launcher", || serde_json::json!({}));
-        self.catalog.page = Page::Play;
+        if horizon_client::android_runtime::take_replays_return() {
+            self.catalog.page = Page::Settings;
+            self.catalog.settings_category = crate::catalog::SettingsCategory::Replays;
+            self.catalog.refresh_replays(&self.home);
+            self.catalog.scroll = self.catalog.replay_scroll;
+        } else {
+            self.catalog.page = Page::Play;
+        }
         if let Ok(message) = std::fs::read_to_string(self.home.join("android-error.txt")) {
             self.error = Some(message);
         }
@@ -508,6 +515,9 @@ impl Launcher {
         } else if self.catalog.page == Page::Settings
             && self.catalog.settings_category != crate::catalog::SettingsCategory::Overview
         {
+            if self.catalog.settings_category == crate::catalog::SettingsCategory::Replays {
+                self.catalog.replay_scroll = self.catalog.scroll;
+            }
             self.catalog.settings_category =
                 if self.catalog.settings_category == crate::catalog::SettingsCategory::Theme {
                     crate::catalog::SettingsCategory::Launcher

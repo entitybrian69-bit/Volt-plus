@@ -476,6 +476,17 @@ impl Game<'_> {
                 Event::NativeButton(i, b) => self.native_settings_event(i, b),
                 Event::Credits => self.open_win_screen(false, super::win::Finish::Options),
                 Event::Narrator => self.narrator_status_changed(),
+                Event::PurgeRam => {
+                    self.purge_unused_ram_now();
+                    self.settings.save(&Self::options_path());
+                }
+                Event::ClearReplays => {
+                    self.clear_all_replays_now();
+                    self.settings.save(&Self::options_path());
+                }
+                Event::OpenReplays => {
+                    self.open_replays_page_from_game();
+                }
             }
         }
         Ok(())
@@ -687,7 +698,11 @@ impl Game<'_> {
         {
             return;
         }
-        let limit = self.framerate_limit();
+        let limit = self.volt_boost_effective_fps_cap(self.framerate_limit());
+        if self.volt_rt.active.smart_frame_pacer && limit > 0 && limit < 260 {
+            self.volt_rt.pacer.pace(true, limit as u32);
+            return;
+        }
         match self.settings.horizon.pacing {
             horizon_client::graphics::Pacing::Precise => {
                 horizon_client::window::end_frame(&mut self.limiter, limit, &mut self.frame_clock)

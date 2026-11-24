@@ -50,6 +50,7 @@ pub use entity_batch::{
 };
 pub use pack_post::PackPost;
 pub use view::{View, ViewSet};
+pub use weather::{fast_weather, set_fast_weather};
 
 /// Cloneable GPU state for building `pack_post::PackPost` off the Android UI thread.
 pub struct ShaderPackBuildContext {
@@ -984,6 +985,10 @@ pub struct Renderer {
     oit: Option<oit::Oit>,
     /// Advance animated block textures (Horizon setting; vanilla always does).
     pub animated_textures: bool,
+    pub volt_reflex: bool,
+    pub smart_10hz_atlas: bool,
+    last_atlas_tick: u64,
+    pub sealed_cave_occlusion: bool,
     present_modes: Vec<wgpu::PresentMode>,
 }
 /// Every layer's mip levels, layer major (`first` is the first layer's
@@ -3945,6 +3950,10 @@ impl Renderer {
             oit: None,
             fullbright: false,
             animated_textures: true,
+            volt_reflex: false,
+            smart_10hz_atlas: false,
+            last_atlas_tick: 0,
+            sealed_cave_occlusion: false,
             present_modes,
         })
     }
@@ -4611,7 +4620,13 @@ impl Renderer {
             Some(PresentMode::Immediate) => wgpu::PresentMode::Immediate,
             _ => wgpu::PresentMode::Fifo,
         };
-        let desired_latency = if vsync { 2 } else { 3 };
+        let desired_latency = if self.volt_reflex {
+            1
+        } else if vsync {
+            2
+        } else {
+            3
+        };
         if self.config.present_mode != mode
             || self.config.desired_maximum_frame_latency != desired_latency
         {
@@ -4623,6 +4638,43 @@ impl Renderer {
                 self.surface_unconfigured = true;
             }
         }
+    }
+    pub fn set_volt_reflex(&mut self, on: bool) {
+        if self.volt_reflex != on {
+            self.volt_reflex = on;
+            let desired_latency = if on {
+                1
+            } else if self.config.present_mode == wgpu::PresentMode::Fifo {
+                2
+            } else {
+                3
+            };
+            if self.config.desired_maximum_frame_latency != desired_latency {
+                self.config.desired_maximum_frame_latency = desired_latency;
+                if self.surface.is_some() {
+                    self.configure_surface();
+                } else {
+                    self.surface_unconfigured = true;
+                }
+            }
+        }
+    }
+    pub fn draw_calls(&self) -> u32 {
+        self.section_draw_calls.max(self.drawn_sections)
+    }
+    /// Frees idle CPU/GPU scratch memory (mesh buffer pool, cached blur, entity batch capacity)
+    /// and returns total MiB reclaimed.
+    pub fn purge_unused_ram(&mut self) -> f32 {
+        let mut freed_bytes = crate::mesher::purge_mesh_pool();
+        if self.menu_blur.take().is_some() {
+            freed_bytes += 4 * 1024 * 1024;
+        }
+        let vis_spare = self.visible.capacity().saturating_sub(self.visible.len())
+            * std::mem::size_of::<usize>();
+        self.visible.clear();
+        self.visible.shrink_to_fit();
+        freed_bytes += vis_spare;
+        (freed_bytes as f32) / (1024.0 * 1024.0)
     }
     /// Follows the window to `width` x `height`. A size the swapchain can't take
     /// ([`drawable_size`]) keeps the last one and draws nothing until the next.
@@ -6275,8 +6327,13 @@ impl Renderer {
             stages.begin_prepare(&mut encoder);
         }
         if self.animated_textures {
-            self.hud
-                .animate_sprites(&mut self.uploads, &mut encoder, frame.ticks);
+            let allow_atlas = !self.smart_10hz_atlas
+                || frame.ticks.saturating_sub(self.last_atlas_tick) >= 2;
+            if allow_atlas {
+                self.last_atlas_tick = frame.ticks;
+                self.hud
+                    .animate_sprites(&mut self.uploads, &mut encoder, frame.ticks);
+            }
         }
         self.update_lightmap(
             &mut encoder,
@@ -6482,7 +6539,7 @@ impl Renderer {
         let mirror_low = mirror_plane
             .zip(eye)
             .map(|(plane, eye)| 2.0 * (plane - frame.camera.y as f32) - eye.y);
-        let culling = !frame.title && frame.cave_culling;
+        let culling = !frame.title && (frame.cave_culling || self.sealed_cave_occlusion);
         // Sections wholly inside distance fog are not drawn (`fog_culled_radius`).
         let own_fog = !fog_is_only_cover(FogCullCover::from_frame(
             frame,
@@ -10611,5 +10668,31 @@ fn reported(l: horizon_hdr::wayland::Luminances) -> crate::graphics::Reported {
     crate::graphics::Reported {
         paper_white: 203,
         peak: peak.clamp(200, 10_000),
+    }
+}
+
+/// Evaluates whether the sky pass should run given `cave_sky_cull`, current sky light,
+/// and whether the camera is sealed inside subterranean blocks.
+pub fn cave_sky_visible(
+    cave_sky_cull: bool,
+    sky_open: bool,
+    sky_light: u8,
+    in_sealed_cave: bool,
+) -> bool {
+    if cave_sky_cull && in_sealed_cave && sky_light == 0 {
+        return false;
+    }
+    sky_open
+}
+
+#[cfg(test)]
+mod volt_boost_gfx_tests {
+    use super::*;
+
+    #[test]
+    fn cave_sky_cull_skips_sky_when_sealed_underground() {
+        assert!(cave_sky_visible(false, true, 0, true));
+        assert!(!cave_sky_visible(true, true, 0, true));
+        assert!(cave_sky_visible(true, true, 12, true));
     }
 }

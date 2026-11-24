@@ -5898,8 +5898,19 @@ impl Game<'_> {
         let atlas = &self.gui.atlas;
         let lookup = |name: &str| atlas.sprites.get(name).map(|r| [r.u0, r.v0, r.u1, r.v1]);
         let scale = self.view_scale();
+        let vb = &self.volt_rt.active;
+        let max_mobs = if vb.max_entities == 0 {
+            usize::MAX
+        } else {
+            vb.max_entities as usize
+        };
+        let frame_idx = self.volt_rt.entity_frame_counter;
+        let mut drawn_mobs = 0usize;
         self.rendered_mobs.set(0);
         for mob in &self.mobs {
+            if drawn_mobs >= max_mobs {
+                break;
+            }
             let entity_start = out.len();
             let outline = self.mob_outline(mob);
             // Entity.DATA_SHARED_FLAGS_ID invisible: only the name tag draws (and
@@ -5917,6 +5928,23 @@ impl Game<'_> {
                 continue;
             }
             let d = glam::DVec3::new(mob.position.x, mob.position.y, mob.position.z) - camera;
+            let dist_blocks = d.length() as f32;
+            if is_player {
+                if vb.player_frame_gate.is_active()
+                    && !vb
+                        .player_frame_gate
+                        .should_run(frame_idx, dist_blocks, vb.player_gate_distance)
+                {
+                    continue;
+                }
+            } else if vb.mob_frame_gate.is_active()
+                && !vb
+                    .mob_frame_gate
+                    .should_run(frame_idx, dist_blocks, vb.mob_gate_distance)
+            {
+                continue;
+            }
+            drawn_mobs += 1;
             // Entity.shouldRenderAtSqrDistance: 64 times the bounding box's
             // mean edge, scaled by the view scale. RemotePlayer's box counts
             // ten times.

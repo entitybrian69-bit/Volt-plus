@@ -113,6 +113,12 @@ impl Weather {
         vertices: &[Vertex],
         time: Time,
     ) {
+        let vertices = if fast_weather() && vertices.len() >= 8 {
+            let half_quads = (vertices.len() / 8) * 4;
+            &vertices[..half_quads]
+        } else {
+            vertices
+        };
         self.count = vertices.len() as u32;
         if vertices.is_empty() {
             return;
@@ -179,6 +185,35 @@ fn depth_stencil() -> wgpu::DepthStencilState {
         depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
         stencil: Default::default(),
         bias: Default::default(),
+    }
+}
+
+static FAST_WEATHER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_fast_weather(on: bool) {
+    FAST_WEATHER.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn fast_weather() -> bool {
+    FAST_WEATHER.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn fast_weather_slice_len(quad_vertices: usize, fast: bool) -> usize {
+    if fast && quad_vertices >= 8 {
+        (quad_vertices / 8) * 4
+    } else {
+        quad_vertices
+    }
+}
+
+#[cfg(test)]
+mod volt_boost_weather_tests {
+    use super::*;
+
+    #[test]
+    fn fast_weather_halves_weather_column_quads() {
+        assert_eq!(fast_weather_slice_len(40, false), 40);
+        assert_eq!(fast_weather_slice_len(40, true), 20);
     }
 }
 

@@ -1,24 +1,32 @@
 name: Volt control input tests
 on:
   push:
-    branches: [arena/e973ac10-volt-plus]
+    branches: [arena/e973ac10-volt-plus, arena/16c8aaea-volt-plus]
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   input-tests:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Install native dependencies
-        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev libudev-dev
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev libudev-dev libasound2-dev
       - name: Check pinned upstream sources
         run: python3 -m unittest discover -s tests -p 'test_upstream_control_sources.py'
       - name: Run input adapter tests
         run: |
           set -o pipefail
           cargo test -p horizon-client-input --lib java_ 2>&1 | tee "$RUNNER_TEMP/control-tests.log"
+      - name: Run Volt + Boost & Replay tests
+        run: |
+          set -o pipefail
+          cargo test -p horizon-threads --lib 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
+          cargo test -p horizon-client-render --lib volt_boost 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
+          cargo test -p horizon-client-render --lib replay 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
+          cargo test -p horizon-client-render --lib options_ui::tests 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
+          cargo test -p horizon-client --lib volt_boost 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
       - name: Summarize test errors
         if: failure()
         run: |

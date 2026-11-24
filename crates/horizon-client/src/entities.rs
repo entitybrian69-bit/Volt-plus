@@ -459,6 +459,22 @@ impl ItemCells {
         out.sort_unstable();
     }
 }
+static DROP_MERGE_RADIUS_MM: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(500);
+
+pub fn set_drop_merge_radius(enabled: bool, radius_blocks: f32) {
+    let mm = if enabled {
+        (radius_blocks.clamp(0.5, 6.0) * 1000.0).round() as u32
+    } else {
+        500
+    };
+    DROP_MERGE_RADIUS_MM.store(mm, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn drop_merge_radius() -> f64 {
+    f64::from(DROP_MERGE_RADIUS_MM.load(std::sync::atomic::Ordering::Relaxed)) / 1000.0
+}
+
 /// `ItemEntity.mergeWithNeighbours` for `items[i]`, which has just moved in
 /// its tick (its `age` already counts this tick; vanilla's doesn't yet): each
 /// mergeable item whose box meets this one's grown by 0.5 sideways takes this
@@ -482,7 +498,8 @@ pub fn merge_with_neighbours(
     if removed[i] || !items[i].mergeable(age(items, i), max_stack(&items[i].stack)) {
         return;
     }
-    let area = items[i].bounds().inflate(Vec3::new(0.5, 0.0, 0.5));
+    let r = drop_merge_radius();
+    let area = items[i].bounds().inflate(Vec3::new(r, (r - 0.5).max(0.0) * 0.5, r));
     let mut near = Vec::new();
     cells.near(area, &mut near);
     for j in near {

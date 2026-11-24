@@ -526,6 +526,17 @@ impl Game<'_> {
             let Some(stack) = f.item.clone() else {
                 continue;
             };
+            if self.volt_rt.active.frame_items_loader {
+                let d2 = (glam::DVec3::new(
+                    f64::from(f.pos[0]) + 0.5,
+                    f64::from(f.pos[1]) + 0.5,
+                    f64::from(f.pos[2]) + 0.5,
+                ) - camera)
+                    .length_squared();
+                if d2 > 24.0 * 24.0 {
+                    continue;
+                }
+            }
             // `GlowItemFrame` items render full bright (15728880).
             let item_light = if f.glow { 0xFF } else { light };
             let depth = if f.invisible { 0.5 } else { 0.4375 };

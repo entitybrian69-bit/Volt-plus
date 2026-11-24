@@ -419,13 +419,34 @@ impl Game<'_> {
             }
             _ => None,
         });
+        let vb = &self.volt_rt.active;
+        let item_cap = if vb.dropped_item_cap == 0 {
+            usize::MAX
+        } else {
+            vb.dropped_item_cap as usize
+        };
+        let frame_idx = self.volt_rt.entity_frame_counter;
+        let mut drawn_items = 0usize;
         for (item, at, partial, entity) in live.chain(taken) {
+            if drawn_items >= item_cap {
+                break;
+            }
             let entity_start = out.len();
             let q = item.position;
             let pos = glam::DVec3::from_array(at) - camera;
             if pos.length_squared() > 64.0 * 64.0 {
                 continue;
             }
+            if vb.item_frame_gate.is_active()
+                && !vb.item_frame_gate.should_run(
+                    frame_idx,
+                    pos.length() as f32,
+                    vb.item_gate_distance,
+                )
+            {
+                continue;
+            }
+            drawn_items += 1;
             // EntityRenderer.shouldRender: the item's 0.25 box, grown by 0.5,
             // in the view frustum. Checked before its model is resolved.
             if entity && let Some(view) = &self.view_frustum {

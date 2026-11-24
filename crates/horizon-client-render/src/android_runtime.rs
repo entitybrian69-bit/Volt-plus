@@ -191,11 +191,33 @@ pub fn compatibility() -> bool {
 pub use crate::clipboard::{ClipboardHooks, clipboard_get, clipboard_set, install_clipboard};
 
 static RETURN_TO_LAUNCHER: AtomicBool = AtomicBool::new(false);
+static RETURN_TO_REPLAYS: AtomicBool = AtomicBool::new(false);
+static PENDING_REPLAY_PATH: std::sync::Mutex<Option<std::path::PathBuf>> =
+    std::sync::Mutex::new(None);
+
 pub fn return_to_launcher() {
     RETURN_TO_LAUNCHER.store(true, Ordering::Release);
 }
 pub fn take_launcher_return() -> bool {
     RETURN_TO_LAUNCHER.swap(false, Ordering::AcqRel)
+}
+pub fn request_replays_return() {
+    RETURN_TO_REPLAYS.store(true, Ordering::Release);
+    RETURN_TO_LAUNCHER.store(true, Ordering::Release);
+}
+pub fn take_replays_return() -> bool {
+    RETURN_TO_REPLAYS.swap(false, Ordering::AcqRel)
+}
+pub fn set_pending_replay_path(path: Option<std::path::PathBuf>) {
+    *PENDING_REPLAY_PATH
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = path;
+}
+pub fn take_pending_replay_path() -> Option<std::path::PathBuf> {
+    PENDING_REPLAY_PATH
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take()
 }
 
 #[cfg(test)]

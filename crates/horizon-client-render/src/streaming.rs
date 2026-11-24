@@ -26,6 +26,57 @@ use std::{
 /// generator's scratch buffers ([`ChunkGenerator::idle`]).
 pub const IDLE_RELEASE: std::time::Duration = std::time::Duration::from_secs(5);
 
+static FRUSTUM_FIRST_MESH: AtomicBool = AtomicBool::new(false);
+static FRUSTUM_FWD_X: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+static FRUSTUM_FWD_Z: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(1000);
+static CHUNK_BUILD_DISTANCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+pub fn set_frustum_first_mesh(enabled: bool, forward_xz: [f32; 2]) {
+    FRUSTUM_FIRST_MESH.store(enabled, Ordering::Relaxed);
+    FRUSTUM_FWD_X.store((forward_xz[0] * 1000.0).round() as i32, Ordering::Relaxed);
+    FRUSTUM_FWD_Z.store((forward_xz[1] * 1000.0).round() as i32, Ordering::Relaxed);
+}
+
+pub fn set_chunk_build_distance(distance: u32) {
+    CHUNK_BUILD_DISTANCE.store(distance, Ordering::Relaxed);
+}
+
+pub fn frustum_mesh_rank(
+    center: (i32, i32),
+    x: i32,
+    z: i32,
+    forward_xz: [f32; 2],
+    frustum_first: bool,
+) -> i64 {
+    let dx = i64::from(x - center.0);
+    let dz = i64::from(z - center.1);
+    let base = dx * dx + dz * dz;
+    if !frustum_first || base == 0 {
+        return base;
+    }
+    let dot = (dx as f32) * forward_xz[0] + (dz as f32) * forward_xz[1];
+    if dot < -0.15 {
+        base + 10_000
+    } else {
+        base
+    }
+}
+
+pub fn mesh_in_build_distance(
+    center: (i32, i32),
+    render_radius: i32,
+    build_distance: u32,
+    x: i32,
+    z: i32,
+) -> bool {
+    let effective = if build_distance == 0 {
+        render_radius
+    } else {
+        render_radius.min(build_distance as i32)
+    };
+    in_view_distance(center, effective, x, z)
+}
+
 /// A chunk under generation, opaque to the streamer.
 pub type Proto = Box<dyn std::any::Any + Send>;
 /// Chunk generation in vanilla's stages: a neighbour-independent proto chunk
@@ -1702,7 +1753,23 @@ impl Streaming {
             if !ready {
                 continue;
             }
-            candidates.push((self.distance(x, z), x, z, sections));
+            let build_cap = CHUNK_BUILD_DISTANCE.load(Ordering::Relaxed);
+            if build_cap > 0
+                && !mesh_in_build_distance(self.center, self.radius, build_cap, x, z)
+            {
+                continue;
+            }
+            let frustum_first = FRUSTUM_FIRST_MESH.load(Ordering::Relaxed);
+            let fwd = [
+                FRUSTUM_FWD_X.load(Ordering::Relaxed) as f32 / 1000.0,
+                FRUSTUM_FWD_Z.load(Ordering::Relaxed) as f32 / 1000.0,
+            ];
+            let rank = if frustum_first {
+                frustum_mesh_rank(self.center, x, z, fwd, true)
+            } else {
+                self.distance(x, z)
+            };
+            candidates.push((rank, x, z, sections));
         }
         // Nearest first, and only as many sections as the workers can chew.
         // Every ready column used to be submitted at once, so at a wide
@@ -3366,3 +3433,23 @@ mod cover_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod volt_boost_streaming_tests {
+    use super::*;
+
+    #[test]
+    fn frustum_first_ranks_ahead_chunks_before_behind_chunks() {
+        let fwd = [0.0, 1.0]; // looking +Z
+        let ahead = frustum_mesh_rank((0, 0), 0, 4, fwd, true);
+        let behind = frustum_mesh_rank((0, 0), 0, -2, fwd, true);
+        assert!(ahead < behind, "ahead={ahead} should beat behind={behind}");
+    }
+
+    #[test]
+    fn chunk_build_distance_caps_meshing_radius() {
+        assert!(mesh_in_build_distance((0, 0), 16, 6, 4, 0));
+        assert!(!mesh_in_build_distance((0, 0), 16, 6, 10, 0));
+    }
+}
+

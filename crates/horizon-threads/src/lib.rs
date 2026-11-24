@@ -223,6 +223,76 @@ fn favour() -> bool {
     false
 }
 
+static BIG_LITTLE_BOOST: AtomicBool = AtomicBool::new(false);
+
+/// Enables or disables big.LITTLE performance-core affinity pinning for render/main threads.
+pub fn set_big_little_boost(enabled: bool) {
+    BIG_LITTLE_BOOST.store(enabled, Ordering::Relaxed);
+    let _ = apply_big_little_current_thread();
+}
+
+pub fn big_little_boost_enabled() -> bool {
+    BIG_LITTLE_BOOST.load(Ordering::Relaxed)
+}
+
+/// Identifies performance ("big") CPU indices by reading `cpuinfo_max_freq` (or upper half fallback).
+pub fn detect_big_core_indices(total_cores: usize) -> Vec<usize> {
+    let mut freqs: Vec<(usize, u64)> = (0..total_cores)
+        .filter_map(|cpu| {
+            let p = format!("/sys/devices/system/cpu/cpu{cpu}/cpufreq/cpuinfo_max_freq");
+            let raw = std::fs::read_to_string(p).ok()?;
+            let khz: u64 = raw.trim().parse().ok()?;
+            Some((cpu, khz))
+        })
+        .collect();
+    if freqs.len() == total_cores && !freqs.is_empty() {
+        let max_khz = freqs.iter().map(|(_, f)| *f).max().unwrap_or(0);
+        let min_khz = freqs.iter().map(|(_, f)| *f).min().unwrap_or(0);
+        if max_khz > min_khz {
+            let threshold = min_khz + (max_khz - min_khz) / 3;
+            let big: Vec<usize> = freqs
+                .drain(..)
+                .filter_map(|(cpu, f)| (f > threshold).then_some(cpu))
+                .collect();
+            if !big.is_empty() {
+                return big;
+            }
+        }
+    }
+    let start = total_cores / 2;
+    (start..total_cores.max(1)).collect()
+}
+
+/// Pins the calling thread to performance cores when `big_little_boost` is enabled,
+/// or restores full affinity when disabled. Returns `true` if applied cleanly.
+pub fn apply_big_little_current_thread() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let total = worker_count().max(1);
+        // SAFETY: `cpu_set_t` is POD and initialized via `CPU_ZERO`.
+        unsafe {
+            let mut set: libc::cpu_set_t = std::mem::zeroed();
+            libc::CPU_ZERO(&mut set);
+            if BIG_LITTLE_BOOST.load(Ordering::Relaxed) {
+                for cpu in detect_big_core_indices(total) {
+                    if cpu < libc::CPU_SETSIZE as usize {
+                        libc::CPU_SET(cpu, &mut set);
+                    }
+                }
+            } else {
+                for cpu in 0..total.min(libc::CPU_SETSIZE as usize) {
+                    libc::CPU_SET(cpu, &mut set);
+                }
+            }
+            libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set) == 0
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        false
+    }
+}
+
 /// The CPU time the calling thread has used, where only an OS call gives it
 /// precisely. Windows counts it exactly only in cycles of the time-stamp
 /// counter (`QueryThreadCycleTime`; `GetThreadTimes` moves in scheduler ticks

@@ -481,6 +481,7 @@ pub enum SettingsCategory {
     Launcher,
     Theme,
     Controls,
+    Replays,
     Experimental,
     Diagnostics,
     Account,
@@ -493,6 +494,7 @@ impl SettingsCategory {
             Self::Launcher => "Launcher Settings",
             Self::Theme => "Theme Customization",
             Self::Controls => "Controls & HUD Layout",
+            Self::Replays => "Replays",
             Self::Experimental => "Experimental Stuff",
             Self::Diagnostics => "Diagnostics & Logs",
             Self::Account => "Account",
@@ -754,6 +756,17 @@ pub struct Catalog {
     pub compiler_query: String,
     pub compiler_logs: Vec<String>,
     pub last_port_result: Option<horizon_port_pack::android_port::AndroidPortResult>,
+    pub replay_sort: horizon_client::replay::ReplaySort,
+    pub replay_world_filter: Option<String>,
+    pub replay_items: Vec<horizon_client::replay::ReplayListItem>,
+    pub replay_worlds: Vec<String>,
+    pub replay_used_bytes: u64,
+    pub replay_budget_bytes: u64,
+    pub replay_rename_target: Option<PathBuf>,
+    pub replay_rename_input: String,
+    pub replay_delete_confirm: Option<PathBuf>,
+    pub replay_clear_confirm: bool,
+    pub replay_scroll: f32,
     worker: Option<mpsc::Receiver<Result<Reply, String>>>,
     search_worker: Option<mpsc::Receiver<Result<Vec<Project>, String>>>,
     icon_worker: Option<mpsc::Receiver<IconData>>,
@@ -825,6 +838,17 @@ impl Catalog {
                 "Select a Java .jar, Modrinth .mrpack, or 26.2 data pack — or enter a Modrinth mod slug/URL above.".into(),
             ],
             last_port_result: None,
+            replay_sort: horizon_client::replay::ReplaySort::Newest,
+            replay_world_filter: None,
+            replay_items: Vec::new(),
+            replay_worlds: Vec::new(),
+            replay_used_bytes: 0,
+            replay_budget_bytes: 1024 * 1024 * 1024,
+            replay_rename_target: None,
+            replay_rename_input: String::new(),
+            replay_delete_confirm: None,
+            replay_clear_confirm: false,
+            replay_scroll: 0.0,
             worker: None,
             search_worker: None,
             icon_worker: None,
@@ -834,6 +858,39 @@ impl Catalog {
         result.refresh(home);
         result
     }
+    pub fn replays_dir(&self, home: &Path) -> PathBuf {
+        self.config.game_home(home).join("replays")
+    }
+
+    pub fn refresh_replays(&mut self, home: &Path) {
+        let dir = self.replays_dir(home);
+        let boost_path = self.config.game_home(home).join("volt-plus-boost.json");
+        let vb = horizon_client::volt_boost::VoltPlusBoostSettings::load(&boost_path);
+        self.replay_budget_bytes = u64::from(vb.replay_storage_budget_mb.max(256)) * 1024 * 1024;
+        let summary = horizon_client::replay::storage_summary(&dir);
+        self.replay_used_bytes = summary.total_bytes;
+        self.replay_worlds = horizon_client::replay::available_worlds(&dir);
+        self.replay_items = horizon_client::replay::list_replays(
+            &dir,
+            self.replay_sort,
+            self.replay_world_filter.as_deref(),
+        );
+    }
+
+    pub fn submit_replay_rename(&mut self, home: &Path) {
+        let new_name = self.replay_rename_input.trim().to_string();
+        if let Some(target) = self.replay_rename_target.take() {
+            if !new_name.is_empty() {
+                match horizon_client::replay::rename_clip(&target, &new_name) {
+                    Ok(()) => self.status = format!("Renamed replay to '{new_name}'."),
+                    Err(err) => self.status = format!("Cannot rename replay: {err}"),
+                }
+            }
+        }
+        self.editing = None;
+        self.refresh_replays(home);
+    }
+
     pub fn show_installed(&mut self, kind: Option<horizon_client::content_files::Kind>) {
         self.searches.cancel_interest();
         self.page = Page::Installed;
@@ -856,6 +913,7 @@ impl Catalog {
         }
     }
     pub fn refresh(&mut self, home: &Path) {
+        self.refresh_replays(home);
         let game = self.config.game_home(home);
         let installed = Installed::load(&game);
         self.downloaded = installed
@@ -2861,6 +2919,7 @@ impl Catalog {
             Some("installed_search") => &mut self.installed_query,
             Some("compiler_query") => &mut self.compiler_query,
             Some("fm_rename" | "fm_new_folder") => &mut self.fm_input_text,
+            Some("replay_rename") => &mut self.replay_rename_input,
             _ => &mut self.query,
         };
         match out {
@@ -2893,6 +2952,14 @@ impl Catalog {
                         self.fm_submit_new_folder(home);
                     } else {
                         self.editing = None;
+                    }
+                    return;
+                } else if self.editing == Some("replay_rename") {
+                    if matches!(out, Output::Enter) {
+                        self.submit_replay_rename(home);
+                    } else {
+                        self.editing = None;
+                        self.replay_rename_target = None;
                     }
                     return;
                 } else if self.editing == Some("installed_search") {
