@@ -4985,7 +4985,7 @@ impl Launcher {
                 };
                 let game_anim_off = c.disable_game_animations || touch_cfg.disable_game_animations;
 
-                let rows: [(&str, &str, SettingControl<'_>); 17] = [
+                let rows: [(&str, &str, SettingControl<'_>); 18] = [
                     (
                         "DISPLAY, RESOLUTION & RENDERER PIPELINE",
                         "Hardware GPU backend, 3D resolution scale, refresh rate & display geometry",
