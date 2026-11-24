@@ -8,11 +8,7 @@
 use crate::hud::{HudAtlas, HudBatch, rgba};
 use crate::settings::Settings;
 use crate::ui;
-use crate::volt_boost::{
-    BoostCategory, BoostProfile, ChunkFadeMode, FrameGate, GlintTrimMode, InactivityFpsMode,
-    MenuBackdropMode, ParticleBudget, PerfHudCorner, ReplayLength, ReplayQuality, TickRangeMode,
-    VoltPlusBoostSettings,
-};
+use crate::volt_boost::{BoostCategory, InactivityFpsMode, VoltPlusBoostSettings};
 use std::time::Instant;
 use winit::keyboard::{Key, NamedKey};
 

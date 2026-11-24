@@ -5757,8 +5757,23 @@ impl OptionsUi {
         }
 
         if self.page() == Page::VoltPlusBoost {
-            let k = winit::keyboard::Key::Named(key);
-            let actions = self.volt_boost.key(s, &k);
+            let named = match key {
+                K::Escape => Some(winit::keyboard::NamedKey::Escape),
+                K::BrowserBack => Some(winit::keyboard::NamedKey::BrowserBack),
+                K::ArrowDown => Some(winit::keyboard::NamedKey::ArrowDown),
+                K::Tab => Some(winit::keyboard::NamedKey::Tab),
+                K::ArrowUp => Some(winit::keyboard::NamedKey::ArrowUp),
+                K::ArrowLeft => Some(winit::keyboard::NamedKey::ArrowLeft),
+                K::ArrowRight => Some(winit::keyboard::NamedKey::ArrowRight),
+                K::Enter | K::NumpadEnter => Some(winit::keyboard::NamedKey::Enter),
+                K::Space => Some(winit::keyboard::NamedKey::Space),
+                _ => None,
+            };
+            let actions = if let Some(nk) = named {
+                self.volt_boost.key(s, &winit::keyboard::Key::Named(nk))
+            } else {
+                Vec::new()
+            };
             return self.volt_boost_actions(s, actions);
         }
 
