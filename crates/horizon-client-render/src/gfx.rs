@@ -1116,7 +1116,7 @@ fn create_block_sprite_textures(
 ) -> (Vec<wgpu::Texture>, u32) {
     let low_end = low_end_terrain_compat();
     let mut mip_levels = 1;
-    let mut uploads = low_end.then(|| Uploads::new(device));
+    let mut uploads = low_end.then(|| upload::Uploads::new(device));
     let mut encoder = low_end.then(|| {
         device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Block sprites upload"),
