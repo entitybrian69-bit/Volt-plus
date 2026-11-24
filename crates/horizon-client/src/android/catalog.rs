@@ -838,7 +838,7 @@ impl Catalog {
                 "Select a Java .jar, Modrinth .mrpack, or 26.2 data pack — or enter a Modrinth mod slug/URL above.".into(),
             ],
             last_port_result: None,
-            replay_sort: horizon_client::replay::ReplaySort::DateDesc,
+            replay_sort: horizon_client::replay::ReplaySort::Newest,
             replay_world_filter: None,
             replay_items: Vec::new(),
             replay_worlds: Vec::new(),

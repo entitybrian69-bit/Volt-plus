@@ -2,10 +2,9 @@
 //! Auto-DRS, Thermal Guard, RAM Purge, floating Replay HUD, and the
 //! read-only Replay Playback Viewer.
 use super::{Game, Screen};
+use crate::perf_overlay::LivePerfMetrics;
 use horizon_client::{
-    clock::FramePacer,
     hud::{HudBatch, rgba},
-    perf_overlay::LivePerfMetrics,
     replay::{
         RecordingState, ReplayError, ReplayFrame, ReplayHudAction, ReplayHudGesture,
         ReplayPlayback, ReplayRecorder, clear_all_replays, format_duration, storage_summary,
@@ -22,7 +21,7 @@ use winit::keyboard::KeyCode;
 pub(super) struct VoltBoostRuntime {
     pub active: VoltPlusBoostSettings,
     pub drs: DrsController,
-    pub pacer: FramePacer,
+    pub pacer: crate::clock::FramePacer,
     pub thermal_step: ThermalStep,
     pub last_temp_c: Option<f32>,
     pub last_battery_pct: Option<u8>,
@@ -45,7 +44,7 @@ impl Default for VoltBoostRuntime {
         Self {
             active: VoltPlusBoostSettings::default(),
             drs: DrsController::default(),
-            pacer: FramePacer::default(),
+            pacer: crate::clock::FramePacer::default(),
             thermal_step: ThermalStep::Normal,
             last_temp_c: None,
             last_battery_pct: None,
@@ -247,7 +246,7 @@ impl Game<'_> {
             }
             Err(err) => {
                 let msg = match err {
-                    ReplayError::Damaged(m) => format!("Damaged replay: {m}"),
+                    ReplayError::Corrupt(m) => format!("Damaged replay: {m}"),
                     other => format!("Cannot open replay: {other}"),
                 };
                 self.volt_rt.playback_error = Some(msg.clone());
@@ -325,16 +324,13 @@ impl Game<'_> {
         {
             let frame = ReplayFrame {
                 timestamp_ms: now_ms,
-                pos: [p.position.x, p.position.y, p.position.z],
+                player_pos: [p.position.x, p.position.y, p.position.z],
                 yaw: self.yaw,
                 pitch: self.pitch,
-                head_yaw: self.yaw,
-                velocity: [0.0; 3],
                 sneaking: self.keys.contains(&KeyCode::ShiftLeft),
                 sprinting: p.sprinting,
                 swimming: p.swimming,
                 swinging: false,
-                held_item: "minecraft:air".into(),
                 entities: Vec::new(),
                 block_events: Vec::new(),
                 hud: None,
@@ -380,8 +376,8 @@ impl Game<'_> {
     pub(super) fn effective_menu_blur(&self, raw_blur: Option<f32>) -> Option<f32> {
         match self.volt_rt.active.menu_backdrop {
             MenuBackdropMode::Full => raw_blur,
-            MenuBackdropMode::Blurred => raw_blur.map(|r| r.min(3.0)),
-            MenuBackdropMode::Static | MenuBackdropMode::Off => None,
+            MenuBackdropMode::Static => None,
+            MenuBackdropMode::Off => None,
         }
     }
 
@@ -399,8 +395,8 @@ impl Game<'_> {
                     self.volt_rt.recorder.start(
                         world_name,
                         self.remote.is_some(),
-                        self.options.player_name(),
-                        self.dim.id().to_string(),
+                        self.auth.profile.name.clone(),
+                        self.dim.id(),
                         vb.replay_length,
                         vb.replay_quality,
                         vb.replay_capture_hud,
@@ -710,7 +706,7 @@ impl Game<'_> {
             batch.fill(atlas, px, py, panel_w, 2.0, rgba(224, 48, 68, 255));
             let title = format!(
                 "REPLAY (Read-Only) · {} · {} · {}",
-                pb.clip.meta.world_name,
+                pb.clip.metadata.world_name,
                 pb.speed_label(),
                 if pb.free_camera { "Free Cam" } else { "Orbit" }
             );

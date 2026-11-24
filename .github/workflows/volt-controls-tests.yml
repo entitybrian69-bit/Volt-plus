@@ -26,7 +26,7 @@ jobs:
           cargo test -p horizon-client-render --lib volt_boost 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
           cargo test -p horizon-client-render --lib replay 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
           cargo test -p horizon-client-render --lib options_ui::tests 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
-          cargo check -p horizon-client --lib 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
+          cargo test -p horizon-client --lib volt_boost 2>&1 | tee -a "$RUNNER_TEMP/control-tests.log"
       - name: Summarize test errors
         if: failure()
         run: |

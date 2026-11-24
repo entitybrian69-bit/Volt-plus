@@ -6707,11 +6707,11 @@ impl Launcher {
                     || self.catalog.replay_delete_confirm.is_some()
                     || self.catalog.replay_clear_confirm
                 {
-                    ui.rounded(0.0, 0.0, ui.w, ui.h, 0.0, 0x9900_0000);
+                    ui.rounded(0.0, 0.0, ui.width, ui.height, 0.0, 0x9900_0000);
                     let mw = (content_w * 0.72).clamp(260.0, 420.0);
                     let mh = 152.0;
-                    let mx = (ui.w - mw) * 0.5;
-                    let my = (ui.h - mh) * 0.5;
+                    let mx = (ui.width - mw) * 0.5;
+                    let my = (ui.height - mh) * 0.5;
                     ui.rounded(mx, my, mw, mh, 16.0, my3_card_bg());
                     ui.border(mx, my, mw, mh, 16.0, my3_accent());
 
