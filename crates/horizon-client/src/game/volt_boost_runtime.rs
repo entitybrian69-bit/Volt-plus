@@ -2,6 +2,7 @@
 //! Auto-DRS, Thermal Guard, RAM Purge, floating Replay HUD, and the
 //! read-only Replay Playback Viewer.
 use super::{Game, Screen};
+use crate::perf_overlay::LivePerfMetrics;
 use horizon_client::{
     hud::{HudBatch, rgba},
     replay::{
@@ -20,6 +21,7 @@ use winit::keyboard::KeyCode;
 pub(super) struct VoltBoostRuntime {
     pub active: VoltPlusBoostSettings,
     pub drs: DrsController,
+    pub pacer: crate::clock::FramePacer,
     pub thermal_step: ThermalStep,
     pub last_temp_c: Option<f32>,
     pub last_battery_pct: Option<u8>,
@@ -42,6 +44,7 @@ impl Default for VoltBoostRuntime {
         Self {
             active: VoltPlusBoostSettings::default(),
             drs: DrsController::default(),
+            pacer: crate::clock::FramePacer::default(),
             thermal_step: ThermalStep::Normal,
             last_temp_c: None,
             last_battery_pct: None,
@@ -170,7 +173,7 @@ impl Game<'_> {
                 self.level.name.clone()
             };
             let is_mp = self.remote.is_some();
-            let player_name = self.auth.profile.name.clone();
+            let player_name = self.options.player_name();
             let dim = self.dim.id().to_string();
             self.volt_rt.recorder.start(
                 world_name,
@@ -324,7 +327,7 @@ impl Game<'_> {
                 player_pos: [p.position.x, p.position.y, p.position.z],
                 yaw: self.yaw,
                 pitch: self.pitch,
-                sneaking: p.crouching,
+                sneaking: self.keys.contains(&KeyCode::ShiftLeft),
                 sprinting: p.sprinting,
                 swimming: p.swimming,
                 swinging: false,

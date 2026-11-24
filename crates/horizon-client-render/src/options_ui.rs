@@ -3157,8 +3157,8 @@ impl OptionsUi {
                     // Vanilla's Telemetry Data and Credits slots: Horizon's
                     // settings and its mods, as a mod adds its button here.
                     // Credits & Attribution (WinScreen's credits) follows them.
-                    ("horizon.pages.open.horizon_settings", Some(Page::Horizon)),
                     ("horizon.pages.open.volt_plus_boost", Some(Page::VoltPlusBoost)),
+                    ("horizon.pages.open.horizon_settings", Some(Page::Horizon)),
                     ("horizon.pages.open.mods", Some(Page::Mods)),
                     ("options.credits_and_attribution", Some(Page::Credits)),
                 ];
@@ -6999,7 +6999,7 @@ mod tests {
         let mut ui = OptionsUi::default();
         ui.show(Page::Video);
         let size = (480.0, 320.0);
-        ui.settings_search.set_value("render distance");
+        ui.settings_search.set_value(&lang::get(Opt::RenderDistance.caption()));
         assert!(
             ui.volt_video
                 .test_row_rect(

@@ -1482,6 +1482,9 @@ impl VoltVideoUi {
                 let track_w = (ctrl.w - 12.0).max(16.0);
                 let v = ((pos.0 - track_x) / track_w).clamp(0.0, 1.0);
                 item.set_slider(s, v);
+                if item == Item::Vanilla(Opt::Preset) {
+                    apply_preset(s);
+                }
                 if let Some((_, sv)) = self.slider_anim.iter_mut().find(|(k, _)| *k == item) {
                     *sv = item.slider(s).unwrap_or(v);
                 }
@@ -1583,6 +1586,9 @@ impl VoltVideoUi {
                         let track_w = (ctrl.w - 12.0).max(16.0);
                         let v = ((pos.0 - track_x) / track_w).clamp(0.0, 1.0);
                         entry.item.set_slider(s, v);
+                        if entry.item == Item::Vanilla(Opt::Preset) {
+                            apply_preset(s);
+                        }
                         self.dragging = Some(entry.item);
                         actions.push(VoltAction::SliderDrag);
                     } else {
