@@ -52,6 +52,10 @@ pub struct TouchUi {
     pub gyro_sensitivity_dragging: bool,
     /// The global button scale slider of the Buttons tab is being dragged.
     pub button_scale_dragging: bool,
+    /// The overlay-button size slider of the Overlay tab is being dragged.
+    pub overlay_scale_dragging: bool,
+    /// The overlay-button opacity slider of the Overlay tab is being dragged.
+    pub overlay_opacity_dragging: bool,
     /// Step state for the Floating Menu "Send Custom Input" picker modal.
     pub custom_input_picker: crate::touch::PickerStep,
     /// Horizontal scroll offset for the Floating Menu custom keyboard picker.
@@ -105,6 +109,8 @@ impl Default for TouchUi {
             resolution_scale_dragging: false,
             gyro_sensitivity_dragging: false,
             button_scale_dragging: false,
+            overlay_scale_dragging: false,
+            overlay_opacity_dragging: false,
             custom_input_picker: crate::touch::PickerStep::None,
             custom_kb_scroll_x: 0.0,
             custom_kb_drag: None,
@@ -169,6 +175,11 @@ pub enum InGameMenuAction {
     StepGyroSensitivity(i32),
     SetButtonScale(f32),
     StepButtonScale(i32),
+    SetOverlayScale(f32),
+    SetOverlayOpacity(f32),
+    ToggleOverlayHidden,
+    ToggleOverlayHideInMenus,
+    ToggleOverlayShowInGameplay,
     TriggerKey(KeyCode),
     OpenKeyboard,
     /// Kill the game process now (no save, no shutdown sequence).
@@ -892,12 +903,18 @@ impl TouchUi {
         }
     }
     pub fn action(&self, w: f32, h: f32, p: [f32; 2], menu: bool) -> Option<Action> {
+        if menu && self.virtual_mouse && !self.pointer_off {
+            let [px, py, pw, ph] = pri_button_rect(w, h);
+            if (px..px + pw).contains(&p[0]) && (py..py + ph).contains(&p[1]) {
+                return Some(Action::MouseButton(false));
+            }
+        }
         if !self.goy_mode {
-            if menu && self.virtual_mouse {
-                for ([x, y, width, height], right) in mouse_button_rects(w, h) {
-                    if (x..x + width).contains(&p[0]) && (y..y + height).contains(&p[1]) {
-                        return Some(Action::MouseButton(right));
-                    }
+            if menu && self.virtual_mouse && !self.pointer_off {
+                let [_, rmb] = mouse_button_rects(w, h);
+                let [x, y, width, height] = rmb.0;
+                if (x..x + width).contains(&p[0]) && (y..y + height).contains(&p[1]) {
+                    return Some(Action::MouseButton(true));
                 }
             }
             if menu && (3.0..23.0).contains(&p[1]) && (w - 53.0..w - 3.0).contains(&p[0]) {
@@ -936,11 +953,14 @@ impl TouchUi {
     }
     pub fn draw(&self, b: &mut HudBatch, a: &HudAtlas, menu: bool) {
         let touch_active = crate::android_runtime::active_input() == crate::android_gamepad::InputMode::Touch;
-        if menu && !self.goy_mode && touch_active && crate::touch::current_hud_opacity_scale() > 0.01 {
+        let hud_vis = crate::touch::current_hud_opacity_scale() > 0.01;
+        if menu && hud_vis && self.virtual_mouse && !self.pointer_off {
+            draw_pri_button(b, a, pri_button_rect(b.width, b.height));
+        }
+        if menu && !self.goy_mode && touch_active && hud_vis {
             button(b, a, "Back", b.width - 53.0, 3.0, 50.0);
-            if self.virtual_mouse {
-                let [lmb, rmb] = mouse_button_rects(b.width, b.height);
-                button(b, a, "LMB", lmb.0[0], lmb.0[1], lmb.0[2]);
+            if self.virtual_mouse && !self.pointer_off {
+                let [_, rmb] = mouse_button_rects(b.width, b.height);
                 button(b, a, "RMB", rmb.0[0], rmb.0[1], rmb.0[2]);
             }
         }
@@ -1010,6 +1030,22 @@ impl TouchUi {
             ui.finish();
         }
     }
+}
+pub fn pri_button_rect(w: f32, _h: f32) -> [f32; 4] {
+    let bw = 48.0;
+    let bh = 28.0;
+    let bx = (w - 196.0).max(w * 0.64).min((w - bw - 8.0).max(4.0));
+    [bx, 4.0, bw, bh]
+}
+fn draw_pri_button(b: &mut HudBatch, a: &HudAtlas, rect: [f32; 4]) {
+    let [x, y, w, h] = rect;
+    if !crate::touch::theme_button(b, a, "button", rect, false, u32::MAX, true) {
+        b.fill(a, x, y, w, h, rgba(20, 22, 30, 215));
+    }
+    let tw = HudBatch::text_width(a, "pri");
+    let tx = x + ((w - tw) * 0.5).max(4.0);
+    let ty = y + ((h - 8.0) * 0.5).max(4.0);
+    b.text(a, "pri", tx, ty, rgba(248, 248, 252, 255), true);
 }
 fn button(b: &mut HudBatch, a: &HudAtlas, label: &str, x: f32, y: f32, w: f32) {
     if !crate::touch::theme_button(b, a, "button", [x, y, w, 20.0], false, u32::MAX, true) {
@@ -1769,7 +1805,7 @@ fn hub_metrics(w: f32, h: f32) -> (f32, f32, f32, f32, f32, f32, f32, f32, f32) 
 
 struct HubSidebarRects {
     quick_studio: [f32; 4],
-    tabs: [[f32; 4]; 6],
+    tabs: [[f32; 4]; 7],
     done_btn: [f32; 4],
     close_x: [f32; 4],
     mode_badge: [f32; 4],
@@ -1784,8 +1820,8 @@ fn hub_sidebar_rects(dx: f32, dy: f32, dw: f32, dh: f32, side_w: f32) -> HubSide
     let tabs_top = quick_studio[1] + quick_studio[3] + 8.0;
     let tabs_avail = (done_y - 8.0 - tabs_top).max(120.0);
     let gap = 4.0;
-    let tab_h = ((tabs_avail - gap * 5.0) / 6.0).clamp(18.0, 30.0);
-    let mut tabs = [[0.0f32; 4]; 6];
+    let tab_h = ((tabs_avail - gap * 6.0) / 7.0).clamp(16.0, 27.0);
+    let mut tabs = [[0.0f32; 4]; 7];
     for (i, slot) in tabs.iter_mut().enumerate() {
         *slot = [
             dx + pad,
@@ -1806,7 +1842,45 @@ fn hub_sidebar_rects(dx: f32, dy: f32, dw: f32, dh: f32, side_w: f32) -> HubSide
     }
 }
 
+pub fn floating_button_rect(w: f32, h: f32, settings: &crate::touch::Settings) -> [f32; 4] {
+    let scale = if settings.overlay_scale.is_finite() {
+        settings.overlay_scale.clamp(0.5, 2.0)
+    } else {
+        1.0
+    };
+    let (base_w, base_h) = if settings.control_style == crate::touch::ControlStyle::Mcpe {
+        (44.0, 36.0)
+    } else {
+        (48.0, 42.0)
+    };
+    let btn_w = (base_w * scale).clamp(22.0, (w - 8.0).max(22.0));
+    let btn_h = (base_h * scale).clamp(18.0, (h - 8.0).max(18.0));
+    let max_x = (w - btn_w - 4.0).max(4.0);
+    let max_y = (h - btn_h - 4.0).max(4.0);
+    let btn_x = (settings.floating_menu_pos[0] * w).clamp(4.0, max_x);
+    let btn_y = (settings.floating_menu_pos[1] * h).clamp(4.0, max_y);
+    [btn_x, btn_y, btn_w, btn_h]
+}
+
 impl TouchUi {
+    pub fn overlay_button_visible(
+        &self,
+        settings: &crate::touch::Settings,
+        in_menu: bool,
+        hiding_controls: bool,
+    ) -> bool {
+        if self.floating_menu {
+            return true;
+        }
+        if settings.overlay_hidden {
+            return false;
+        }
+        if in_menu {
+            !settings.overlay_hide_in_menus
+        } else {
+            settings.overlay_show_in_gameplay || hiding_controls
+        }
+    }
     fn step_animations(&self) -> (f32, f32) {
         let open_target = if self.floating_menu { 1.0 } else { 0.0 };
         if crate::ui_theme::motion::game_animations_disabled()
@@ -1865,16 +1939,10 @@ impl TouchUi {
             p[0] >= r[0] && p[0] <= r[0] + r[2] && p[1] >= r[1] && p[1] <= r[1] + r[3]
         };
 
-        let (btn_w, btn_h) = if settings.control_style == ControlStyle::Mcpe {
-            (44.0, 36.0)
-        } else {
-            (48.0, 42.0)
-        };
+        let btn_rect = floating_button_rect(w, h, settings);
+        let [btn_x, btn_y, btn_w, btn_h] = btn_rect;
         let max_btn_x = (w - btn_w - 4.0).max(4.0);
         let max_btn_y = (h - btn_h - 4.0).max(4.0);
-        let btn_x = (settings.floating_menu_pos[0] * w).clamp(4.0, max_btn_x);
-        let btn_y = (settings.floating_menu_pos[1] * h).clamp(4.0, max_btn_y);
-        let btn_rect = [btn_x, btn_y, btn_w, btn_h];
 
         if let Some((drag_id, offset, mut moved)) = self.floating_drag {
             if drag_id == id {
@@ -1916,6 +1984,8 @@ impl TouchUi {
                                 self.mouse_speed_dragging = false;
                                 self.gyro_sensitivity_dragging = false;
                                 self.button_scale_dragging = false;
+                                self.overlay_scale_dragging = false;
+                                self.overlay_opacity_dragging = false;
                                 self.hub_scroll_drag = None;
                             }
                         }
@@ -2036,6 +2106,38 @@ impl TouchUi {
                 }
                 TouchPhase::Ended | TouchPhase::Cancelled => {
                     self.button_scale_dragging = false;
+                    return Some(InGameMenuAction::Close);
+                }
+                _ => {}
+            }
+        }
+
+        // Handle ongoing overlay size/opacity slider drags on Tab 6 (Overlay Menu)
+        if self.overlay_scale_dragging {
+            match phase {
+                TouchPhase::Moved => {
+                    let sl_x = cx + 14.0;
+                    let sl_w = (cw - 28.0).max(40.0);
+                    let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
+                    return Some(InGameMenuAction::SetOverlayScale(0.50 + t * 1.50));
+                }
+                TouchPhase::Ended | TouchPhase::Cancelled => {
+                    self.overlay_scale_dragging = false;
+                    return Some(InGameMenuAction::Close);
+                }
+                _ => {}
+            }
+        }
+        if self.overlay_opacity_dragging {
+            match phase {
+                TouchPhase::Moved => {
+                    let sl_x = cx + 14.0;
+                    let sl_w = (cw - 28.0).max(40.0);
+                    let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
+                    return Some(InGameMenuAction::SetOverlayOpacity(0.05 + t * 0.95));
+                }
+                TouchPhase::Ended | TouchPhase::Cancelled => {
+                    self.overlay_opacity_dragging = false;
                     return Some(InGameMenuAction::Close);
                 }
                 _ => {}
@@ -2407,6 +2509,8 @@ impl TouchUi {
                 self.mouse_speed_dragging = false;
                 self.gyro_sensitivity_dragging = false;
                 self.button_scale_dragging = false;
+                self.overlay_scale_dragging = false;
+                self.overlay_opacity_dragging = false;
                 self.custom_input_picker = crate::touch::PickerStep::None;
                 self.custom_kb_drag = None;
                 self.hub_scroll_drag = None;
@@ -2537,6 +2641,25 @@ impl TouchUi {
                     let sl_w = (cw - 28.0).max(40.0);
                     let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
                     return Some(InGameMenuAction::SetButtonScale(0.50 + t * 1.50));
+                }
+            }
+
+            // Check if touch started on the Overlay Size or Opacity slider tracks in Tab 6 (Overlay)
+            if self.hub_tab == 6 && inside(content_pane) {
+                let body_y = body_top - self.hub_scroll;
+                if inside([cx, body_y + 18.0, cw, 50.0]) {
+                    self.overlay_scale_dragging = true;
+                    let sl_x = cx + 14.0;
+                    let sl_w = (cw - 28.0).max(40.0);
+                    let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
+                    return Some(InGameMenuAction::SetOverlayScale(0.50 + t * 1.50));
+                }
+                if inside([cx, body_y + 76.0, cw, 50.0]) {
+                    self.overlay_opacity_dragging = true;
+                    let sl_x = cx + 14.0;
+                    let sl_w = (cw - 28.0).max(40.0);
+                    let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
+                    return Some(InGameMenuAction::SetOverlayOpacity(0.05 + t * 0.95));
                 }
             }
 
@@ -2783,7 +2906,7 @@ impl TouchUi {
                     return Some(InGameMenuAction::OpenLogs);
                 }
             }
-            _ => {
+            5 => {
                 // Tab 5: Record — resolution, frame rate, audio, controls and the list.
                 let cells = record_cells(cx, cw, body_y);
                 if inside(cells.start) {
@@ -2821,6 +2944,32 @@ impl TouchUi {
                     }
                 }
             }
+            _ => {
+                // Tab 6: Overlay Menu — size, opacity & visibility rules for the V+ button.
+                if inside([cx, body_y + 18.0, cw, 50.0]) {
+                    let sl_x = cx + 14.0;
+                    let sl_w = (cw - 28.0).max(40.0);
+                    let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
+                    return Some(InGameMenuAction::SetOverlayScale(0.50 + t * 1.50));
+                }
+                if inside([cx, body_y + 76.0, cw, 50.0]) {
+                    let sl_x = cx + 14.0;
+                    let sl_w = (cw - 28.0).max(40.0);
+                    let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
+                    return Some(InGameMenuAction::SetOverlayOpacity(0.05 + t * 0.95));
+                }
+                let row_h = 46.0;
+                let step = 54.0;
+                if inside([cx, body_y + 134.0, cw, row_h]) {
+                    return Some(InGameMenuAction::ToggleOverlayHidden);
+                }
+                if inside([cx, body_y + 134.0 + step, cw, row_h]) {
+                    return Some(InGameMenuAction::ToggleOverlayHideInMenus);
+                }
+                if inside([cx, body_y + 134.0 + step * 2.0, cw, row_h]) {
+                    return Some(InGameMenuAction::ToggleOverlayShowInGameplay);
+                }
+            }
         }
 
         Some(InGameMenuAction::Close)
@@ -2838,7 +2987,7 @@ impl TouchUi {
         use crate::touch::ControlStyle;
         use crate::ui_theme::{Face, Icon, Ui, color};
         let hud_scale = crate::touch::current_hud_opacity_scale();
-        if hud_scale <= 0.001 && !self.floating_menu {
+        if !self.floating_menu && (settings.overlay_hidden || hud_scale <= 0.001) {
             return;
         }
         let mut ui = Ui::mobile(a, b, (0.0, 0.0));
@@ -2865,27 +3014,25 @@ impl TouchUi {
         let danger_c = rgba(242, 108, 120, 255);
         let _ = color::hex;
 
-        // A raw recording hides the HUD, but the floating button stays: it is the way
-        // back to the overlay that stops the capture.
-        let bubble_alpha = if self.floating_menu || recorder::hiding_controls() {
-            1.0
+        // A raw recording hides the HUD, but the floating button stays unless explicitly hidden.
+        let overlay_alpha = settings.overlay_opacity.clamp(0.05, 1.0);
+        let bubble_alpha = if settings.overlay_hidden {
+            0.0
+        } else if self.floating_menu || recorder::hiding_controls() {
+            overlay_alpha
         } else {
-            hud_scale.clamp(0.0, 1.0)
+            (hud_scale.clamp(0.0, 1.0) * overlay_alpha).clamp(0.0, 1.0)
         };
 
-        // Draw moveable Floating Menu Button (MCPE 42x42dp stone-bevel H button OR GoyControl 48x42dp '=' pill)
+        // Draw moveable Floating Menu Button (MCPE stone-bevel V+ button OR GoyControl V+ pill)
         if !self.expanded && bubble_alpha > 0.001 {
+            let [btn_x, btn_y, btn_w, btn_h] = floating_button_rect(w, h, settings);
+            let ov_scale = settings.overlay_scale.clamp(0.5, 2.0);
             if settings.control_style == ControlStyle::Mcpe {
-                let btn_w = 44.0;
-                let btn_h = 36.0;
-                let btn_x =
-                    (settings.floating_menu_pos[0] * w).clamp(4.0, (w - btn_w - 4.0).max(4.0));
-                let btn_y =
-                    (settings.floating_menu_pos[1] * h).clamp(4.0, (h - btn_h - 4.0).max(4.0));
                 let scale_rgba = |r: u8, g: u8, bl: u8, al: u8| -> u32 {
                     rgba(r, g, bl, (f32::from(al) * bubble_alpha).round() as u8)
                 };
-                // Authentic MCPE top-bar '...' button plate (stone-slate 3D bevel, draggable & screen-clamped)
+                // Authentic MCPE top-bar V+ button plate (stone-slate 3D bevel, draggable & screen-clamped)
                 ui.rounded(
                     btn_x + 1.5,
                     btn_y + 2.0,
@@ -2917,33 +3064,30 @@ impl TouchUi {
                 // Crisp MCPE stone-bevel "V+" button with classic 1px drop shadow
                 let v_fg = scale_rgba(248, 249, 252, 250);
                 let v_sh = scale_rgba(24, 26, 32, 220);
+                let font_sz = (15.0 * ov_scale).clamp(9.0, 26.0);
                 ui.centered_fit(
                     Face::SemiBold,
-                    15.0,
+                    font_sz,
                     [btn_x + 1.0, btn_y + 1.0, btn_w, btn_h],
                     v_sh,
                     "V+",
                 );
                 ui.centered_fit(
                     Face::SemiBold,
-                    15.0,
+                    font_sz,
                     [btn_x, btn_y, btn_w, btn_h],
                     v_fg,
                     "V+",
                 );
             } else {
-                let btn_w = 48.0;
-                let btn_h = 42.0;
-                let btn_x =
-                    (settings.floating_menu_pos[0] * w).clamp(6.0, (w - btn_w - 6.0).max(6.0));
-                let btn_y =
-                    (settings.floating_menu_pos[1] * h).clamp(4.0, (h - btn_h - 4.0).max(4.0));
+                let rad = (14.0 * ov_scale).clamp(8.0, 24.0);
+                let font_sz = (16.0 * ov_scale).clamp(9.0, 28.0);
                 ui.rounded(
                     btn_x + 1.5,
                     btn_y + 3.0,
                     btn_w,
                     btn_h,
-                    14.0,
+                    rad,
                     rgba(0, 0, 0, (135.0 * bubble_alpha).round() as u8),
                 );
                 ui.rounded(
@@ -2951,7 +3095,7 @@ impl TouchUi {
                     btn_y,
                     btn_w,
                     btn_h,
-                    14.0,
+                    rad,
                     color::with_alpha(
                         if self.floating_menu { accent } else { card_bg },
                         bubble_alpha,
@@ -2962,7 +3106,7 @@ impl TouchUi {
                     btn_y,
                     btn_w,
                     btn_h,
-                    14.0,
+                    rad,
                     1.6,
                     color::with_alpha(
                         if self.floating_menu { text_c } else { accent },
@@ -2972,7 +3116,7 @@ impl TouchUi {
                 // Branded Volt+ "V+" floating trigger
                 ui.centered_fit(
                     Face::SemiBold,
-                    16.0,
+                    font_sz,
                     [btn_x, btn_y, btn_w, btn_h],
                     color::with_alpha(
                         if self.floating_menu {
@@ -3034,14 +3178,15 @@ impl TouchUi {
             "Customize HUD",
         );
 
-        // 6 Category Tabs in Sidebar (Volt Graphics rounded plates + crisp active outline)
-        let tabs: [(Icon, &str); 6] = [
+        // 7 Category Tabs in Sidebar (Volt Graphics rounded plates + crisp active outline)
+        let tabs: [(Icon, &str); 7] = [
             (Icon::HorizonLogo, "Recommended"),
             (Icon::Gamepad, "Controls"),
             (Icon::Crosshair, "Aiming"),
             (Icon::MicrosoftGrid, "Buttons"),
             (Icon::Flask, "Advanced"),
             (Icon::Monitor, "Record"),
+            (Icon::Settings, "Overlay"),
         ];
         for (ti, (ic, lbl)) in tabs.iter().enumerate() {
             let active = self.hub_tab == ti as u8;
@@ -3117,7 +3262,8 @@ impl TouchUi {
             2 => 410.0,
             3 => 242.0,
             4 => 340.0,
-            _ => 488.0,
+            5 => 488.0,
+            _ => 310.0,
         };
         let max_scroll = (content_height - body_h).max(0.0);
         self.hub_max_scroll.set(max_scroll);
@@ -4105,7 +4251,7 @@ impl TouchUi {
                     "Open Logs",
                 );
             }
-            _ => {
+            5 => {
                 // Tab 5: Record — the screen recorder, its options and the last recordings.
                 let status = recorder::status();
                 let settings_rec = recorder::settings();
@@ -4349,6 +4495,131 @@ impl TouchUi {
                         &meta,
                     );
                 }
+            }
+            _ => {
+                // Tab 6: Overlay Menu — size, opacity & visibility rules for the V+ button.
+                ui.text(
+                    Face::SemiBold,
+                    10.2,
+                    cx,
+                    body_y,
+                    muted_c,
+                    "OVERLAY MENU (V+ BUTTON)",
+                );
+                let sz_y = body_y + 18.0;
+                ui.rounded(cx, sz_y, cw, 50.0, 11.0, card_bg);
+                ui.border(cx, sz_y, cw, 50.0, 11.0, border_c);
+                ui.text(
+                    Face::SemiBold,
+                    10.8,
+                    cx + 14.0,
+                    sz_y + 6.0,
+                    text_c,
+                    "Overlay Button Size",
+                );
+                let ov_sz_pct = format!("{:.0}%", settings.overlay_scale.clamp(0.5, 2.0) * 100.0);
+                let pill_w = 48.0;
+                ui.rounded(
+                    cx + cw - pill_w - 12.0,
+                    sz_y + 6.0,
+                    pill_w,
+                    18.0,
+                    6.0,
+                    card_sel,
+                );
+                ui.border(
+                    cx + cw - pill_w - 12.0,
+                    sz_y + 6.0,
+                    pill_w,
+                    18.0,
+                    6.0,
+                    accent,
+                );
+                ui.centered_fit(
+                    Face::SemiBold,
+                    9.4,
+                    [cx + cw - pill_w - 12.0, sz_y + 6.0, pill_w, 18.0],
+                    accent_hi,
+                    &ov_sz_pct,
+                );
+                let sl_x = cx + 14.0;
+                let sl_w = (cw - 28.0).max(40.0);
+                let sz_sl_y = sz_y + 33.0;
+                let sz_frac = ((settings.overlay_scale - 0.50) / 1.50).clamp(0.0, 1.0);
+                ui.rounded(sl_x, sz_sl_y, sl_w, 6.0, 3.0, sidebar_bg);
+                ui.rounded(sl_x, sz_sl_y, (sl_w * sz_frac).max(6.0), 6.0, 3.0, accent);
+                let sz_thumb = sl_x + sl_w * sz_frac;
+                ui.rounded(sz_thumb - 7.0, sz_sl_y - 4.0, 14.0, 14.0, 7.0, accent_hi);
+                ui.border(sz_thumb - 7.0, sz_sl_y - 4.0, 14.0, 14.0, 7.0, text_c);
+
+                let op_y = body_y + 76.0;
+                ui.rounded(cx, op_y, cw, 50.0, 11.0, card_bg);
+                ui.border(cx, op_y, cw, 50.0, 11.0, border_c);
+                ui.text(
+                    Face::SemiBold,
+                    10.8,
+                    cx + 14.0,
+                    op_y + 6.0,
+                    text_c,
+                    "Overlay Button Opacity",
+                );
+                let ov_op_pct = format!("{:.0}%", settings.overlay_opacity.clamp(0.05, 1.0) * 100.0);
+                ui.rounded(
+                    cx + cw - pill_w - 12.0,
+                    op_y + 6.0,
+                    pill_w,
+                    18.0,
+                    6.0,
+                    card_sel,
+                );
+                ui.border(
+                    cx + cw - pill_w - 12.0,
+                    op_y + 6.0,
+                    pill_w,
+                    18.0,
+                    6.0,
+                    accent,
+                );
+                ui.centered_fit(
+                    Face::SemiBold,
+                    9.4,
+                    [cx + cw - pill_w - 12.0, op_y + 6.0, pill_w, 18.0],
+                    accent_hi,
+                    &ov_op_pct,
+                );
+                let op_sl_y = op_y + 33.0;
+                let op_frac = ((settings.overlay_opacity - 0.05) / 0.95).clamp(0.0, 1.0);
+                ui.rounded(sl_x, op_sl_y, sl_w, 6.0, 3.0, sidebar_bg);
+                ui.rounded(sl_x, op_sl_y, (sl_w * op_frac).max(6.0), 6.0, 3.0, accent);
+                let op_thumb = sl_x + sl_w * op_frac;
+                ui.rounded(op_thumb - 7.0, op_sl_y - 4.0, 14.0, 14.0, 7.0, accent_hi);
+                ui.border(op_thumb - 7.0, op_sl_y - 4.0, 14.0, 14.0, 7.0, text_c);
+
+                let step = 54.0;
+                draw_toggle_row(
+                    &mut ui,
+                    body_y + 134.0,
+                    "Hide V+ Button Completely",
+                    "Hide the V+ trigger everywhere (re-enable in Launcher Settings > Controls)",
+                    Some(settings.overlay_hidden),
+                    None,
+                );
+                draw_toggle_row(
+                    &mut ui,
+                    body_y + 134.0 + step,
+                    "Hide Only in Menus",
+                    "Hide the V+ button while inventory, title or pause menus are open",
+                    Some(settings.overlay_hide_in_menus),
+                    None,
+                );
+                draw_toggle_row(
+                    &mut ui,
+                    body_y + 134.0 + step * 2.0,
+                    "Show in Raw Gameplay",
+                    "Keep the V+ button visible during normal 3D gameplay as well",
+                    Some(settings.overlay_show_in_gameplay),
+                    None,
+                );
             }
         }
 

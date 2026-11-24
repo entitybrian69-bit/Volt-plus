@@ -526,9 +526,16 @@ impl Game<'_> {
                 let _ = self.android_custom_mouse(button, false);
             }
             self.pad.touch_ui.virtual_mouse = false;
+            if self.captured && crate::keyboard_mouse_input() && !self.os_mouse_captured {
+                self.os_mouse_captured = crate::platform::capture_mouse(true);
+            }
             return;
         }
         self.pad.touch_ui.virtual_mouse = true;
+        if self.os_mouse_captured {
+            self.os_mouse_captured = false;
+            let _ = crate::platform::capture_mouse(false);
+        }
         if let Some(b) = self.gui_scale() {
             self.pad
                 .touch_ui
@@ -733,8 +740,11 @@ impl Game<'_> {
             self.pad.touch.ignore(t.id);
             return Ok(true);
         }
-        if (self.pad_in_menu() || horizon_client::recorder::hiding_controls())
-            && !self.pad.touch_ui.owns_relative(t.id)
+        if self.pad.touch_ui.overlay_button_visible(
+            &self.pad.touch.settings,
+            self.pad_in_menu(),
+            horizon_client::recorder::hiding_controls(),
+        ) && !self.pad.touch_ui.owns_relative(t.id)
             && !self.pad.touch_ui.owns_gesture(t.id)
             && let Some(menu_act) = self.pad.touch_ui.floating_menu_touch(
                 &mut b,
@@ -1081,6 +1091,37 @@ impl Game<'_> {
                     horizon_client::recorder::update_settings(|s| {
                         s.record_controls = !s.record_controls
                     });
+                }
+                InGameMenuAction::SetOverlayScale(scale) => {
+                    self.pad.touch.settings.overlay_scale = scale.clamp(0.5, 2.0);
+                    let _ = self.pad.touch.settings.save();
+                    self.settings.touch = self.pad.touch.settings.clone();
+                }
+                InGameMenuAction::SetOverlayOpacity(opacity) => {
+                    self.pad.touch.settings.overlay_opacity = opacity.clamp(0.05, 1.0);
+                    let _ = self.pad.touch.settings.save();
+                    self.settings.touch = self.pad.touch.settings.clone();
+                }
+                InGameMenuAction::ToggleOverlayHidden => {
+                    let next = !self.pad.touch.settings.overlay_hidden;
+                    self.pad.touch.settings.overlay_hidden = next;
+                    if next {
+                        self.pad.touch_ui.floating_menu = false;
+                    }
+                    let _ = self.pad.touch.settings.save();
+                    self.settings.touch = self.pad.touch.settings.clone();
+                }
+                InGameMenuAction::ToggleOverlayHideInMenus => {
+                    self.pad.touch.settings.overlay_hide_in_menus =
+                        !self.pad.touch.settings.overlay_hide_in_menus;
+                    let _ = self.pad.touch.settings.save();
+                    self.settings.touch = self.pad.touch.settings.clone();
+                }
+                InGameMenuAction::ToggleOverlayShowInGameplay => {
+                    self.pad.touch.settings.overlay_show_in_gameplay =
+                        !self.pad.touch.settings.overlay_show_in_gameplay;
+                    let _ = self.pad.touch.settings.save();
+                    self.settings.touch = self.pad.touch.settings.clone();
                 }
                 InGameMenuAction::RecorderStart => crate::screen_record::start(),
                 InGameMenuAction::RecorderStop => crate::screen_record::stop(),

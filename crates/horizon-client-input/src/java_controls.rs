@@ -157,6 +157,7 @@ pub fn pojav_code(code: i32) -> Option<ControlEvent> {
         -7 => ControlEvent::Token("mouse.scroll.up"),
         -8 => ControlEvent::Token("mouse.scroll.down"),
         -9 => ControlEvent::OpenMenu,
+        -10 => ControlEvent::ToggleKeyboard,
         _ => ControlEvent::Token(glfw_key(code)?),
     })
 }
@@ -165,6 +166,7 @@ pub fn pojav_code(code: i32) -> Option<ControlEvent> {
 /// Android-KeyEvent control layouts) to Horizon `key.keyboard.*` tokens.
 pub fn android_keycode(code: i32) -> Option<&'static str> {
     Some(match code {
+        4 => "key.keyboard.escape",
         7 => "key.keyboard.0",
         8 => "key.keyboard.1",
         9 => "key.keyboard.2",
@@ -287,6 +289,7 @@ pub fn pojav_code_android(code: i32) -> Option<ControlEvent> {
         -7 => ControlEvent::Token("mouse.scroll.up"),
         -8 => ControlEvent::Token("mouse.scroll.down"),
         -9 => ControlEvent::OpenMenu,
+        -10 => ControlEvent::ToggleKeyboard,
         _ => ControlEvent::Token(android_keycode(code)?),
     })
 }

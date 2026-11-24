@@ -11,6 +11,7 @@ public final class HorizonActivity extends android.app.NativeActivity {
     private static volatile int sCopyFilesDone = 0;
     private static volatile int sCopyFilesTotal = 0;
     private static volatile String sCopyCurrentFile = "";
+    private static volatile boolean sKeepScreenOn = false;
 
     private native void nativeDocumentResult(int request, int result, String uri);
     // Native methods are registered against the actual loaded game library.
@@ -77,6 +78,7 @@ public final class HorizonActivity extends android.app.NativeActivity {
         loadGame();
         super.onCreate(savedInstanceState);
         applyHighRefreshRate(this, 0);
+        hideOsPointer(this);
     }
 
     private void loadGame() {
@@ -206,13 +208,91 @@ public final class HorizonActivity extends android.app.NativeActivity {
     @Override protected void onResume() {
         super.onResume();
         applyHighRefreshRate(this, 0);
+        hideOsPointer(this);
     }
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
             applyHighRefreshRate(this, 0);
+            hideOsPointer(this);
         }
+    }
+
+    @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent ev) {
+        if (ev != null && (ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE)
+                || ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE_RELATIVE)
+                || ev.isFromSource(android.view.InputDevice.SOURCE_TOUCHPAD))) {
+            android.view.Window w = getWindow();
+            if (w != null) {
+                hidePointerTree(this, w.getDecorView());
+            }
+        }
+        return super.dispatchGenericMotionEvent(ev);
+    }
+
+    private static void setKeepScreenOnTree(android.view.View view, boolean enable) {
+        if (view == null) return;
+        view.setKeepScreenOn(enable);
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup vg = (android.view.ViewGroup) view;
+            for (int i = 0; i < vg.getChildCount(); i++) {
+                setKeepScreenOnTree(vg.getChildAt(i), enable);
+            }
+        }
+    }
+
+    private static void applyKeepScreenOn(android.view.Window window) {
+        if (window == null) return;
+        if (sKeepScreenOn) {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
+        setKeepScreenOnTree(window.getDecorView(), sKeepScreenOn);
+    }
+
+    public static void setKeepScreenOnFlag(final android.app.Activity activity, final boolean enable) {
+        sKeepScreenOn = enable;
+        if (activity == null) return;
+        activity.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try {
+                    applyKeepScreenOn(activity.getWindow());
+                } catch (Throwable ignored) {}
+            }
+        });
+    }
+
+    private static void hidePointerTree(android.content.Context ctx, android.view.View view) {
+        if (view == null || ctx == null || android.os.Build.VERSION.SDK_INT < 24) return;
+        try {
+            android.view.PointerIcon icon = android.view.PointerIcon.getSystemIcon(
+                    ctx, android.view.PointerIcon.TYPE_NULL);
+            if (icon != null) {
+                view.setPointerIcon(icon);
+                if (view instanceof android.view.ViewGroup) {
+                    android.view.ViewGroup vg = (android.view.ViewGroup) view;
+                    for (int i = 0; i < vg.getChildCount(); i++) {
+                        hidePointerTree(ctx, vg.getChildAt(i));
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    public static void hideOsPointer(final android.app.Activity activity) {
+        if (activity == null || android.os.Build.VERSION.SDK_INT < 24) return;
+        activity.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try {
+                    android.view.Window w = activity.getWindow();
+                    if (w != null) {
+                        hidePointerTree(activity, w.getDecorView());
+                    }
+                } catch (Throwable ignored) {}
+            }
+        });
     }
 
     public static void applyHighRefreshRate(final android.app.Activity activity, final int preferredHz) {
@@ -250,7 +330,13 @@ public final class HorizonActivity extends android.app.NativeActivity {
                         lp.preferredRefreshRate = (float) preferredHz;
                         targetRate = (float) preferredHz;
                     }
+                    if (sKeepScreenOn) {
+                        lp.flags |= android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+                    } else {
+                        lp.flags &= ~android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON;
+                    }
                     window.setAttributes(lp);
+                    applyKeepScreenOn(window);
 
                     if (android.os.Build.VERSION.SDK_INT >= 30) {
                         try {

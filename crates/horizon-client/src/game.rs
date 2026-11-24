@@ -15181,10 +15181,13 @@ impl Game<'_> {
                 self.pad
                     .touch_ui
                     .draw(&mut hud, &self.gui.atlas, self.pad_in_menu());
-                // The overlay button belongs to the menus: it is drawn on the title
-                // screen, the options, the pause menu and the dashboard, and it stays out
-                // of the way during play unless a raw recording has hidden the controls.
-                if self.pad_in_menu() || horizon_client::recorder::hiding_controls() {
+                // The overlay button belongs to the menus by default, and also responds to
+                // the Overlay Menu settings (hide completely, hide in menus, show in gameplay).
+                if self.pad.touch_ui.overlay_button_visible(
+                    &self.pad.touch.settings,
+                    self.pad_in_menu(),
+                    horizon_client::recorder::hiding_controls(),
+                ) {
                     self.pad.touch_ui.draw_floating_menu(
                         &mut hud,
                         &self.gui.atlas,
@@ -16335,8 +16338,34 @@ impl ApplicationHandler for Game<'_> {
                     return;
                 }
                 crate::touch_input(false);
+                self.android_sync_pointer();
                 if self.pad.touch_ui.virtual_mouse {
-                    self.android_sync_pointer();
+                    if self.os_mouse_captured {
+                        self.os_mouse_captured = false;
+                        let _ = crate::platform::capture_mouse(false);
+                    }
+                    if let Some(saved) = self.pad.physical_cursor.take() {
+                        self.cursor = saved;
+                    }
+                    if let Some(b) = self.gui_scale() {
+                        let sens = f64::from(
+                            self.pad
+                                .touch
+                                .settings
+                                .virtual_mouse_sensitivity
+                                .clamp(0.25, 4.0),
+                        );
+                        let nx = (f64::from(self.cursor.0) + x * sens / f64::from(b.scale))
+                            .clamp(0.0, f64::from((b.width - 1.0).max(0.0))) as f32;
+                        let ny = (f64::from(self.cursor.1) + y * sens / f64::from(b.scale))
+                            .clamp(0.0, f64::from((b.height - 1.0).max(0.0))) as f32;
+                        self.cursor = (nx, ny);
+                        self.pad.physical_cursor = Some(self.cursor);
+                        self.pad.touch_ui.cursor_initialized = true;
+                        self.pad.touch_ui.cancel_relative();
+                    }
+                    self.last_input = Instant::now();
+                    return;
                 }
                 if crate::keyboard_mouse_input() && self.captured && !self.os_mouse_captured {
                     self.os_mouse_captured = crate::platform::capture_mouse(true);
@@ -16469,10 +16498,13 @@ impl Game<'_> {
                 horizon_client::android_gamepad::InputMode::KeyboardMouse,
             );
             crate::touch_input(false);
+            self.android_sync_pointer();
             if self.pad.touch_ui.virtual_mouse {
-                self.android_sync_pointer();
-            }
-            if self.captured && !self.os_mouse_captured {
+                if self.os_mouse_captured {
+                    self.os_mouse_captured = false;
+                    let _ = crate::platform::capture_mouse(false);
+                }
+            } else if self.captured && !self.os_mouse_captured {
                 self.os_mouse_captured = crate::platform::capture_mouse(true);
             }
         }
@@ -17383,7 +17415,10 @@ impl Game<'_> {
                     let native_pointer = winit::platform::android::native_pointer_device(device_id);
                     #[cfg(target_os = "android")]
                     {
-                        if self.captured && self.screen == Screen::Playing {
+                        if self.captured
+                            && self.screen == Screen::Playing
+                            && !self.pad.touch_ui.virtual_mouse
+                        {
                             return Ok(());
                         }
                         if native_pointer {
@@ -17392,6 +17427,7 @@ impl Game<'_> {
                             ) {
                                 crate::touch_input(false);
                             }
+                            self.android_sync_pointer();
                         } else if !self.pad.touch_ui.virtual_mouse
                             && self.pad.physical_cursor.is_none()
                         {
@@ -17404,6 +17440,8 @@ impl Game<'_> {
                         #[cfg(target_os = "android")]
                         if native_pointer {
                             self.pad.physical_cursor = Some(self.cursor);
+                            self.pad.touch_ui.cursor_initialized = true;
+                            self.pad.touch_ui.cancel_relative();
                         }
                         if self.dialog_open() {
                             self.dialog_drag();

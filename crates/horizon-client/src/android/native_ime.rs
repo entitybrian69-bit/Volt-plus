@@ -266,6 +266,13 @@ impl Ui {
     }
     fn hide_system_pointer(&self, env: &mut JNIEnv<'_>) {
         let res = (|| -> jni::errors::Result<()> {
+            let _ = env.call_static_method(
+                "dev/horizon/android/HorizonActivity",
+                "hideOsPointer",
+                "(Landroid/app/Activity;)V",
+                &[JValue::Object(self.activity.as_obj())],
+            );
+            let _ = env.exception_clear();
             let icon = env
                 .call_static_method(
                     "android/view/PointerIcon",
@@ -281,6 +288,26 @@ impl Ui {
                     "(Landroid/view/PointerIcon;)V",
                     &[JValue::Object(&icon)],
                 )?;
+                let _ = env.call_method(
+                    self.edit.as_obj(),
+                    "setPointerIcon",
+                    "(Landroid/view/PointerIcon;)V",
+                    &[JValue::Object(&icon)],
+                );
+                if let Ok(window) = env
+                    .call_method(&self.activity, "getWindow", "()Landroid/view/Window;", &[])
+                    .and_then(|v| v.l())
+                    && let Ok(decor) = env
+                        .call_method(&window, "getDecorView", "()Landroid/view/View;", &[])
+                        .and_then(|v| v.l())
+                {
+                    let _ = env.call_method(
+                        &decor,
+                        "setPointerIcon",
+                        "(Landroid/view/PointerIcon;)V",
+                        &[JValue::Object(&icon)],
+                    );
+                }
             }
             Ok(())
         })();
@@ -295,6 +322,16 @@ impl Ui {
         keep_screen_on: bool,
     ) -> jni::errors::Result<()> {
         self.hide_system_pointer(env);
+        let _ = env.call_static_method(
+            "dev/horizon/android/HorizonActivity",
+            "setKeepScreenOnFlag",
+            "(Landroid/app/Activity;Z)V",
+            &[
+                JValue::Object(self.activity.as_obj()),
+                JValue::Bool(u8::from(keep_screen_on)),
+            ],
+        );
+        let _ = env.exception_clear();
         let window = env
             .call_method(&self.activity, "getWindow", "()Landroid/view/Window;", &[])?
             .l()?;
@@ -305,9 +342,21 @@ impl Ui {
             "(I)V",
             &[JValue::Int(FLAG_KEEP_SCREEN_ON)],
         )?;
+        let _ = env.call_method(
+            &self.native,
+            "setKeepScreenOn",
+            "(Z)V",
+            &[JValue::Bool(u8::from(keep_screen_on))],
+        );
         let decor = env
             .call_method(&window, "getDecorView", "()Landroid/view/View;", &[])?
             .l()?;
+        let _ = env.call_method(
+            &decor,
+            "setKeepScreenOn",
+            "(Z)V",
+            &[JValue::Bool(u8::from(keep_screen_on))],
+        );
         // Layout always occupies the native surface. Cutout avoidance is handled
         // by the shared rendering/input viewport, including Android 15+.
         let sdk = env

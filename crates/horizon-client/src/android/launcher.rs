@@ -729,6 +729,7 @@ impl Launcher {
             horizon_client::ui_theme::reset_atlas();
             self.game = Some(game);
             self.game.as_mut().unwrap().resumed(events);
+            self.configure_screen();
         } else {
             if !self.home.join("engine-data.zip").is_file() {
                 return Err(
@@ -845,12 +846,16 @@ impl ApplicationHandler for Launcher {
                 Ok(())
             }
             WindowEvent::CursorMoved { position, .. } => {
+                crate::touch_input(false);
                 self.focus = None;
                 self.pending_focus = None;
                 self.cursor = (position.x, position.y);
                 Ok(())
             }
-            WindowEvent::Touch(touch) => self.touch_event(events, touch),
+            WindowEvent::Touch(touch) => {
+                crate::touch_input(true);
+                self.touch_event(events, touch)
+            }
             WindowEvent::Focused(false) => {
                 crate::diagnostics::heartbeat("launcher_background", || serde_json::json!({}));
                 horizon_client::android_runtime::clear_gamepads();

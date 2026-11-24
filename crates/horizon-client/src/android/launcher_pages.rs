@@ -425,6 +425,7 @@ pub(super) enum Action {
     ToggleGyro,
     GyroSensDelta(f32),
     ToggleVirtualMouseEnabled,
+    ToggleOverlayButton,
     PointerSizeDelta(f32),
     CycleJoystickZone,
     ToggleTouchVibrate,
@@ -2365,7 +2366,19 @@ impl Launcher {
             self.targets.clear();
             self.list_targets.clear();
         }
+        let pointer_density = ui.density;
         ui.finish();
+        if crate::keyboard_mouse_input() {
+            horizon_client::touch_ui::draw_pointer(
+                &mut b,
+                &gui.atlas,
+                (
+                    self.cursor.0 as f32 / pointer_density,
+                    self.cursor.1 as f32 / pointer_density,
+                ),
+                1.0,
+            );
+        }
 
         let rendered = r.render(&game::loading_frame(&b));
         self.recycle_wallpaper_buffer(&mut b);
@@ -6069,6 +6082,14 @@ impl Launcher {
                         ),
                     ),
                     (
+                        "Show V+ Overlay Button",
+                        "Display the floating V+ Control Hub button (can also be customized in-game)",
+                        SettingControl::Toggle(
+                            !touch_cfg.overlay_hidden,
+                            Action::ToggleOverlayButton,
+                        ),
+                    ),
+                    (
                         "Virtual Cursor Scale",
                         "Adjust size of the Windows 11 virtual mouse arrow in menus",
                         SettingControl::Slider {
@@ -7163,6 +7184,11 @@ impl Launcher {
             Some(Action::ToggleVirtualMouseEnabled) => {
                 self.modify_touch_settings(|t| {
                     t.virtual_mouse_enabled = !t.virtual_mouse_enabled;
+                });
+            }
+            Some(Action::ToggleOverlayButton) => {
+                self.modify_touch_settings(|t| {
+                    t.overlay_hidden = !t.overlay_hidden;
                 });
             }
             Some(Action::PointerSizeDelta(delta)) => {

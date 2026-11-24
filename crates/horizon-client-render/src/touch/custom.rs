@@ -343,11 +343,16 @@ impl TouchControls {
         handled
     }
     pub fn fit_placement(&self, mut p: Placement) -> Placement {
+        let eff_aspect = if p.ref_aspect.is_finite() && p.ref_aspect > 0.1 {
+            p.ref_aspect
+        } else {
+            self.aspect()
+        };
         p.size = (p.size * self.settings.button_scale)
-            .min(self.aspect())
+            .min(eff_aspect)
             .min(1.0);
         let half = [
-            ((p.size * p.width_ratio) / self.aspect() / 2.0).min(0.5),
+            ((p.size * p.width_ratio) / eff_aspect / 2.0).min(0.5),
             ((p.size * p.height_ratio) / 2.0).min(0.5),
         ];
         for (i, half) in half.into_iter().enumerate() {

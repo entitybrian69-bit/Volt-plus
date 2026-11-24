@@ -76,18 +76,30 @@ fn build_placement(
     visible_in_game: bool,
     visible_in_menu: bool,
 ) -> Placement {
-    let w_n = w_norm.clamp(0.02, 0.75);
-    let h_n = h_norm.clamp(0.02, 0.75);
-    // Solve `size`, `width_ratio`, `height_ratio` inside Placement::sanitize bounds
-    // (`size` in 0.045..=0.45, `width_ratio`/`height_ratio` in 0.4..=3.2) so `rect(REF_ASPECT)`
-    // reproduces `(w_n, h_n)` accurately.
-    let target_w_units = w_n * REF_ASPECT;
-    let size = h_n.max(target_w_units / 3.2).clamp(0.045, 0.45);
-    let width_ratio = (target_w_units / size).clamp(0.4, 3.2);
-    let height_ratio = (h_n / size).clamp(0.4, 3.2);
+    let w_n = w_norm.clamp(0.005, 0.95);
+    let h_n = h_norm.clamp(0.005, 0.95);
+    // Solve `size`, `width_ratio`, `height_ratio` using `ref_aspect = REF_ASPECT`
+    // so `rect(aspect)` reproduces `(w_n, h_n)` identically at any screen aspect
+    // with zero horizontal gap or aspect distortion.
+    let size = h_n.clamp(0.005, 0.85);
+    let width_ratio = ((w_n * REF_ASPECT) / size).clamp(0.1, 64.0);
+    let height_ratio = (h_n / size).clamp(0.1, 64.0);
+    let half_w = ((size * width_ratio) / REF_ASPECT) * 0.5;
+    let half_h = (size * height_ratio) * 0.5;
+    let cx = if half_w < 0.5 {
+        cx_norm.clamp(half_w, 1.0 - half_w)
+    } else {
+        0.5
+    };
+    let cy = if half_h < 0.5 {
+        cy_norm.clamp(half_h, 1.0 - half_h)
+    } else {
+        0.5
+    };
 
-    let mut p = Placement::new(cx_norm.clamp(0.0, 1.0), cy_norm.clamp(0.0, 1.0), size);
+    let mut p = Placement::new(cx, cy, size);
     p.use_goy_style = true;
+    p.ref_aspect = REF_ASPECT;
     p.width_ratio = width_ratio;
     p.height_ratio = height_ratio;
     p.opacity = opacity.clamp(0.0, 1.0);
@@ -131,7 +143,7 @@ fn base_java_settings(style_name: String, desc: String) -> Settings {
 }
 
 fn enable_imported_joystick(s: &mut Settings, cx_norm: f32, cy_norm: f32, diameter_h_norm: f32) {
-    let size = diameter_h_norm.clamp(0.08, 0.45);
+    let size = diameter_h_norm.clamp(0.06, 0.55);
     let half_w = (size / REF_ASPECT) * 0.5;
     let half_h = size * 0.5;
     let mut p = Placement::new(
@@ -140,6 +152,7 @@ fn enable_imported_joystick(s: &mut Settings, cx_norm: f32, cy_norm: f32, diamet
         size,
     );
     p.use_goy_style = true;
+    p.ref_aspect = REF_ASPECT;
     p.visible_in_game = true;
     p.visible_in_menu = false;
     p.sanitize();
@@ -421,7 +434,7 @@ fn detect_pojav_uses_android_keycodes(value: &Value) -> bool {
             {
                 if (256..=348).contains(&c) {
                     glfw_high += 1;
-                } else if matches!(c, 7..=31 | 33..=38 | 40..=43 | 62..=64 | 67 | 111..=160) {
+                } else if matches!(c, 4 | 7..=31 | 33..=38 | 40..=43 | 62..=64 | 67 | 111..=160) {
                     android_only += 1;
                 }
             }
@@ -500,19 +513,20 @@ fn eval_pojav_rect(
     override_xy_px: Option<(f32, f32)>,
     override_wh_dp: Option<(f32, f32)>,
 ) -> (f32, f32, f32, f32, f32, f32) {
-    let dp = BASE_DP * scale;
+    // Pojav saves button `width`/`height` already scaled at `scaledAt`.
+    let dp = BASE_DP;
     let w_dp = override_wh_dp
         .map(|(w, _)| w)
         .unwrap_or_else(|| btn_val["width"].as_f64().unwrap_or(50.0) as f32)
-        .max(8.0);
+        .max(2.0);
     let h_dp = override_wh_dp
         .map(|(_, h)| h)
         .unwrap_or_else(|| btn_val["height"].as_f64().unwrap_or(50.0) as f32)
-        .max(8.0);
-    let w_px = (w_dp * dp).max(10.0);
-    let h_px = (h_dp * dp).max(10.0);
-    let margin = 6.0 * scale;
-    let pref_scale = 100.0 * scale;
+        .max(2.0);
+    let w_px = (w_dp * dp).max(2.0);
+    let h_px = (h_dp * dp).max(2.0);
+    let margin = 2.0 * dp;
+    let pref_scale = if scale > 0.01 { 100.0 * scale } else { 100.0 };
     let vars = [
         ("width", w_px),
         ("height", h_px),
@@ -739,7 +753,7 @@ fn import_pojav(value: &Value, file_name: &str) -> Result<Settings, String> {
                 );
             }
             if let Some(children) = drawer["buttonProperties"].as_array() {
-                let margin = 6.0 * scale;
+                let margin = 2.0 * BASE_DP;
                 let (dx, dy, dw, dh, dw_dp, dh_dp) = drawer_rect;
                 for (c_idx, child) in children.iter().enumerate() {
                     let step = (c_idx + 1) as f32;
@@ -766,17 +780,37 @@ fn import_pojav(value: &Value, file_name: &str) -> Result<Settings, String> {
             }
         }
     }
-    let has_joystick = value["mJoystickDataList"]
-        .as_array()
-        .is_some_and(|a| !a.is_empty());
-    if let Some(joys) = value["mJoystickDataList"].as_array()
-        && let Some(joy) = joys.first()
-    {
+    let active_joy = value["mJoystickDataList"].as_array().and_then(|joys| {
+        joys.iter()
+            .find(|j| j["displayInGame"].as_bool() != Some(false))
+    });
+    let has_joystick = active_joy.is_some();
+    if let Some(joy) = active_joy {
         let (jx, jy, jw, jh, _, _) = eval_pojav_rect(joy, scale, v1_xy_scale, None, None);
         let cx_norm = (jx + jw * 0.5) / REF_W;
         let cy_norm = (jy + jh * 0.5) / REF_H;
-        let diam_h = (jw.min(jh) / REF_H).max(0.14);
+        let diam_h = (jw.min(jh) / REF_H).clamp(0.06, 0.55);
         enable_imported_joystick(&mut s, cx_norm, cy_norm, diam_h);
+        let j_opacity = joy["opacity"].as_f64().unwrap_or(1.0) as f32;
+        let absolute = joy["absolute"].as_bool().unwrap_or(true);
+        let in_game = joy["displayInGame"].as_bool().unwrap_or(true);
+        let in_menu = joy["displayInMenu"].as_bool().unwrap_or(false);
+        let bg_abgr = argb_to_abgr(joy["bgColor"].as_i64().unwrap_or(0x40FFFFFF) as u32);
+        let stroke_abgr = argb_to_abgr(joy["strokeColor"].as_i64().unwrap_or(0x80FFFFFF) as u32);
+        let stroke_w = (joy["strokeWidth"].as_f64().unwrap_or(2.0) as f32).clamp(0.0, 8.0);
+        s.dynamic_joystick = !absolute;
+        s.joystick_style.base_color = bg_abgr;
+        s.joystick_style.base_stroke_color = stroke_abgr;
+        s.joystick_style.base_stroke = stroke_w;
+        for row in &mut s.layouts {
+            let p = &mut row[Control::Move as usize];
+            p.opacity = j_opacity.clamp(0.0, 1.0);
+            p.visible_in_game = in_game;
+            p.visible_in_menu = in_menu;
+            p.button_color = bg_abgr;
+            p.stroke_color = stroke_abgr;
+            p.stroke_size = stroke_w;
+        }
     }
     if s.custom_buttons.is_empty() && !has_joystick {
         return Err("Pojav control layout contained no buttons".into());
@@ -990,8 +1024,8 @@ fn import_zalith(value: &Value, file_name: &str) -> Result<Settings, String> {
                 };
                 (wn, hn)
             };
-            let w_norm = w_norm.clamp(0.02, 0.75);
-            let h_norm = h_norm.clamp(0.02, 0.75);
+            let w_norm = w_norm.clamp(0.005, 0.95);
+            let h_norm = h_norm.clamp(0.005, 0.95);
 
             // Zalith position x, y are 0..10000 normalized along the movable range `(1.0 - size)`.
             let px = (b["position"]["x"].as_f64().unwrap_or(5000.0) as f32 / pct_divisor)
@@ -1174,14 +1208,14 @@ fn push_fcl_button(
         .or_else(|| base["height"].as_f64())
         .unwrap_or(12.0);
     let w_norm = if w_type.eq_ignore_ascii_case("ABSOLUTE") || w_type.eq_ignore_ascii_case("DP") {
-        ((raw_w as f32 * BASE_DP) / REF_W).clamp(0.02, 0.75)
+        ((raw_w as f32 * BASE_DP) / REF_W).clamp(0.005, 0.95)
     } else {
-        fcl_norm_coord(raw_w).clamp(0.02, 0.75)
+        fcl_norm_coord(raw_w).clamp(0.005, 0.95)
     };
     let h_norm = if h_type.eq_ignore_ascii_case("ABSOLUTE") || h_type.eq_ignore_ascii_case("DP") {
-        ((raw_h as f32 * BASE_DP) / REF_H).clamp(0.02, 0.75)
+        ((raw_h as f32 * BASE_DP) / REF_H).clamp(0.005, 0.95)
     } else {
-        fcl_norm_coord(raw_h).clamp(0.02, 0.75)
+        fcl_norm_coord(raw_h).clamp(0.005, 0.95)
     };
 
     let px = fcl_norm_coord(
@@ -1691,5 +1725,80 @@ mod tests {
         assert_eq!(s.custom_buttons[0].key, "key.keyboard.space");
         assert!(s.custom_buttons[0].layouts[0].swipeable);
         assert!(s.custom_buttons[0].layouts[0].center[0] > 0.8);
+    }
+
+    #[test]
+    fn adjacent_imported_buttons_stay_flush_across_aspect_ratios() {
+        let json = serde_json::json!({
+            "version": 9,
+            "scaledAt": 80,
+            "mControlDataList": [
+                {
+                    "name": "B1",
+                    "keycodes": [4],
+                    "dynamicX": "0",
+                    "dynamicY": "0",
+                    "width": 50.0,
+                    "height": 50.0
+                },
+                {
+                    "name": "B2",
+                    "keycodes": [-10],
+                    "dynamicX": "50 * ${dp}",
+                    "dynamicY": "0",
+                    "width": 50.0,
+                    "height": 50.0
+                },
+                {
+                    "name": "ThinStrip",
+                    "keycodes": [-3],
+                    "dynamicX": "0",
+                    "dynamicY": "0.5 * ${screen_height}",
+                    "width": 202.6,
+                    "height": 3.9
+                }
+            ],
+            "mJoystickDataList": [
+                {
+                    "dynamicX": "0",
+                    "dynamicY": "0",
+                    "width": 1.9,
+                    "height": 1.9,
+                    "displayInGame": false
+                },
+                {
+                    "dynamicX": "10 * ${dp}",
+                    "dynamicY": "${bottom} - 10 * ${dp}",
+                    "width": 180.0,
+                    "height": 180.0,
+                    "displayInGame": true,
+                    "absolute": false,
+                    "opacity": 0.45
+                }
+            ]
+        });
+        let s = convert_java_control_json(&json, "Spear-Mace.json").unwrap().unwrap();
+        assert_eq!(s.custom_buttons[0].key, "key.keyboard.escape");
+        assert_eq!(s.custom_buttons[1].key, "action:horizon.toggle_keyboard");
+        assert!(s.dynamic_joystick);
+        assert!((s.layouts[0][Control::Move as usize].opacity - 0.45).abs() < 1e-4);
+        assert!(s.layouts[0][Control::Move as usize].size > 0.25);
+
+        for aspect in [16.0 / 9.0, 2.0, 20.0 / 9.0, 21.0 / 9.0] {
+            let r1 = s.custom_buttons[0].layouts[0].rect(aspect);
+            let r2 = s.custom_buttons[1].layouts[0].rect(aspect);
+            assert!(
+                ((r1[0] + r1[2]) - r2[0]).abs() < 1e-4,
+                "gap at aspect {aspect}: r1_right={} r2_left={}",
+                r1[0] + r1[2],
+                r2[0]
+            );
+            let thin = s.custom_buttons[2].layouts[0].rect(aspect);
+            assert!(
+                thin[3] < 0.025,
+                "thin strip inflated at aspect {aspect}: h={}",
+                thin[3]
+            );
+        }
     }
 }

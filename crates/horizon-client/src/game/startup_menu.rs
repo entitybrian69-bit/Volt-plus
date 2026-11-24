@@ -1604,7 +1604,11 @@ impl Loading {
                 }
                 return Ok(());
             }
-            if let Some(gui) = self.gui.as_ref()
+            if self.menu.touch.overlay_button_visible(
+                &self.menu.controls.settings,
+                true,
+                horizon_client::recorder::hiding_controls(),
+            ) && let Some(gui) = self.gui.as_ref()
                 && let Some(hub_act) = self.menu.touch.floating_menu_touch(
                     &mut b,
                     &gui.atlas,
@@ -1921,6 +1925,37 @@ impl Loading {
                         horizon_client::recorder::update_settings(|s| {
                             s.record_controls = !s.record_controls
                         });
+                    }
+                    InGameMenuAction::SetOverlayScale(scale) => {
+                        self.menu.controls.settings.overlay_scale = scale.clamp(0.5, 2.0);
+                        let _ = self.menu.controls.settings.save();
+                        self.settings.touch = self.menu.controls.settings.clone();
+                    }
+                    InGameMenuAction::SetOverlayOpacity(opacity) => {
+                        self.menu.controls.settings.overlay_opacity = opacity.clamp(0.05, 1.0);
+                        let _ = self.menu.controls.settings.save();
+                        self.settings.touch = self.menu.controls.settings.clone();
+                    }
+                    InGameMenuAction::ToggleOverlayHidden => {
+                        let next = !self.menu.controls.settings.overlay_hidden;
+                        self.menu.controls.settings.overlay_hidden = next;
+                        if next {
+                            self.menu.touch.floating_menu = false;
+                        }
+                        let _ = self.menu.controls.settings.save();
+                        self.settings.touch = self.menu.controls.settings.clone();
+                    }
+                    InGameMenuAction::ToggleOverlayHideInMenus => {
+                        self.menu.controls.settings.overlay_hide_in_menus =
+                            !self.menu.controls.settings.overlay_hide_in_menus;
+                        let _ = self.menu.controls.settings.save();
+                        self.settings.touch = self.menu.controls.settings.clone();
+                    }
+                    InGameMenuAction::ToggleOverlayShowInGameplay => {
+                        self.menu.controls.settings.overlay_show_in_gameplay =
+                            !self.menu.controls.settings.overlay_show_in_gameplay;
+                        let _ = self.menu.controls.settings.save();
+                        self.settings.touch = self.menu.controls.settings.clone();
                     }
                     InGameMenuAction::RecorderStart => crate::screen_record::start(),
                     InGameMenuAction::RecorderStop => crate::screen_record::stop(),
@@ -2312,6 +2347,7 @@ impl Loading {
                 #[cfg(target_os = "android")]
                 {
                     self.menu.touch.cursor_initialized = true;
+                    self.menu.touch.cancel_relative();
                 }
                 self.update_menu_cursor();
                 if self.menu.options_open && self.menu.dragging {
@@ -2616,9 +2652,15 @@ impl Loading {
             // Touch controls only render during gameplay, never in title/options menus.
             if !waiting_for_key {
                 self.menu.touch.draw(batch, &gui.atlas, true);
-                self.menu
-                    .touch
-                    .draw_floating_menu(batch, &gui.atlas, &self.menu.controls.settings);
+                if self.menu.touch.overlay_button_visible(
+                    &self.menu.controls.settings,
+                    true,
+                    horizon_client::recorder::hiding_controls(),
+                ) {
+                    self.menu
+                        .touch
+                        .draw_floating_menu(batch, &gui.atlas, &self.menu.controls.settings);
+                }
             }
         }
         self.menu

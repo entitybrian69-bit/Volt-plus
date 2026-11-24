@@ -332,6 +332,10 @@ pub struct Placement {
     /// Whether this control/button is visible & interactive while a menu/inventory/title screen is open.
     #[serde(default)]
     pub visible_in_menu: bool,
+    /// Optional reference aspect ratio used when converting `width_ratio` into
+    /// normalized screen width (`0.0` = dynamically use the live screen aspect).
+    #[serde(default)]
+    pub ref_aspect: f32,
 }
 impl Placement {
     pub fn new(x: f32, y: f32, size: f32) -> Self {
@@ -361,6 +365,7 @@ impl Placement {
             on_toggle_stroke_color: 0xFFEADDFF,
             visible_in_game: true,
             visible_in_menu: false,
+            ref_aspect: 0.0,
         }
     }
     pub fn rect(self, aspect: f32) -> [f32; 4] {
@@ -374,7 +379,12 @@ impl Placement {
         } else {
             1.0
         };
-        let sx = (self.size * wr) / aspect.max(0.1);
+        let eff_aspect = if self.ref_aspect.is_finite() && self.ref_aspect > 0.1 {
+            self.ref_aspect
+        } else {
+            aspect.max(0.1)
+        };
+        let sx = (self.size * wr) / eff_aspect;
         let sy = self.size * hr;
         [self.center[0] - sx / 2.0, self.center[1] - sy / 2.0, sx, sy]
     }
@@ -385,19 +395,24 @@ impl Placement {
         if !self.opacity.is_finite() {
             self.opacity = 0.65;
         }
-        self.size = self.size.clamp(0.045, 0.45);
+        self.size = self.size.clamp(0.005, 0.85);
         self.opacity = self.opacity.clamp(0.0, 1.0);
         self.shape = self.shape.min(6);
         self.icon_id = self.icon_id.min(12);
         self.width_ratio = if self.width_ratio.is_finite() && self.width_ratio > 0.05 {
-            self.width_ratio.clamp(0.4, 3.2)
+            self.width_ratio.clamp(0.1, 64.0)
         } else {
             1.0
         };
         self.height_ratio = if self.height_ratio.is_finite() && self.height_ratio > 0.05 {
-            self.height_ratio.clamp(0.4, 3.2)
+            self.height_ratio.clamp(0.1, 64.0)
         } else {
             1.0
+        };
+        self.ref_aspect = if self.ref_aspect.is_finite() && self.ref_aspect > 0.1 {
+            self.ref_aspect.clamp(0.25, 4.0)
+        } else {
+            0.0
         };
         self.stroke_size = if self.stroke_size.is_finite() {
             self.stroke_size.clamp(0.0, 8.0)
@@ -426,7 +441,7 @@ impl Placement {
         };
         for c in &mut self.center {
             *c = if c.is_finite() {
-                c.clamp(0.025, 0.975)
+                c.clamp(0.0, 1.0)
             } else {
                 0.5
             };
@@ -511,6 +526,16 @@ pub struct Settings {
     pub joystick_style: JoystickStyle,
     #[serde(default = "default_floating_pos")]
     pub floating_menu_pos: [f32; 2],
+    #[serde(default = "default_one")]
+    pub overlay_scale: f32,
+    #[serde(default = "default_one")]
+    pub overlay_opacity: f32,
+    #[serde(default)]
+    pub overlay_hidden: bool,
+    #[serde(default)]
+    pub overlay_hide_in_menus: bool,
+    #[serde(default)]
+    pub overlay_show_in_gameplay: bool,
     #[serde(default)]
     pub snap_to_grid: bool,
     /// Optional custom display names for the 14 built-in controls (empty = default Control::name()).
@@ -645,6 +670,11 @@ impl Default for Settings {
             control_style: ControlStyle::Mcpe,
             joystick_style: JoystickStyle::default(),
             floating_menu_pos: default_floating_pos(),
+            overlay_scale: 1.0,
+            overlay_opacity: 1.0,
+            overlay_hidden: false,
+            overlay_hide_in_menus: false,
+            overlay_show_in_gameplay: false,
             snap_to_grid: false,
             control_labels: std::array::from_fn(|_| String::new()),
             layouts,
@@ -924,6 +954,16 @@ impl Settings {
             self.preset_name = self.preset_id.clone();
         }
         self.joystick_style.sanitize();
+        self.overlay_scale = if self.overlay_scale.is_finite() {
+            self.overlay_scale.clamp(0.5, 2.0)
+        } else {
+            1.0
+        };
+        self.overlay_opacity = if self.overlay_opacity.is_finite() {
+            self.overlay_opacity.clamp(0.05, 1.0)
+        } else {
+            1.0
+        };
         for (i, v) in self.floating_menu_pos.iter_mut().enumerate() {
             let def = default_floating_pos()[i];
             *v = if v.is_finite() {
@@ -1412,6 +1452,11 @@ impl Settings {
         let prev_mcpe = self.active_mcpe_preset.clone();
         let prev_goy = self.active_goy_preset.clone();
         let prev_floating = self.floating_menu_pos;
+        let prev_overlay_scale = self.overlay_scale;
+        let prev_overlay_opacity = self.overlay_opacity;
+        let prev_overlay_hidden = self.overlay_hidden;
+        let prev_overlay_hide_menus = self.overlay_hide_in_menus;
+        let prev_overlay_show_game = self.overlay_show_in_gameplay;
         let prev_invert_y = self.invert_y;
         let prev_vm_enabled = self.virtual_mouse_enabled;
         let prev_vm_sens = self.virtual_mouse_sensitivity;
@@ -1432,6 +1477,11 @@ impl Settings {
             prev_goy
         };
         loaded.floating_menu_pos = prev_floating;
+        loaded.overlay_scale = prev_overlay_scale;
+        loaded.overlay_opacity = prev_overlay_opacity;
+        loaded.overlay_hidden = prev_overlay_hidden;
+        loaded.overlay_hide_in_menus = prev_overlay_hide_menus;
+        loaded.overlay_show_in_gameplay = prev_overlay_show_game;
         loaded.invert_y = prev_invert_y;
         loaded.virtual_mouse_enabled = prev_vm_enabled;
         loaded.virtual_mouse_sensitivity = prev_vm_sens;
@@ -1468,6 +1518,11 @@ impl Settings {
         let prev_mcpe = self.active_mcpe_preset.clone();
         let prev_goy = self.active_goy_preset.clone();
         let prev_floating = self.floating_menu_pos;
+        let prev_overlay_scale = self.overlay_scale;
+        let prev_overlay_opacity = self.overlay_opacity;
+        let prev_overlay_hidden = self.overlay_hidden;
+        let prev_overlay_hide_menus = self.overlay_hide_in_menus;
+        let prev_overlay_show_game = self.overlay_show_in_gameplay;
         let prev_invert_y = self.invert_y;
         let prev_vm_enabled = self.virtual_mouse_enabled;
         let prev_vm_sens = self.virtual_mouse_sensitivity;
@@ -1480,6 +1535,11 @@ impl Settings {
         loaded.active_mcpe_preset = prev_mcpe;
         loaded.active_goy_preset = prev_goy;
         loaded.floating_menu_pos = prev_floating;
+        loaded.overlay_scale = prev_overlay_scale;
+        loaded.overlay_opacity = prev_overlay_opacity;
+        loaded.overlay_hidden = prev_overlay_hidden;
+        loaded.overlay_hide_in_menus = prev_overlay_hide_menus;
+        loaded.overlay_show_in_gameplay = prev_overlay_show_game;
         loaded.invert_y = prev_invert_y;
         loaded.virtual_mouse_enabled = prev_vm_enabled;
         loaded.virtual_mouse_sensitivity = prev_vm_sens;
@@ -2164,6 +2224,11 @@ impl Settings {
             let prev_mcpe = self.active_mcpe_preset.clone();
             let prev_goy = self.active_goy_preset.clone();
             let prev_floating = self.floating_menu_pos;
+            let prev_overlay_scale = self.overlay_scale;
+            let prev_overlay_opacity = self.overlay_opacity;
+            let prev_overlay_hidden = self.overlay_hidden;
+            let prev_overlay_hide_menus = self.overlay_hide_in_menus;
+            let prev_overlay_show_game = self.overlay_show_in_gameplay;
             let prev_invert_y = self.invert_y;
             let prev_vm_enabled = self.virtual_mouse_enabled;
             let prev_vm_sens = self.virtual_mouse_sensitivity;
@@ -2175,6 +2240,11 @@ impl Settings {
             self.active_mcpe_preset = prev_mcpe;
             self.active_goy_preset = prev_goy;
             self.floating_menu_pos = prev_floating;
+            self.overlay_scale = prev_overlay_scale;
+            self.overlay_opacity = prev_overlay_opacity;
+            self.overlay_hidden = prev_overlay_hidden;
+            self.overlay_hide_in_menus = prev_overlay_hide_menus;
+            self.overlay_show_in_gameplay = prev_overlay_show_game;
             self.invert_y = prev_invert_y;
             self.virtual_mouse_enabled = prev_vm_enabled;
             self.virtual_mouse_sensitivity = prev_vm_sens;
@@ -2211,6 +2281,11 @@ impl Settings {
         loaded.active_mcpe_preset = active.active_mcpe_preset;
         loaded.active_goy_preset = active.active_goy_preset;
         loaded.floating_menu_pos = active.floating_menu_pos;
+        loaded.overlay_scale = active.overlay_scale;
+        loaded.overlay_opacity = active.overlay_opacity;
+        loaded.overlay_hidden = active.overlay_hidden;
+        loaded.overlay_hide_in_menus = active.overlay_hide_in_menus;
+        loaded.overlay_show_in_gameplay = active.overlay_show_in_gameplay;
         loaded.invert_y = active.invert_y;
         loaded.virtual_mouse_enabled = active.virtual_mouse_enabled;
         loaded.virtual_mouse_sensitivity = active.virtual_mouse_sensitivity;
