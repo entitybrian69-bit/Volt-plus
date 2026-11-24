@@ -6141,14 +6141,16 @@ impl Renderer {
         let scaled_presentation = false;
         let target_texture = match (&surface_frame, &mut self.hdr) {
             (Some(_), Some(hdr)) => hdr.frame(&self.device, size),
-            // A screenshot of a swapchain without COPY_SRC (OpenGL) draws
-            // into a texture that has it, then onto the swapchain.
+            // A screenshot of a swapchain without COPY_SRC (OpenGL), or a raw
+            // recording copying pre-HUD frames from a swapchain without
+            // TEXTURE_BINDING, draws into a texture that has them, then onto the swapchain.
             (Some(f), None) => self
                 .readback
-                .target(
+                .target_for(
                     &self.device,
                     &f.texture,
                     self.screenshot.is_some() && !scaled_presentation,
+                    self.record.is_some() && !scaled_presentation,
                 )
                 .unwrap_or_else(|| f.texture.clone()),
             (None, _) => self.offscreen.clone().ok_or("no offscreen target")?,
@@ -6187,6 +6189,7 @@ impl Renderer {
         }
         if frame.menu_blur_cache
             && self.screenshot.is_none()
+            && self.record.is_none()
             && menu_blur.is_some_and(|r| self.has_cached_menu_blur(r))
         {
             self.hud.prepare(

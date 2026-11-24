@@ -202,7 +202,7 @@ public final class RecorderService extends Service {
 
     /** Opens the projection and starts the recorder; runs off the main thread. */
     private synchronized void begin() {
-        if (recorder != null) {
+        if (recorder != null || rawGameplay) {
             return;
         }
         try {
@@ -686,6 +686,11 @@ public final class RecorderService extends Service {
 
     private void fail(String note) {
         failed = true;
+        if (rawGameplay) {
+            rawGameplay = false;
+            ScreenRecorder.rawGameplayOnly = false;
+            deleteQuietly(EngineRecorder.stopAndWaitTempFile());
+        }
         ScreenRecorder.publish("error", "", 0L, 0L, note);
         stopping = true;
         try {

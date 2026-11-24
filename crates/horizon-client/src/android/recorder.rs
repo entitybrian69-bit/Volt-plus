@@ -246,7 +246,7 @@ fn engine_window() -> Option<usize> {
         if surface.is_null() {
             Ok(0)
         } else {
-            let raw = surface.into_raw();
+            let raw = surface.as_raw();
             Ok(unsafe { ANativeWindow_fromSurface(env.get_native_interface(), raw) as usize })
         }
     })
@@ -353,7 +353,7 @@ fn start_engine(width: u32, height: u32, frames: i32, audio: i32) {
         let window = if surface.is_null() {
             0
         } else {
-            let raw = surface.into_raw();
+            let raw = surface.as_raw();
             unsafe { ANativeWindow_fromSurface(env.get_native_interface(), raw) as usize }
         };
         Ok((note, window))

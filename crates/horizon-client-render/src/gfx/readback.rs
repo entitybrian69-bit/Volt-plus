@@ -23,7 +23,24 @@ impl Readback {
         surface: &wgpu::Texture,
         screenshot: bool,
     ) -> Option<wgpu::Texture> {
-        if !screenshot || surface.usage().contains(wgpu::TextureUsages::COPY_SRC) {
+        self.target_for(device, surface, screenshot, false)
+    }
+
+    /// The texture this frame draws into instead of the swapchain image `surface`:
+    /// `None` unless the frame needs `COPY_SRC` (for a screenshot) or
+    /// `TEXTURE_BINDING` (for pre-HUD recorder copy) that `surface` lacks.
+    pub fn target_for(
+        &mut self,
+        device: &wgpu::Device,
+        surface: &wgpu::Texture,
+        need_copy_src: bool,
+        need_texture_binding: bool,
+    ) -> Option<wgpu::Texture> {
+        let missing_copy =
+            need_copy_src && !surface.usage().contains(wgpu::TextureUsages::COPY_SRC);
+        let missing_binding =
+            need_texture_binding && !surface.usage().contains(wgpu::TextureUsages::TEXTURE_BINDING);
+        if !missing_copy && !missing_binding {
             return None;
         }
         let format = surface.format().remove_srgb_suffix();
