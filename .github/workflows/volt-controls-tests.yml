@@ -31,10 +31,25 @@ jobs:
         if: failure()
         run: |
           python3 - <<'PY'
-          import os
+          import os, re
           from pathlib import Path
           path = Path(os.environ['RUNNER_TEMP']) / 'control-tests.log'
           if path.exists():
-              for line in path.read_text(errors='replace').splitlines()[-55:]:
+              lines = [re.sub(r'\x1b\[[0-9;]*m', '', l).strip() for l in path.read_text(errors='replace').splitlines()]
+              seen = set()
+              for idx, clean in enumerate(lines):
+                  if not re.search(r'\berror\b', clean) or clean in seen:
+                      continue
+                  seen.add(clean)
+                  detail = [clean]
+                  for f in lines[idx + 1:idx + 8]:
+                      if not f or f in seen:
+                          break
+                      detail.append(f)
+                  msg = ('\n'.join(detail))[:3800].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                  print('::error::' + msg)
+                  if len(seen) >= 12:
+                      break
+              for line in lines[-55:]:
                   print('::notice::' + line[:400].replace('%', '%25'))
           PY

@@ -5,7 +5,7 @@
 //! radius, 10 knob radius, `#E03044` active accent + focus ring, ease-out-cubic
 //! motion <= 250 ms (zero bounce, interruptible), 130% text scale safe, full
 //! keyboard/gamepad navigation, and inline modals for storage budget & clear confirm.
-use crate::hud::{HudAtlas, HudBatch, Rect, rgba};
+use crate::hud::{HudAtlas, HudBatch, rgba};
 use crate::settings::Settings;
 use crate::text::Text;
 use crate::ui;
@@ -16,6 +16,14 @@ use crate::volt_boost::{
 };
 use std::time::Instant;
 use winit::keyboard::{Key, NamedKey};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Rect {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+}
 
 // Exact Volt + Boost palette (ABGR packing via `hud::rgba`).
 const BG_SCRIM: u32 = rgba(8, 10, 14, 210);
@@ -2434,11 +2442,15 @@ fn draw_toggle_pill(
 mod tests {
     use super::*;
 
+    fn test_atlas() -> HudAtlas {
+        HudAtlas::build(std::path::Path::new("/nonexistent/horizon-test-assets")).unwrap()
+    }
+
     #[test]
     fn nine_categories_expand_collapse_and_sticky_header_activate() {
         let mut ui = VoltBoostUi::default();
         let mut s = Settings::default();
-        let atlas = HudAtlas::boot();
+        let atlas = test_atlas();
         let mut batch = HudBatch::new([800, 600]);
 
         ui.draw(&s, &mut batch, &atlas, (0.0, 0.0), (800.0, 600.0));
@@ -2462,7 +2474,7 @@ mod tests {
     fn enabling_replay_first_time_prompts_storage_budget_and_clear_confirms() {
         let mut ui = VoltBoostUi::default();
         let mut s = Settings::default();
-        let atlas = HudAtlas::boot();
+        let atlas = test_atlas();
         let mut batch = HudBatch::new([800, 600]);
         ui.draw(&s, &mut batch, &atlas, (0.0, 0.0), (800.0, 600.0));
 
@@ -2491,7 +2503,7 @@ mod tests {
         let mut ui = VoltBoostUi::default();
         ui.text_scale = 1.3;
         let s = Settings::default();
-        let atlas = HudAtlas::boot();
+        let atlas = test_atlas();
         let mut batch = HudBatch::new([800, 600]);
         ui.draw(&s, &mut batch, &atlas, (0.0, 0.0), (800.0, 600.0));
 
