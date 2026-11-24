@@ -7,7 +7,6 @@
 //! keyboard/gamepad navigation, and inline modals for storage budget & clear confirm.
 use crate::hud::{HudAtlas, HudBatch, rgba};
 use crate::settings::Settings;
-use crate::text::Text;
 use crate::ui;
 use crate::volt_boost::{
     BoostCategory, BoostProfile, ChunkFadeMode, FrameGate, GlintTrimMode, InactivityFpsMode,
@@ -17,6 +16,10 @@ use crate::volt_boost::{
 use std::time::Instant;
 use winit::keyboard::{Key, NamedKey};
 
+const fn rgba_const(r: u8, g: u8, b: u8, a: u8) -> u32 {
+    ((a as u32) << 24) | ((b as u32) << 16) | ((g as u32) << 8) | (r as u32)
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Rect {
     x: f32,
@@ -25,21 +28,21 @@ struct Rect {
     h: f32,
 }
 
-// Exact Volt + Boost palette (ABGR packing via `hud::rgba`).
-const BG_SCRIM: u32 = rgba(8, 10, 14, 210);
-const CARD_BG: u32 = rgba(17, 20, 27, 238); // #11141B
-const CARD_HEADER_BG: u32 = rgba(22, 26, 35, 245);
-const ROW_BG: u32 = rgba(21, 25, 34, 215);
-const ROW_HOVER_BG: u32 = rgba(30, 35, 48, 238);
-const HAIRLINE: u32 = rgba(255, 255, 255, 30);
-const HAIRLINE_STRONG: u32 = rgba(255, 255, 255, 58);
-const ACCENT: u32 = rgba(224, 48, 68, 255); // #E03044
-const ACCENT_SOFT: u32 = rgba(224, 48, 68, 48);
-const TEXT_PRIMARY: u32 = rgba(242, 245, 243, 255); // #F2F5F3
-const TEXT_MUTED: u32 = rgba(198, 204, 201, 255); // #C6CCC9
-const TEXT_DIM: u32 = rgba(143, 150, 155, 255); // #8F969B
-const TRACK_OFF: u32 = rgba(46, 52, 66, 255);
-const KNOB_COLOR: u32 = rgba(242, 245, 243, 255);
+// Exact Volt + Boost palette (ABGR packing via `rgba_const`).
+const BG_SCRIM: u32 = rgba_const(8, 10, 14, 210);
+const CARD_BG: u32 = rgba_const(17, 20, 27, 238); // #11141B
+const CARD_HEADER_BG: u32 = rgba_const(22, 26, 35, 245);
+const ROW_BG: u32 = rgba_const(21, 25, 34, 215);
+const ROW_HOVER_BG: u32 = rgba_const(30, 35, 48, 238);
+const HAIRLINE: u32 = rgba_const(255, 255, 255, 30);
+const HAIRLINE_STRONG: u32 = rgba_const(255, 255, 255, 58);
+const ACCENT: u32 = rgba_const(224, 48, 68, 255); // #E03044
+const ACCENT_SOFT: u32 = rgba_const(224, 48, 68, 48);
+const TEXT_PRIMARY: u32 = rgba_const(242, 245, 243, 255); // #F2F5F3
+const TEXT_MUTED: u32 = rgba_const(198, 204, 201, 255); // #C6CCC9
+const TEXT_DIM: u32 = rgba_const(143, 150, 155, 255); // #8F969B
+const TRACK_OFF: u32 = rgba_const(46, 52, 66, 255);
+const KNOB_COLOR: u32 = rgba_const(242, 245, 243, 255);
 
 const CARD_RADIUS: f32 = 12.5;
 const KNOB_RADIUS: f32 = 10.0;
@@ -1459,7 +1462,7 @@ impl VoltBoostUi {
         self.scroll = self.scroll.clamp(0.0, self.max_scroll);
 
         // Render scrollable categories clipped to [list_top, list_bottom].
-        let clip_start = batch.len();
+        let clip_start = batch.vertices.len();
         let mut cur_y = list_top - self.scroll;
         let mut sticky_candidate: Option<(usize, Rect, f32)> = None;
 
@@ -1512,7 +1515,7 @@ impl VoltBoostUi {
                 let rows_clip_top = rows_start_y.max(list_top);
                 let rows_clip_bot = (rows_start_y + visible_rows_h).min(list_bottom);
                 if rows_clip_bot > rows_clip_top {
-                    let row_clip_start = batch.len();
+                    let row_clip_start = batch.vertices.len();
                     let mut ry = rows_start_y;
                     let stagger_elapsed = self.master_stagger_at[cat_idx]
                         .map(|t| t.elapsed().as_secs_f32() * 1000.0);
@@ -1685,7 +1688,7 @@ impl VoltBoostUi {
         } else {
             1.0
         };
-        let pill_start = batch.len();
+        let pill_start = batch.vertices.len();
         draw_toggle_pill(
             batch,
             atlas,
@@ -1721,7 +1724,7 @@ impl VoltBoostUi {
         let hovered = ui::hovered(cursor, rect.x, rect.y, rect.w, rect.h);
         let focused = self.focus == Some(FocusTarget::Option(spec.id));
         let bg = if hovered { ROW_HOVER_BG } else { ROW_BG };
-        let row_start = batch.len();
+        let row_start = batch.vertices.len();
         draw_glass_card(batch, atlas, rect, 10.0 * dp, apply_alpha(bg, alpha_mul), HAIRLINE, focused);
 
         let control_w = (rect.w * 0.32).clamp(112.0 * dp, 178.0 * dp);
@@ -2346,8 +2349,8 @@ fn draw_text_scaled(
     scale: f32,
     color: u32,
 ) {
-    let start = batch.len();
-    batch.text(atlas, &Text::literal(text), x, y, color);
+    let start = batch.vertices.len();
+    batch.text(atlas, text, x, y, color, false);
     if (scale - 1.0).abs() > 0.01 {
         batch.scale_since(start, x, y, scale, scale);
     }

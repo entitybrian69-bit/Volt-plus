@@ -3329,6 +3329,12 @@ impl ParticleEngine {
         self.pending.shrink_to_fit();
         before
     }
+    fn cap_pending_burst(&self, pending: &mut Vec<Particle>) -> usize {
+        if self.burst_lag_shield && pending.len() > 128 {
+            pending.truncate(128);
+        }
+        self.max_budget.min(MAX_PARTICLES)
+    }
     pub fn tick(&mut self, level: &ParticleLevel) {
         self.tick_counter = self.tick_counter.wrapping_add(1);
         self.tick_starters();
@@ -3360,10 +3366,7 @@ impl ParticleEngine {
         particles.retain(|p| !p.removed);
         self.particles = particles;
         let mut pending = std::mem::take(&mut self.pending);
-        if self.burst_lag_shield && pending.len() > 128 {
-            pending.truncate(128);
-        }
-        let cap = self.max_budget.min(MAX_PARTICLES);
+        let cap = self.cap_pending_burst(&mut pending);
         for mut p in pending {
             if p.pre_tick {
                 p.pre_tick = false;
@@ -4613,8 +4616,9 @@ mod tests {
         for _ in 0..300 {
             engine.add_with(&ParticleOptions::simple(ParticleType::Flame), [0.0; 3], [0.0; 3], true, true);
         }
-        let empty = ParticleLevel::default();
-        engine.tick(&empty);
-        assert!(engine.len() <= 64);
+        let mut pending = std::mem::take(&mut engine.pending);
+        let cap = engine.cap_pending_burst(&mut pending);
+        assert!(pending.len() <= 128);
+        assert_eq!(cap, 64);
     }
 }

@@ -4660,7 +4660,7 @@ impl Renderer {
         }
     }
     pub fn draw_calls(&self) -> u32 {
-        self.section_draw_calls.max(self.drawn_sections)
+        self.section_draw_calls.max(self.drawn_sections as u32)
     }
     /// Frees idle CPU/GPU scratch memory (mesh buffer pool, cached blur, entity batch capacity)
     /// and returns total MiB reclaimed.
@@ -6196,15 +6196,20 @@ impl Renderer {
             // A screenshot of a swapchain without COPY_SRC (OpenGL), or a raw
             // recording copying pre-HUD frames from a swapchain without
             // TEXTURE_BINDING, draws into a texture that has them, then onto the swapchain.
-            (Some(f), None) => self
-                .readback
-                .target_for(
-                    &self.device,
-                    &f.texture,
-                    self.screenshot.is_some() && !scaled_presentation,
-                    self.record.is_some() && !scaled_presentation,
-                )
-                .unwrap_or_else(|| f.texture.clone()),
+            (Some(f), None) => {
+                #[cfg(target_os = "android")]
+                let recording_copy = self.record.is_some() && !scaled_presentation;
+                #[cfg(not(target_os = "android"))]
+                let recording_copy = false;
+                self.readback
+                    .target_for(
+                        &self.device,
+                        &f.texture,
+                        self.screenshot.is_some() && !scaled_presentation,
+                        recording_copy,
+                    )
+                    .unwrap_or_else(|| f.texture.clone())
+            }
             (None, _) => self.offscreen.clone().ok_or("no offscreen target")?,
         };
         #[cfg(target_os = "android")]
