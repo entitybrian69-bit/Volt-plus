@@ -4826,21 +4826,14 @@ fn draw_button_icon_and_label(
             let a_u8 = (alpha * 255.0).round().clamp(0.0, 255.0) as u8;
             match trimmed {
                 "⬛" | "◼" | "▪" => {
-                    ui.rounded(
-                        sx,
-                        sy,
-                        sz,
-                        sz,
-                        rad,
-                        crate::ui_theme::rgba(28, 30, 36, a_u8),
-                    );
+                    ui.rounded(sx, sy, sz, sz, rad, rgba(28, 30, 36, a_u8));
                     ui.border(
                         sx,
                         sy,
                         sz,
                         sz,
                         rad,
-                        crate::ui_theme::rgba(195, 200, 212, (alpha * 130.0).round() as u8),
+                        rgba(195, 200, 212, (alpha * 130.0).round() as u8),
                     );
                 }
                 "⬜" | "◻" | "▫" | "■" => {
