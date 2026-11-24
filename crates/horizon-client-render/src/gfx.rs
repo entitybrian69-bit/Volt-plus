@@ -2759,7 +2759,7 @@ impl Renderer {
                 ),
                 entry(
                     1,
-                    fs,
+                    vf,
                     wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Float { filterable: true },
                         view_dimension: wgpu::TextureViewDimension::D2,

@@ -206,7 +206,7 @@ impl Launcher {
         // First run: ensure independent MCPE and GoyControl storage directories exist,
         // and initialize MCPE Controls as the default active control system on fresh installs.
         let game_home = catalog.config.game_home(&home);
-        crate::document_store::ensure_fm_dirs(&home, &game_home);
+        let _ = std::fs::create_dir_all(game_home.join("screenshots"));
         horizon_client::touch::Settings::ensure_system_storage(
             &game_home,
             horizon_client::touch::ControlStyle::Mcpe,
