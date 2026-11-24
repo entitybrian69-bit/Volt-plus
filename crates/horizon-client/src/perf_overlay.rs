@@ -4,8 +4,8 @@ use crate::{
     graphics::Overlay,
     hud::{HudAtlas, HudBatch, rgba},
     text::Text,
-    volt_boost::PerfHudCorner,
 };
+use horizon_client_render::volt_boost::PerfHudCorner;
 use std::collections::VecDeque;
 
 const HISTORY: usize = 160;

@@ -660,7 +660,10 @@ impl FramePacer {
         let deadline = match self.next_deadline {
             Some(prev) => {
                 let candidate = prev + interval;
-                if candidate < now.saturating_sub(interval) {
+                if now
+                    .checked_sub(interval)
+                    .is_some_and(|floor| candidate < floor)
+                {
                     now + interval
                 } else {
                     candidate

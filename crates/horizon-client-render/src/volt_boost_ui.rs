@@ -1434,8 +1434,8 @@ impl VoltBoostUi {
 
         let vb = &s.volt_boost;
         let cat_header_h = 52.0 * dp;
-        let base_row_h = (48.0 * dp * (0.85 + 0.15 * ts)).max(48.0 * dp);
-        let hint_row_h = (56.0 * dp * (0.85 + 0.15 * ts)).max(56.0 * dp);
+        let base_row_h = (51.0 * dp * (0.85 + 0.15 * ts)).max(51.0 * dp);
+        let hint_row_h = (59.0 * dp * (0.85 + 0.15 * ts)).max(59.0 * dp);
 
         // First pass: measure total content height and clamp scroll cleanly.
         let mut total_h = 0.0f32;
@@ -2454,13 +2454,19 @@ mod tests {
 
         ui.draw(&s, &mut batch, &atlas, (0.0, 0.0), (800.0, 600.0));
         assert!(ui.hits.iter().any(|h| matches!(h.kind, HitKind::CategoryHeader(0))));
-        assert!(ui.hits.iter().any(|h| matches!(h.kind, HitKind::CategoryMaster(8))));
+        assert!(ui.hits.iter().any(|h| matches!(h.kind, HitKind::CategoryMaster(1))));
 
         // Scroll mid-way through expanded Category 0 -> sticky header activates
         ui.scroll = 140.0;
         let mut batch2 = HudBatch::new([800, 600]);
         ui.draw(&s, &mut batch2, &atlas, (0.0, 0.0), (800.0, 600.0));
         assert!(ui.sticky_header.is_some());
+
+        // Scroll to bottom -> Category 8 master switch is visible and hit-tested
+        ui.scroll = 9999.0;
+        let mut batch3 = HudBatch::new([800, 600]);
+        ui.draw(&s, &mut batch3, &atlas, (0.0, 0.0), (800.0, 600.0));
+        assert!(ui.hits.iter().any(|h| matches!(h.kind, HitKind::CategoryMaster(8))));
 
         // Toggle master switch for Category 1 via keyboard
         ui.focus = Some(FocusTarget::CategoryMaster(1));
@@ -2503,12 +2509,12 @@ mod tests {
         ui.text_scale = 1.3;
         let s = Settings::default();
         let atlas = test_atlas();
-        let mut batch = HudBatch::new([800, 600]);
-        ui.draw(&s, &mut batch, &atlas, (0.0, 0.0), (800.0, 600.0));
+        let mut batch = HudBatch::new([1280, 720]);
+        ui.draw(&s, &mut batch, &atlas, (0.0, 0.0), (1280.0, 720.0));
 
         for hit in &ui.hits {
             if let HitKind::OptionRow(_, _) = hit.kind {
-                assert!(hit.rect.h >= 45.0, "row hit height too small: {}", hit.rect.h);
+                assert!(hit.rect.h >= 48.0, "row hit height too small: {}", hit.rect.h);
             }
         }
     }
