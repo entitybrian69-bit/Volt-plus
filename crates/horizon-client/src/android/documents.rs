@@ -309,7 +309,7 @@ pub fn begin_control_import(game_home: PathBuf) -> std::result::Result<(), Strin
         return Err("Android document picker is unavailable".into());
     }
     notice(
-        "Choose a PojavLauncher, Zalith, MCPE, or GoyControl preset (.json).",
+        "Choose a custom control preset (.json) from Pojav, Zalith, FCL, MCPE, or Horizon.",
         false,
     );
     Ok(())

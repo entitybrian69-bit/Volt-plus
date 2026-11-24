@@ -714,7 +714,10 @@ impl Settings {
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
         s.sanitize();
-        if s.control_style == ControlStyle::GoyControl && s.custom_buttons.is_empty() {
+        if s.control_style == ControlStyle::GoyControl
+            && s.custom_buttons.is_empty()
+            && s.button_visibility[Control::Move as usize] != 0
+        {
             s.custom_buttons = Self::default_goy_buttons();
             for c in Control::ALL {
                 s.button_visibility[c as usize] = if c == Control::Move { 1 } else { 2 };

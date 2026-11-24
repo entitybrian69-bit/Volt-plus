@@ -4534,7 +4534,7 @@ impl Launcher {
             content_x,
             header_y + 23.0,
             my3_muted(),
-            "Import PojavLauncher & Zalith layouts, switch engines, or customize HUD controls",
+            "Import custom control layouts (Pojav, Zalith, FCL, MCPE, Horizon) or customize HUD controls",
         );
 
         let game_home = self.catalog.config.game_home(&self.home);
@@ -4583,7 +4583,7 @@ impl Launcher {
         // Studio toolbar buttons
         let bar_y = mode_y + 42.0;
         let btn_specs = [
-            ("Import Pojav / Zalith", Action::ImportControlProfile, true),
+            ("Import Custom Control", Action::ImportControlProfile, true),
             ("Layout Editor", Action::OpenControlEditor, true),
             ("Export JSON", Action::ExportControlProfile, false),
             ("Duplicate", Action::CopyActivePreset, false),
@@ -4787,7 +4787,7 @@ impl Launcher {
                 (
                     Icon::Gamepad,
                     "Controls Studio",
-                    "Import Pojav & Zalith layouts, edit HUD & switch presets",
+                    "Import custom controls, edit HUD & switch presets",
                     Action::Page(Page::ControlsStudio),
                 ),
                 (
@@ -5897,9 +5897,9 @@ impl Launcher {
                         SettingControl::Button(&preset_label, Action::ControlProfileChooser, false),
                     ),
                     (
-                        "Import Controls from File Manager",
-                        "Pick a control .json file; auto-detects MCPE or GoyControl and saves to its folder",
-                        SettingControl::Button("Import Controls", Action::ImportControlProfile, true),
+                        "Import Custom Control from File Manager",
+                        "Pick a control .json file (Pojav, Zalith, FCL, MCPE, or GoyControl); auto-detects and activates",
+                        SettingControl::Button("Import Custom Control", Action::ImportControlProfile, true),
                     ),
                     (
                         "Export Active Control Preset",

@@ -160,6 +160,136 @@ pub fn pojav_code(code: i32) -> Option<ControlEvent> {
         _ => ControlEvent::Token(glfw_key(code)?),
     })
 }
+
+/// Maps Android `android.view.KeyEvent.KEYCODE_*` integers (used by Pojav v9+ /
+/// Android-KeyEvent control layouts) to Horizon `key.keyboard.*` tokens.
+pub fn android_keycode(code: i32) -> Option<&'static str> {
+    Some(match code {
+        7 => "key.keyboard.0",
+        8 => "key.keyboard.1",
+        9 => "key.keyboard.2",
+        10 => "key.keyboard.3",
+        11 => "key.keyboard.4",
+        12 => "key.keyboard.5",
+        13 => "key.keyboard.6",
+        14 => "key.keyboard.7",
+        15 => "key.keyboard.8",
+        16 => "key.keyboard.9",
+        19 => "key.keyboard.up",
+        20 => "key.keyboard.down",
+        21 => "key.keyboard.left",
+        22 => "key.keyboard.right",
+        29 => "key.keyboard.a",
+        30 => "key.keyboard.b",
+        31 => "key.keyboard.c",
+        32 => "key.keyboard.d",
+        33 => "key.keyboard.e",
+        34 => "key.keyboard.f",
+        35 => "key.keyboard.g",
+        36 => "key.keyboard.h",
+        37 => "key.keyboard.i",
+        38 => "key.keyboard.j",
+        39 => "key.keyboard.k",
+        40 => "key.keyboard.l",
+        41 => "key.keyboard.m",
+        42 => "key.keyboard.n",
+        43 => "key.keyboard.o",
+        44 => "key.keyboard.p",
+        45 => "key.keyboard.q",
+        46 => "key.keyboard.r",
+        47 => "key.keyboard.s",
+        48 => "key.keyboard.t",
+        49 => "key.keyboard.u",
+        50 => "key.keyboard.v",
+        51 => "key.keyboard.w",
+        52 => "key.keyboard.x",
+        53 => "key.keyboard.y",
+        54 => "key.keyboard.z",
+        55 => "key.keyboard.comma",
+        56 => "key.keyboard.period",
+        57 => "key.keyboard.left.alt",
+        58 => "key.keyboard.right.alt",
+        59 => "key.keyboard.left.shift",
+        60 => "key.keyboard.right.shift",
+        61 => "key.keyboard.tab",
+        62 => "key.keyboard.space",
+        66 => "key.keyboard.enter",
+        67 => "key.keyboard.backspace",
+        68 => "key.keyboard.grave.accent",
+        69 => "key.keyboard.minus",
+        70 => "key.keyboard.equal",
+        71 => "key.keyboard.left.bracket",
+        72 => "key.keyboard.right.bracket",
+        73 => "key.keyboard.backslash",
+        74 => "key.keyboard.semicolon",
+        75 => "key.keyboard.apostrophe",
+        76 => "key.keyboard.slash",
+        82 => "key.keyboard.menu",
+        92 => "key.keyboard.page.up",
+        93 => "key.keyboard.page.down",
+        111 => "key.keyboard.escape",
+        112 => "key.keyboard.delete",
+        113 => "key.keyboard.left.control",
+        114 => "key.keyboard.right.control",
+        115 => "key.keyboard.caps.lock",
+        116 => "key.keyboard.scroll.lock",
+        117 => "key.keyboard.left.win",
+        118 => "key.keyboard.right.win",
+        120 => "key.keyboard.print.screen",
+        121 => "key.keyboard.pause",
+        122 => "key.keyboard.home",
+        123 => "key.keyboard.end",
+        124 => "key.keyboard.insert",
+        131 => "key.keyboard.f1",
+        132 => "key.keyboard.f2",
+        133 => "key.keyboard.f3",
+        134 => "key.keyboard.f4",
+        135 => "key.keyboard.f5",
+        136 => "key.keyboard.f6",
+        137 => "key.keyboard.f7",
+        138 => "key.keyboard.f8",
+        139 => "key.keyboard.f9",
+        140 => "key.keyboard.f10",
+        141 => "key.keyboard.f11",
+        142 => "key.keyboard.f12",
+        143 => "key.keyboard.num.lock",
+        144 => "key.keyboard.keypad.0",
+        145 => "key.keyboard.keypad.1",
+        146 => "key.keyboard.keypad.2",
+        147 => "key.keyboard.keypad.3",
+        148 => "key.keyboard.keypad.4",
+        149 => "key.keyboard.keypad.5",
+        150 => "key.keyboard.keypad.6",
+        151 => "key.keyboard.keypad.7",
+        152 => "key.keyboard.keypad.8",
+        153 => "key.keyboard.keypad.9",
+        154 => "key.keyboard.keypad.divide",
+        155 => "key.keyboard.keypad.multiply",
+        156 => "key.keyboard.keypad.subtract",
+        157 => "key.keyboard.keypad.add",
+        158 => "key.keyboard.keypad.period",
+        159 => "key.keyboard.keypad.comma",
+        160 => "key.keyboard.keypad.enter",
+        161 => "key.keyboard.keypad.equal",
+        _ => return None,
+    })
+}
+
+/// Pojav decoder for Android `KeyEvent` layout variants (`version >= 9`).
+pub fn pojav_code_android(code: i32) -> Option<ControlEvent> {
+    Some(match code {
+        -1 => ControlEvent::ToggleKeyboard,
+        -2 => ControlEvent::ToggleControls,
+        -3 => ControlEvent::Token("key.mouse.left"),
+        -4 => ControlEvent::Token("key.mouse.right"),
+        -5 => ControlEvent::Token("mouse.virtual.toggle"),
+        -6 => ControlEvent::Token("key.mouse.middle"),
+        -7 => ControlEvent::Token("mouse.scroll.up"),
+        -8 => ControlEvent::Token("mouse.scroll.down"),
+        -9 => ControlEvent::OpenMenu,
+        _ => ControlEvent::Token(android_keycode(code)?),
+    })
+}
 /// Apply an upstream Pojav input edge to a queue. Pojav's wheel buttons
 /// fire on release, rather than on press; encode each wheel tick as a complete
 /// pair so repeated taps remain balanced. UI-owned actions return false.
@@ -186,9 +316,11 @@ pub fn zalith_event(kind: &str, key: &str) -> Option<ControlEvent> {
         "hide_layer" => Some(ControlEvent::LayerHide),
         "send_text" => Some(ControlEvent::SendText),
         "launcher_event" => Some(match key {
-            "GLFW_MOUSE_BUTTON_LEFT" => ControlEvent::Token("key.mouse.left"),
-            "GLFW_MOUSE_BUTTON_RIGHT" => ControlEvent::Token("key.mouse.right"),
-            "GLFW_MOUSE_BUTTON_MIDDLE" => ControlEvent::Token("key.mouse.middle"),
+            "GLFW_MOUSE_BUTTON_LEFT" | "GLFW_MOUSE_BUTTON_1" => ControlEvent::Token("key.mouse.left"),
+            "GLFW_MOUSE_BUTTON_RIGHT" | "GLFW_MOUSE_BUTTON_2" => ControlEvent::Token("key.mouse.right"),
+            "GLFW_MOUSE_BUTTON_MIDDLE" | "GLFW_MOUSE_BUTTON_3" => ControlEvent::Token("key.mouse.middle"),
+            "GLFW_MOUSE_BUTTON_4" => ControlEvent::Token("key.mouse.4"),
+            "GLFW_MOUSE_BUTTON_5" => ControlEvent::Token("key.mouse.5"),
             "launcher.event.switch_ime" => ControlEvent::ToggleKeyboard,
             "launcher.event.switch_menu" => ControlEvent::OpenMenu,
             "launcher.event.scroll_up" => ControlEvent::ScrollUpHeld,
@@ -323,6 +455,17 @@ mod tests {
         assert_eq!(pojav_code(-1), Some(ControlEvent::ToggleKeyboard));
         assert_eq!(pojav_code(-3), Some(ControlEvent::Token("key.mouse.left")));
         assert_eq!(pojav_code(87), Some(ControlEvent::Token("key.keyboard.w")));
+        assert_eq!(pojav_code_android(51), Some(ControlEvent::Token("key.keyboard.w")));
+        assert_eq!(pojav_code_android(29), Some(ControlEvent::Token("key.keyboard.a")));
+        assert_eq!(pojav_code_android(47), Some(ControlEvent::Token("key.keyboard.s")));
+        assert_eq!(pojav_code_android(32), Some(ControlEvent::Token("key.keyboard.d")));
+        assert_eq!(pojav_code_android(133), Some(ControlEvent::Token("key.keyboard.f3")));
+        assert_eq!(pojav_code_android(59), Some(ControlEvent::Token("key.keyboard.left.shift")));
+        assert_eq!(pojav_code_android(62), Some(ControlEvent::Token("key.keyboard.space")));
+        for code in [7, 8, 16, 19, 29, 54, 59, 61, 62, 66, 67, 111, 113, 131, 142, 144, 160] {
+            let tok = android_keycode(code).unwrap();
+            assert!(crate::keybinds::key_code(tok).is_some(), "{code} -> {tok}");
+        }
         assert_eq!(zalith_event("switch_layer", "layer-id"), Some(ControlEvent::LayerSwitch));
         assert_eq!(zalith_event("launcher_event", "launcher.event.scroll_up"), Some(ControlEvent::ScrollUpHeld));
         assert_eq!(zalith_event("launcher_event", "launcher.event.scroll_up.single"), Some(ControlEvent::Token("mouse.scroll.up")));

@@ -346,7 +346,10 @@ impl TouchControls {
         p.size = (p.size * self.settings.button_scale)
             .min(self.aspect())
             .min(1.0);
-        let half = [p.size / self.aspect() / 2.0, p.size / 2.0];
+        let half = [
+            ((p.size * p.width_ratio) / self.aspect() / 2.0).min(0.5),
+            ((p.size * p.height_ratio) / 2.0).min(0.5),
+        ];
         for (i, half) in half.into_iter().enumerate() {
             p.center[i] = p.center[i].clamp(half, 1.0 - half);
         }
