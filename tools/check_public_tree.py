@@ -22,6 +22,8 @@ ANDROID_SCREEN_RECORDER = "packaging/android/java/dev/horizon/android/ScreenReco
 ANDROID_RECORDER_SERVICE = "packaging/android/java/dev/horizon/android/RecorderService.java"
 # Original recorder for the game's own frames: a MediaCodec encoder the renderer draws into.
 ANDROID_ENGINE_RECORDER = "packaging/android/java/dev/horizon/android/EngineRecorder.java"
+# Original Replay Mod offline MP4 encoder (MediaCodec H.264 + MediaMuxer).
+ANDROID_REPLAY_VIDEO_ENCODER = "packaging/android/java/dev/horizon/android/ReplayVideoEncoder.java"
 # Original Bluetooth-free Rich Presence bridge: the Discord app's own bound service, nothing of it.
 ANDROID_DISCORD_PRESENCE = "packaging/android/java/dev/horizon/android/DiscordPresence.java"
 ANDROID_WALLPAPER_BRIDGE = "packaging/android/java/dev/horizon/android/WallpaperPlayer.java"
@@ -47,7 +49,7 @@ def prohibited(path):
     if any(part in {".local", ".gradle", "node_modules", "__pycache__"} for part in parsed.parts):
         return True
     # Original JDK-only tools are an exact allowlist; recovered game Java stays private.
-    if path in ORIGINAL_JDK_TOOLS or path in UPSTREAM_CONTROL_JAVA or path in {ANDROID_RESULT_BRIDGE, ANDROID_DOCUMENTS_BRIDGE, ANDROID_NATIVE_MODS_BRIDGE, ANDROID_WALLPAPER_BRIDGE, ANDROID_INTRO_ACTIVITY, ANDROID_SCREEN_RECORDER, ANDROID_RECORDER_SERVICE, ANDROID_ENGINE_RECORDER, ANDROID_DISCORD_PRESENCE}:
+    if path in ORIGINAL_JDK_TOOLS or path in UPSTREAM_CONTROL_JAVA or path in {ANDROID_RESULT_BRIDGE, ANDROID_DOCUMENTS_BRIDGE, ANDROID_NATIVE_MODS_BRIDGE, ANDROID_WALLPAPER_BRIDGE, ANDROID_INTRO_ACTIVITY, ANDROID_SCREEN_RECORDER, ANDROID_RECORDER_SERVICE, ANDROID_ENGINE_RECORDER, ANDROID_REPLAY_VIDEO_ENCODER, ANDROID_DISCORD_PRESENCE}:
         return False
     # Original Horizon mod sources may also be tracked.
     if parsed.suffix == ".java" and path.startswith(("mods/horizon/src/", "mods/horizon-lab/src/")):
