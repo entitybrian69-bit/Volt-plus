@@ -9140,7 +9140,7 @@ impl Renderer {
         let failed = checks.and_then(GpuChecks::pop);
         if let Some((request, buffer)) = readback {
             // Out of memory on the way: the PNG would be black; taken again at half the size.
-            if let Some(e) = failed {
+            if let Some(ref e) = failed {
                 log::warn!(
                     "Horizon renderer: a {}x{} screenshot failed ({e}); trying half the size",
                     self.config.width,
