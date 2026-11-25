@@ -19959,9 +19959,15 @@ fn load_resources(
     let (game_cpu, renderer_cpu) = if menu {
         if parallel {
             std::thread::scope(|scope| {
-                let cpu = scope.spawn(|| GameCpuResources::load(&root));
+                let cpu = scope.spawn(|| GameCpuResources::load(&root).map_err(|e| e.to_string()));
                 let tex = prepare_renderer_textures(&pack);
-                (cpu.join().unwrap().map(Some), Some(tex))
+                (
+                    cpu.join()
+                        .unwrap()
+                        .map(Some)
+                        .map_err(|e| -> Box<dyn std::error::Error> { e.into() }),
+                    Some(tex),
+                )
             })
         } else {
             (

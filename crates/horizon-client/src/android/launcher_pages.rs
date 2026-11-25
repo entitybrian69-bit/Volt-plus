@@ -2390,10 +2390,9 @@ impl Launcher {
                     self.cursor.0 as f32 / pointer_density,
                     self.cursor.1 as f32 / pointer_density,
                 ),
-                true,
-                self.mouse_touch.virtual_mouse_cursor,
                 self.mouse_touch.virtual_mouse_pointer_scale,
                 self.mouse_touch.virtual_mouse_opacity,
+                self.mouse_touch.virtual_mouse_cursor,
             );
         }
 
