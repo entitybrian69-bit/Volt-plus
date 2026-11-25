@@ -1470,7 +1470,7 @@ impl<'a> Ui<'a> {
     ) {
         let alpha = opacity.clamp(0.15, 1.0);
         let scale = pointer_scale.clamp(0.50, 2.00);
-        if let Some(slot) = icon.atlas_slot()
+        if let Some(slot) = icon.sprite_name()
             && let Some(&rect) = self.atlas.sprites.get(slot)
         {
             let (dy, stagger_alpha) = self.stagger_transform(x, y, box_size, box_size);
