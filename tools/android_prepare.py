@@ -86,8 +86,17 @@ def download_game(version, directory):
         if artifact['sha1'] != pins[f'{side}_sha1']:
             raise ValueError(f'{side} jar differs from the engine pin')
         files.append((artifact['url'], versions / f'{version}{"-server" if side == "server" else ""}.jar', artifact['sha1']))
-    for artifact in lab.client_library_artifacts(manifest):
-        files.append((artifact['url'], relative(directory / 'libraries', artifact['path']), artifact['sha1']))
+    seen_libs = set()
+    for source_manifest in [manifest_path, ROOT / '.local/minecraft' / version / 'manifest.json']:
+        if not source_manifest.is_file():
+            continue
+        parsed = json.loads(source_manifest.read_text())
+        for artifact in lab.client_library_artifacts(parsed):
+            rel_path = relative(directory / 'libraries', artifact['path'])
+            if rel_path not in seen_libs:
+                seen_libs.add(rel_path)
+                files.append((artifact['url'], rel_path, artifact['sha1']))
+    print(f'Prepared library list: {len(seen_libs)} libraries (manifest sha1={entry["sha1"]})', flush=True)
     index = manifest['assetIndex']
     index_path = relative(directory / 'assets/indexes', f"{index['id']}.json")
     lab.download(index['url'], index_path, index['sha1'])
