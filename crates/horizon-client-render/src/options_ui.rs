@@ -4896,7 +4896,7 @@ impl OptionsUi {
                                 s.horizon.shader_pack = if s.horizon.shader_pack == pack.file {
                                     String::new()
                                 } else {
-                                    s.graphics.volt_shaders.enabled = false;
+                                    s.horizon.volt_shaders.enabled = false;
                                     pack.file.clone()
                                 };
                                 events.push(Event::ShaderPack);
@@ -6077,7 +6077,7 @@ impl OptionsUi {
                                 s.horizon.shader_pack = if s.horizon.shader_pack == pack.file {
                                     String::new()
                                 } else {
-                                    s.graphics.volt_shaders.enabled = false;
+                                    s.horizon.volt_shaders.enabled = false;
                                     pack.file.clone()
                                 };
                                 events.push(Event::ShaderPack);

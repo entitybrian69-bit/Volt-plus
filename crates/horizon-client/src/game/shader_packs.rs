@@ -90,7 +90,7 @@ pub(super) fn picks_native_pack(settings: &horizon_client::settings::Settings) -
         &settings.mods,
     );
     if picked.is_empty() {
-        return settings.graphics.volt_shaders.enabled && settings.graphics.volt_shaders.labpbr;
+        return settings.horizon.volt_shaders.enabled && settings.horizon.volt_shaders.labpbr;
     }
     let path = Game::shader_packs_dir().join(picked);
     horizon_shader_api::package::is_pack(&path)
@@ -329,7 +329,7 @@ impl Game<'_> {
             &self.settings.mods,
         );
         const VOLT_BUILTIN_PICK: &str = "__volt_builtin_shaders__";
-        let using_builtin = picked.is_empty() && self.settings.graphics.volt_shaders.enabled;
+        let using_builtin = picked.is_empty() && self.settings.horizon.volt_shaders.enabled;
         let effective_picked = if using_builtin { VOLT_BUILTIN_PICK } else { picked };
         if self.native_shaders.picked != effective_picked {
             // Another pack, or none: drop what ran.

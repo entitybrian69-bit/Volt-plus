@@ -505,16 +505,16 @@ impl ShaderOpt {
     }
 
     fn step_slider(self, s: &mut Settings, forward: bool) {
-        let Some(cur) = self.slider_frac(&s.graphics.volt_shaders) else {
+        let Some(cur) = self.slider_frac(&s.horizon.volt_shaders) else {
             return;
         };
         let delta = if forward { 0.05 } else { -0.05 };
-        self.set_slider(&mut s.graphics.volt_shaders, (cur + delta).clamp(0.0, 1.0));
+        self.set_slider(&mut s.horizon.volt_shaders, (cur + delta).clamp(0.0, 1.0));
     }
 
     /// Applies a cycle/toggle change. Returns `true` if `s.horizon.shader_pack` was touched.
     fn cycle(self, s: &mut Settings, back: bool) -> bool {
-        let c = &mut s.graphics.volt_shaders;
+        let c = &mut s.horizon.volt_shaders;
         let mut pack_changed = false;
         match self {
             Self::Enabled => {
@@ -1020,7 +1020,7 @@ impl VoltShadersUi {
             with_alpha(text_primary, ui_alpha * (0.35 + 0.65 * tab_p)),
             true,
         );
-        let cfg = &s.graphics.volt_shaders;
+        let cfg = &s.horizon.volt_shaders;
         let vram_mb = cfg.estimated_vram_mb();
         let badge = if !cfg.enabled {
             "Off".to_owned()
@@ -1276,9 +1276,9 @@ impl VoltShadersUi {
                 let track_x = ctrl.x + 6.0;
                 let track_w = (ctrl.w - 12.0).max(16.0);
                 let v = ((pos.0 - track_x) / track_w).clamp(0.0, 1.0);
-                opt.set_slider(&mut s.graphics.volt_shaders, v);
+                opt.set_slider(&mut s.horizon.volt_shaders, v);
                 if let Some((_, sv)) = self.slider_anim.iter_mut().find(|(k, _)| *k == opt) {
-                    *sv = opt.slider_frac(&s.graphics.volt_shaders).unwrap_or(v);
+                    *sv = opt.slider_frac(&s.horizon.volt_shaders).unwrap_or(v);
                 }
                 return vec![VoltShadersAction::SliderDrag, VoltShadersAction::Changed];
             }
@@ -1338,7 +1338,7 @@ impl VoltShadersUi {
                             let track_x = ctrl.x + 6.0;
                             let track_w = (ctrl.w - 12.0).max(16.0);
                             let v = ((pos.0 - track_x) / track_w).clamp(0.0, 1.0);
-                            entry.opt.set_slider(&mut s.graphics.volt_shaders, v);
+                            entry.opt.set_slider(&mut s.horizon.volt_shaders, v);
                             self.dragging = Some(entry.opt);
                             self.can_change_value = true;
                             return vec![VoltShadersAction::SliderDrag, VoltShadersAction::Changed];

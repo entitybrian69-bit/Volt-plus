@@ -59,7 +59,7 @@ pub(super) fn pack_reads_labpbr(pack: &Pack) -> bool {
 impl Game<'_> {
     /// Builds/reloads the in-memory Volt+ Built-in Shader Suite whenever its config changes.
     pub(super) fn tick_volt_shader_pack(&mut self) {
-        let cfg = self.settings.graphics.volt_shaders.clone();
+        let cfg = self.settings.horizon.volt_shaders.clone();
         if !cfg.enabled {
             return;
         }
