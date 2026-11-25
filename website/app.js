@@ -9,13 +9,13 @@
     {
       src: 'assets/screen-launcher.jpg',
       tag: '01 / 07 · PLAY DASHBOARD',
-      title: 'Volt Launcher Plus Home',
-      desc: '3D skin preview, quick Vulkan/GLES renderer switcher, Touch layout selector, Gyroscope toggle, and instant Play Minecraft 26.3.'
+      title: 'Volt launcher plus Home',
+      desc: '3D skin preview, quick Vulkan/GLES renderer switcher, Touch layout selector, Gyroscope toggle, and Play Minecraft 26.3.'
     },
     {
       src: 'assets/screen-mods.jpg',
       tag: '02 / 07 · MODS BROWSER',
-      title: '260+ Built-in & Custom Mods',
+      title: '260 Built-in & Custom Mods',
       desc: 'Browse Horizon .hmod mods with version history, descriptions, search, and one-tap Install or .hmod HTTPS import.'
     },
     {
@@ -27,7 +27,7 @@
     {
       src: 'assets/screen-shaders.jpg',
       tag: '04 / 07 · SHADER PACKS',
-      title: '31+ Horizon Native Shaders (.hshader)',
+      title: '31 Horizon Native Shaders (.hshader)',
       desc: 'Switch between Horizon Native Shaders and Modrinth shader packs with volumetric clouds, sun shafts, and water reflections.'
     },
     {
@@ -50,84 +50,41 @@
     }
   ];
 
-  // ---------- 1. Scroll Progress, Navbar & Back-to-top ----------
+  // ---------- 1. Scroll Progress & Bottom Launcher Dock Sync ----------
   const scrollProgress = document.getElementById('scrollProgress');
-  const navbar = document.getElementById('navbar');
-  const scrollTopBtn = document.getElementById('scrollTopBtn');
-  const navLinks = Array.from(document.querySelectorAll('.nav-link'));
+  const dockItems = Array.from(document.querySelectorAll('.dock-item'));
+  const sectionIds = ['play', 'downloads', 'features', 'screenshots', 'owner', 'faq'];
 
   function onScroll() {
     const doc = document.documentElement;
     const max = Math.max(1, doc.scrollHeight - window.innerHeight);
     const ratio = Math.min(1, Math.max(0, window.scrollY / max));
     if (scrollProgress) scrollProgress.style.transform = `scaleX(${ratio})`;
-    if (navbar) navbar.classList.toggle('is-scrolled', window.scrollY > 24);
-    if (scrollTopBtn) scrollTopBtn.classList.toggle('is-visible', window.scrollY > 420);
 
-    const sections = ['downloads', 'features', 'screenshots', 'owner', 'faq'];
-    let current = '';
-    for (const id of sections) {
+    let current = 'play';
+    for (const id of sectionIds) {
       const el = document.getElementById(id);
-      if (el && el.getBoundingClientRect().top <= 180) {
+      if (el && el.getBoundingClientRect().top <= 240) {
         current = id;
       }
     }
-    navLinks.forEach((link) => {
-      link.classList.toggle('is-active', link.getAttribute('href') === `#${current}`);
+    dockItems.forEach((item) => {
+      item.classList.toggle('is-active', item.dataset.section === current);
     });
   }
 
   window.addEventListener('scroll', onScroll, { passive: true });
   onScroll();
 
-  if (scrollTopBtn) {
-    scrollTopBtn.addEventListener('click', () => {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    });
-  }
-
-  // Mobile Nav Drawer
-  const navToggle = document.getElementById('navToggle');
-  const mobileDrawer = document.getElementById('mobileDrawer');
-  if (navToggle && mobileDrawer) {
-    navToggle.addEventListener('click', () => {
-      const open = !mobileDrawer.classList.contains('is-open');
-      mobileDrawer.classList.toggle('is-open', open);
-      navToggle.classList.toggle('is-open', open);
-      navToggle.setAttribute('aria-expanded', String(open));
-    });
-    mobileDrawer.querySelectorAll('a').forEach((a) => {
-      a.addEventListener('click', () => {
-        mobileDrawer.classList.remove('is-open');
-        navToggle.classList.remove('is-open');
-        navToggle.setAttribute('aria-expanded', 'false');
-      });
-    });
-  }
-
-  // ---------- 2. Interactive Particle Canvas & Cursor Spotlight ----------
-  const canvas = document.getElementById('particleCanvas');
-  const spotlight = document.getElementById('cursorSpotlight');
-  const pointer = { x: -9999, y: -9999, active: false };
-
-  window.addEventListener('pointermove', (e) => {
-    pointer.x = e.clientX;
-    pointer.y = e.clientY;
-    pointer.active = true;
-    if (spotlight) {
-      spotlight.style.left = `${e.clientX}px`;
-      spotlight.style.top = `${e.clientY}px`;
-      spotlight.style.opacity = '1';
-    }
-  }, { passive: true });
-
+  // ---------- 2. Warm Sunlit Shader Dust Motes Canvas ----------
+  const canvas = document.getElementById('moteCanvas');
   if (canvas) {
     const ctx = canvas.getContext('2d');
     let width = 0;
     let height = 0;
-    let particles = [];
+    let motes = [];
 
-    function resizeCanvas() {
+    function resizeMotes() {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       width = window.innerWidth;
       height = window.innerHeight;
@@ -135,81 +92,54 @@
       canvas.height = Math.floor(height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      const count = Math.min(72, Math.max(28, Math.floor((width * height) / 22000)));
-      particles = Array.from({ length: count }, () => ({
+      const count = Math.min(52, Math.max(20, Math.floor((width * height) / 28000)));
+      motes = Array.from({ length: count }, () => ({
         x: Math.random() * width,
         y: Math.random() * height,
-        vx: (Math.random() - 0.5) * 0.45,
-        vy: (Math.random() - 0.5) * 0.45,
-        r: Math.random() * 2 + 1,
-        hue: Math.random() < 0.5 ? '#7c5cff' : Math.random() < 0.7 ? '#00e5ff' : '#3ddc84'
+        vx: (Math.random() - 0.5) * 0.25,
+        vy: -Math.random() * 0.35 - 0.08,
+        r: Math.random() * 2.1 + 0.7,
+        alpha: Math.random() * 0.45 + 0.15,
+        warm: Math.random() < 0.65
       }));
     }
 
-    function tickParticles() {
+    function tickMotes() {
       ctx.clearRect(0, 0, width, height);
-      for (let i = 0; i < particles.length; i++) {
-        const p = particles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-
-        if (p.x < 0) p.x = width;
-        if (p.x > width) p.x = 0;
-        if (p.y < 0) p.y = height;
-        if (p.y > height) p.y = 0;
-
-        if (pointer.active) {
-          const dx = p.x - pointer.x;
-          const dy = p.y - pointer.y;
-          const dist = Math.hypot(dx, dy);
-          if (dist > 0 && dist < 130) {
-            const push = (130 - dist) / 130;
-            p.x += (dx / dist) * push * 1.6;
-            p.y += (dy / dist) * push * 1.6;
-          }
-        }
+      for (const m of motes) {
+        m.x += m.vx;
+        m.y += m.vy;
+        if (m.y < -10) m.y = height + 10;
+        if (m.x < -10) m.x = width + 10;
+        if (m.x > width + 10) m.x = -10;
 
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = p.hue;
-        ctx.globalAlpha = 0.62;
+        ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+        ctx.fillStyle = m.warm
+          ? `rgba(255, 244, 214, ${m.alpha.toFixed(2)})`
+          : `rgba(220, 232, 224, ${m.alpha.toFixed(2)})`;
         ctx.fill();
-
-        for (let j = i + 1; j < particles.length; j++) {
-          const q = particles[j];
-          const dist = Math.hypot(p.x - q.x, p.y - q.y);
-          if (dist < 115) {
-            ctx.beginPath();
-            ctx.moveTo(p.x, p.y);
-            ctx.lineTo(q.x, q.y);
-            ctx.strokeStyle = 'rgba(130, 150, 255, ' + ((1 - dist / 115) * 0.16).toFixed(3) + ')';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-          }
-        }
       }
-      ctx.globalAlpha = 1;
-      requestAnimationFrame(tickParticles);
+      requestAnimationFrame(tickMotes);
     }
 
-    resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
-    requestAnimationFrame(tickParticles);
+    resizeMotes();
+    window.addEventListener('resize', resizeMotes);
+    requestAnimationFrame(tickMotes);
   }
 
-  // ---------- 3. Scroll Reveal & Animated Counters ----------
+  // ---------- 3. Scroll Reveal & Counters ----------
   const revealObserver = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
         if (!entry.isIntersecting) return;
         const el = entry.target;
-        const delay = Number(el.dataset.delay || 0);
-        el.style.transitionDelay = `${delay}ms`;
+        el.style.transitionDelay = `${Number(el.dataset.delay || 0)}ms`;
         el.classList.add('is-visible');
         revealObserver.unobserve(el);
       });
     },
-    { threshold: 0.12 }
+    { threshold: 0.08 }
   );
 
   document.querySelectorAll('.reveal').forEach((el) => revealObserver.observe(el));
@@ -221,10 +151,9 @@
         const el = entry.target;
         const target = Number(el.dataset.count || 0);
         const suffix = el.dataset.suffix || '';
-        const duration = 1150;
         const start = performance.now();
         function step(now) {
-          const t = Math.min(1, (now - start) / duration);
+          const t = Math.min(1, (now - start) / 950);
           const eased = 1 - Math.pow(1 - t, 3);
           el.textContent = `${Math.round(target * eased)}${suffix}`;
           if (t < 1) requestAnimationFrame(step);
@@ -233,41 +162,29 @@
         counterObserver.unobserve(el);
       });
     },
-    { threshold: 0.4 }
+    { threshold: 0.35 }
   );
 
   document.querySelectorAll('.stat-num[data-count]').forEach((el) => counterObserver.observe(el));
 
-  // ---------- 4. 3D Tilt Cards & Magnetic Buttons ----------
+  // ---------- 4. Subtle 3D Tilt on Glass Cards ----------
   if (window.matchMedia('(pointer: fine)').matches) {
     document.querySelectorAll('.tilt-card').forEach((card) => {
       card.addEventListener('pointermove', (e) => {
         const rect = card.getBoundingClientRect();
         const px = (e.clientX - rect.left) / rect.width - 0.5;
         const py = (e.clientY - rect.top) / rect.height - 0.5;
-        card.style.transform = `perspective(900px) rotateX(${(-py * 5.5).toFixed(2)}deg) rotateY(${(px * 6.5).toFixed(2)}deg) translateY(-3px)`;
+        card.style.transform = `perspective(1000px) rotateX(${(-py * 3.5).toFixed(2)}deg) rotateY(${(px * 4).toFixed(2)}deg) translateY(-2px)`;
       });
       card.addEventListener('pointerleave', () => {
         card.style.transform = '';
       });
     });
-
-    document.querySelectorAll('.magnetic').forEach((btn) => {
-      btn.addEventListener('pointermove', (e) => {
-        const rect = btn.getBoundingClientRect();
-        const dx = (e.clientX - (rect.left + rect.width / 2)) * 0.18;
-        const dy = (e.clientY - (rect.top + rect.height / 2)) * 0.18;
-        btn.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`;
-      });
-      btn.addEventListener('pointerleave', () => {
-        btn.style.transform = '';
-      });
-    });
   }
 
-  // ---------- 5. Kinetic Hero Words & Intro GIF Toggle ----------
+  // ---------- 5. Kinetic Subtitle & Intro GIF Toggle ----------
   const kineticEl = document.getElementById('kineticWord');
-  const words = ['Android', '260 FPS', 'Vulkan', 'Shaders', 'Java 26.3'];
+  const words = ['Vulkan Engine', '260 FPS Runtime', 'Shader Support', 'Touch Control Hub', 'Replay MP4 Export'];
   let wordIndex = 0;
   if (kineticEl) {
     setInterval(() => {
@@ -276,39 +193,42 @@
         wordIndex = (wordIndex + 1) % words.length;
         kineticEl.textContent = words[wordIndex];
         kineticEl.classList.remove('is-switching');
-      }, 280);
+      }, 260);
     }, 2400);
   }
 
   const toggleIntroBtn = document.getElementById('toggleIntroPreview');
   const toggleIntroLabel = document.getElementById('toggleIntroLabel');
+  const previewCaption = document.getElementById('previewCaption');
   const heroPreviewImg = document.getElementById('heroPreviewImg');
   const heroIntroGif = document.getElementById('heroIntroGif');
   let showingIntro = false;
   if (toggleIntroBtn && heroPreviewImg && heroIntroGif) {
     toggleIntroBtn.addEventListener('click', () => {
       showingIntro = !showingIntro;
-      heroPreviewImg.classList.toggle('is-visible', !showingIntro);
-      heroIntroGif.classList.toggle('is-visible', showingIntro);
+      heroPreviewImg.classList.toggle('is-active', !showingIntro);
+      heroIntroGif.classList.toggle('is-active', showingIntro);
       if (toggleIntroLabel) {
-        toggleIntroLabel.textContent = showingIntro ? 'Show Launcher Dashboard' : 'Play Intro Animation';
+        toggleIntroLabel.textContent = showingIntro ? 'Show Dashboard' : 'Play Intro GIF';
+      }
+      if (previewCaption) {
+        previewCaption.textContent = showingIntro
+          ? '1080p60 First-Launch Intro Clip'
+          : `Live Launcher UI · ${currentReleaseState.tag}`;
       }
     });
   }
 
-  // ---------- 6. Feature Tabs ----------
-  const tabs = Array.from(document.querySelectorAll('.ftab'));
-  const panels = Array.from(document.querySelectorAll('.ftab-panel'));
-  tabs.forEach((tab) => {
-    tab.addEventListener('click', () => {
-      const target = tab.dataset.tab;
-      tabs.forEach((t) => {
-        const active = t === tab;
-        t.classList.toggle('is-active', active);
-        t.setAttribute('aria-selected', String(active));
-      });
-      panels.forEach((p) => {
-        p.classList.toggle('is-active', p.dataset.panel === target);
+  // ---------- 6. Feature Category Filter Pills ----------
+  const filterPills = Array.from(document.querySelectorAll('.filter-pill'));
+  const featureCards = Array.from(document.querySelectorAll('.setting-card'));
+  filterPills.forEach((pill) => {
+    pill.addEventListener('click', () => {
+      const cat = pill.dataset.filter || 'all';
+      filterPills.forEach((p) => p.classList.toggle('is-active', p === pill));
+      featureCards.forEach((card) => {
+        const show = cat === 'all' || card.dataset.cat === cat;
+        card.classList.toggle('is-hidden', !show);
       });
     });
   });
@@ -330,7 +250,7 @@
         mainImg.src = item.src;
         mainImg.alt = item.title;
         mainImg.classList.remove('is-fading');
-      }, 150);
+      }, 140);
     }
     if (cTag) cTag.textContent = item.tag;
     if (cTitle) cTitle.textContent = item.title;
@@ -342,15 +262,13 @@
   document.getElementById('nextSlideBtn')?.addEventListener('click', () => setSlide(slideIdx + 1));
   thumbs.forEach((t) => t.addEventListener('click', () => setSlide(Number(t.dataset.index || 0))));
 
-  let autoSlideTimer = setInterval(() => setSlide(slideIdx + 1), 5200);
-  const carouselEl = document.querySelector('.carousel-shell');
-  carouselEl?.addEventListener('pointerenter', () => clearInterval(autoSlideTimer));
-  carouselEl?.addEventListener('pointerleave', () => {
+  let autoSlideTimer = setInterval(() => setSlide(slideIdx + 1), 5000);
+  document.querySelector('.spotlight-frame')?.addEventListener('pointerenter', () => clearInterval(autoSlideTimer));
+  document.querySelector('.spotlight-frame')?.addEventListener('pointerleave', () => {
     clearInterval(autoSlideTimer);
-    autoSlideTimer = setInterval(() => setSlide(slideIdx + 1), 5200);
+    autoSlideTimer = setInterval(() => setSlide(slideIdx + 1), 5000);
   });
 
-  // Lightbox
   const lightbox = document.getElementById('lightbox');
   const lbImg = document.getElementById('lbImg');
   const lbTitle = document.getElementById('lbTitle');
@@ -380,7 +298,7 @@
   }
 
   document.getElementById('openLightboxBtn')?.addEventListener('click', () => openLightbox(slideIdx));
-  document.querySelectorAll('.shot-card').forEach((card) => {
+  document.querySelectorAll('.shot-tile').forEach((card) => {
     card.addEventListener('click', () => openLightbox(Number(card.dataset.index || 0)));
   });
   document.getElementById('lbClose')?.addEventListener('click', closeLightbox);
@@ -396,7 +314,7 @@
     if (e.key === 'ArrowRight') openLightbox(lbIdx + 1);
   });
 
-  // ---------- 8. FAQ Accordion & Release Notes Toggle ----------
+  // ---------- 8. FAQ & Release Notes Accordions ----------
   document.querySelectorAll('.faq-q').forEach((btn) => {
     btn.addEventListener('click', () => {
       const item = btn.closest('.faq-item');
@@ -454,23 +372,23 @@
 
     try {
       if (navigator.userAgentData?.getHighEntropyValues) {
-        const hi = await navigator.userAgentData.getHighEntropyValues(['architecture', 'bitness', 'platform']);
+        const hi = await navigator.userAgentData.getHighEntropyValues(['architecture', 'bitness']);
         if (hi.architecture === 'arm' && hi.bitness === '32') {
           abi = 'armv7';
-          label = 'Detected 32-bit ARM Device';
+          label = 'Detected: 32-bit ARM';
         } else if (hi.architecture === 'arm' || hi.bitness === '64') {
           abi = 'arm64';
-          label = 'Detected 64-bit ARM Device';
+          label = 'Detected: 64-bit ARM';
         }
       } else if (/armv7|armeabi/i.test(ua) && !/aarch64|arm64/i.test(ua)) {
         abi = 'armv7';
-        label = 'Detected 32-bit ARM Device';
+        label = 'Detected: 32-bit ARM';
       } else if (/aarch64|arm64/i.test(ua)) {
         abi = 'arm64';
-        label = 'Detected 64-bit ARM Device';
+        label = 'Detected: 64-bit ARM';
       } else if (!/android/i.test(ua)) {
         abi = 'universal';
-        label = 'Desktop Browser · Universal / 64-bit Recommended';
+        label = 'Desktop · Universal / 64-bit Recommended';
       }
     } catch (_) {}
 
@@ -499,8 +417,7 @@
 
   function isStableRelease(rel) {
     if (!rel || rel.draft || rel.prerelease) return false;
-    const text = `${rel.tag_name || ''} ${rel.name || ''}`;
-    return !DISALLOWED_RE.test(text);
+    return !DISALLOWED_RE.test(`${rel.tag_name || ''} ${rel.name || ''}`);
   }
 
   function matchAssetAbi(assets, abi) {
@@ -509,15 +426,9 @@
       const n = (a.name || '').toLowerCase();
       return n.endsWith('.apk') && !DISALLOWED_RE.test(n);
     });
-    if (abi === 'arm64') {
-      return valid.find((a) => /arm64|aarch64/i.test(a.name));
-    }
-    if (abi === 'armv7') {
-      return valid.find((a) => /armeabi-v7a|armv7|armeabi/i.test(a.name));
-    }
-    if (abi === 'universal') {
-      return valid.find((a) => /universal/i.test(a.name));
-    }
+    if (abi === 'arm64') return valid.find((a) => /arm64|aarch64/i.test(a.name));
+    if (abi === 'armv7') return valid.find((a) => /armeabi-v7a|armv7|armeabi/i.test(a.name));
+    if (abi === 'universal') return valid.find((a) => /universal/i.test(a.name));
     return null;
   }
 
@@ -534,19 +445,15 @@
 
     const info = currentReleaseState.assets[detectedAbi] || currentReleaseState.assets.arm64;
     const labelMap = {
-      arm64: '64-bit APK',
-      armv7: '32-bit APK',
-      universal: 'Universal APK'
+      arm64: 'Download 64-bit APK',
+      armv7: 'Download 32-bit APK',
+      universal: 'Download Universal APK'
     };
     heroBtn.href = info.url;
     heroBtn.setAttribute('download', info.filename);
     heroBtn.dataset.abi = detectedAbi;
-    if (heroTitle) {
-      heroTitle.textContent = `Download ${labelMap[detectedAbi]} (${currentReleaseState.tag})`;
-    }
-    if (heroSub) {
-      heroSub.textContent = `${info.sizeMb} · Direct Release APK · No GitHub Redirect`;
-    }
+    if (heroTitle) heroTitle.textContent = `${labelMap[detectedAbi]} (${currentReleaseState.tag})`;
+    if (heroSub) heroSub.textContent = `${info.sizeMb} · Direct Release APK · No GitHub Redirect`;
   }
 
   function renderReleaseState() {
@@ -559,11 +466,13 @@
 
     if (badge) badge.textContent = `Latest Release: ${currentReleaseState.tag}`;
     if (navSub) navSub.textContent = `${currentReleaseState.tag} · Release`;
-    if (heroLabel) heroLabel.textContent = `Official Release ${currentReleaseState.tag} · No Debug · No Pre-release`;
+    if (heroLabel) {
+      heroLabel.innerHTML = `<span class="live-dot"></span><span>Release ${currentReleaseState.tag}</span>`;
+    }
     if (meta) {
       meta.textContent = currentReleaseState.publishedAt
-        ? `Published ${new Date(currentReleaseState.publishedAt).toLocaleDateString()} · Signed Release builds (64-bit, 32-bit & Universal)`
-        : 'Signed Release builds synced directly on this domain (64-bit, 32-bit & Universal)';
+        ? `Published ${new Date(currentReleaseState.publishedAt).toLocaleDateString()} · Signed Release APKs (64-bit, 32-bit & Universal)`
+        : 'Automatically synced to the latest published stable Release — no debug, no pre-release, no GitHub redirects.';
     }
     if (notesHeading) notesHeading.textContent = `Release Notes — ${currentReleaseState.tag}`;
     if (notesBody) notesBody.textContent = currentReleaseState.notes || 'Official signed Release build.';
@@ -628,7 +537,6 @@
       };
     }
 
-    // Also poll GitHub Releases API (strictly stable Releases only — never draft, prerelease, or debug)
     try {
       const apiRes = await fetch(RELEASES_API, {
         headers: { Accept: 'application/vnd.github+json' },
@@ -649,14 +557,12 @@
             currentReleaseState.publishedAt = stable.published_at;
             currentReleaseState.notes = stable.body || currentReleaseState.notes;
 
-            // Keep same-origin ./downloads/*.apk whenever Pages already synced this release so tapping NEVER opens GitHub.
-            // If a brand-new Release was just published seconds ago before Pages redeploy finishes, fall back to direct API binary asset URL.
             if (a64) {
               currentReleaseState.assets.arm64 = {
                 filename: matchesBaked ? baked.assets.arm64.filename : a64.name,
                 url: matchesBaked ? baked.assets.arm64.url : a64.browser_download_url,
                 sizeMb: formatMb(a64.size),
-                sha256: matchesBaked ? baked.assets.arm64.sha256 : (a64.digest || 'GitHub Release verified')
+                sha256: matchesBaked ? baked.assets.arm64.sha256 : (a64.digest || 'Release verified')
               };
             }
             if (a32) {
@@ -664,7 +570,7 @@
                 filename: matchesBaked ? baked.assets.armv7.filename : a32.name,
                 url: matchesBaked ? baked.assets.armv7.url : a32.browser_download_url,
                 sizeMb: formatMb(a32.size),
-                sha256: matchesBaked ? baked.assets.armv7.sha256 : (a32.digest || 'GitHub Release verified')
+                sha256: matchesBaked ? baked.assets.armv7.sha256 : (a32.digest || 'Release verified')
               };
             }
             if (aUni) {
@@ -672,7 +578,7 @@
                 filename: matchesBaked ? baked.assets.universal.filename : aUni.name,
                 url: matchesBaked ? baked.assets.universal.url : aUni.browser_download_url,
                 sizeMb: formatMb(aUni.size),
-                sha256: matchesBaked ? baked.assets.universal.sha256 : (aUni.digest || 'GitHub Release verified')
+                sha256: matchesBaked ? baked.assets.universal.sha256 : (aUni.digest || 'Release verified')
               };
             }
           }
@@ -686,23 +592,20 @@
 
   document.getElementById('refreshReleaseBtn')?.addEventListener('click', () => {
     syncLatestRelease().then(() => {
-      showToast('Release Check Complete', `Synced to latest stable Release ${currentReleaseState.tag}.`);
+      showToast('Release Synced', `Latest stable Release: ${currentReleaseState.tag}.`);
     });
   });
 
-  // Direct download handler: starts download cleanly in-place without navigating away to GitHub
   document.querySelectorAll('.js-apk-download').forEach((link) => {
     link.addEventListener('click', (e) => {
       const abi = link.dataset.abi || 'arm64';
       const asset = currentReleaseState.assets[abi] || currentReleaseState.assets.arm64;
       if (!currentReleaseState.ready) {
         e.preventDefault();
-        showToast('Release Sync Pending', 'The GitHub Pages release workflow is still packaging the APKs. Try again in a minute.');
+        showToast('Syncing Release...', 'GitHub Pages is finalizing the latest APK build.');
         return;
       }
 
-      // If URL is cross-origin fallback (rare ~60s window right after new release before Pages finishes syncing),
-      // trigger download via hidden iframe so the browser downloads the APK without leaving this page.
       if (/^https?:\/\//i.test(asset.url) && !asset.url.startsWith(window.location.origin)) {
         e.preventDefault();
         const frame = document.createElement('iframe');
