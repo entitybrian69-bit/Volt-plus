@@ -2205,9 +2205,8 @@ impl Catalog {
                                 }
                             }
 
-                            // Fallback to Modrinth search by title for PFP & rich summary (not CurseForge Worlds)
+                            // Fallback to Modrinth search by title for PFP & rich summary (not CurseForge)
                             if *source != browser::SourceId::CurseForge
-                                && *kind != Kind::World
                                 && let Some(hit) = lookup_modrinth_by_name(title, *kind)
                             {
                                 icon_url = hit.icon;

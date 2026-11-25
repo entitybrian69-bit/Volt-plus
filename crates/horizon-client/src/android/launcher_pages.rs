@@ -3190,7 +3190,7 @@ impl Launcher {
                         my3_accent_soft(),
                     );
                     ui.icon(
-                        Icon::World,
+                        Icon::Folder,
                         content_x + 24.0,
                         ry + 24.0,
                         24.0,

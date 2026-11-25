@@ -2082,7 +2082,7 @@ impl Loading {
                         }
                     }
                     InGameMenuAction::Replay(act) => {
-                        use horizon_client::replay_hud::ReplayAction;
+                        use horizon_client::replay::ReplayAction;
                         let dir = Game::game_dir();
                         match act {
                             ReplayAction::LiveToggleAutoSp => {
