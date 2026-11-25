@@ -1,0 +1,922 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#070913" />
+  <title>Volt Plus — Native Minecraft Java 26.3 for Android</title>
+  <meta
+    name="description"
+    content="Volt Launcher Plus: high-performance native Android port of Minecraft Java Edition 26.3 powered by Rust & wgpu (Vulkan & GLES 3.0). Download official 64-bit, 32-bit, and Universal Release APKs."
+  />
+  <meta property="og:title" content="Volt Plus — Native Minecraft Java 26.3 for Android" />
+  <meta
+    property="og:description"
+    content="260 FPS uncapped, built-in shaders, 260+ mods, Replay Studio MP4 export, Control Hub, and direct official Release APK downloads."
+  />
+  <meta property="og:image" content="assets/screen-launcher.jpg" />
+  <link rel="icon" type="image/png" href="assets/logo.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&family=Space+Grotesk:wght@500;700;800&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Scroll progress bar -->
+  <div class="scroll-progress" id="scrollProgress" aria-hidden="true"></div>
+
+  <!-- Interactive Animated Background Layers -->
+  <canvas id="particleCanvas" aria-hidden="true"></canvas>
+  <div class="ambient-bg" aria-hidden="true">
+    <div class="aurora-orb orb-1"></div>
+    <div class="aurora-orb orb-2"></div>
+    <div class="aurora-orb orb-3"></div>
+    <div class="perspective-grid"></div>
+    <div class="cursor-spotlight" id="cursorSpotlight"></div>
+  </div>
+
+  <!-- Floating Glass Navbar -->
+  <header class="navbar" id="navbar">
+    <div class="nav-inner">
+      <a href="#top" class="brand magnetic">
+        <span class="brand-logo-wrap">
+          <span class="brand-ring"></span>
+          <img src="assets/logo.png" alt="Volt Plus Logo" class="brand-logo" />
+        </span>
+        <span class="brand-text">
+          <span class="brand-name">VOLT<span class="brand-plus">+</span></span>
+          <span class="brand-sub" id="navVersionSub">Release Channel</span>
+        </span>
+      </a>
+
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#downloads" class="nav-link">Downloads</a>
+        <a href="#features" class="nav-link">Features</a>
+        <a href="#screenshots" class="nav-link">Screenshots</a>
+        <a href="#owner" class="nav-link">Owner</a>
+        <a href="#faq" class="nav-link">FAQ</a>
+      </nav>
+
+      <div class="nav-actions">
+        <a
+          href="https://discord.gg/WsBxGsKyhU"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="btn-discord-sm magnetic"
+        >
+          <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
+            <path fill="currentColor" d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+          </svg>
+          <span>Discord</span>
+        </a>
+        <a href="#downloads" class="btn-primary-sm shimmer-btn magnetic">
+          <span>Get APK</span>
+        </a>
+        <button class="nav-toggle" id="navToggle" aria-label="Toggle Menu" aria-expanded="false">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+
+    <div class="mobile-drawer" id="mobileDrawer">
+      <a href="#downloads" class="drawer-link">Downloads (64 / 32 / Universal)</a>
+      <a href="#features" class="drawer-link">Features &amp; Engine</a>
+      <a href="#screenshots" class="drawer-link">Screenshots</a>
+      <a href="#owner" class="drawer-link">Owner — entirybrian</a>
+      <a href="#faq" class="drawer-link">FAQ &amp; Install Guide</a>
+      <a href="https://discord.gg/WsBxGsKyhU" target="_blank" rel="noopener noreferrer" class="drawer-link discord">
+        Join Discord Community
+      </a>
+    </div>
+  </header>
+
+  <main id="top">
+    <!-- HERO SECTION -->
+    <section class="hero section-pad">
+      <div class="container hero-grid">
+        <div class="hero-copy">
+          <div class="pill-badge reveal" data-delay="0">
+            <span class="pulse-dot"></span>
+            <span id="heroReleaseLabel">Official Release Channel · No Debug · No Pre-release</span>
+          </div>
+
+          <h1 class="hero-title reveal" data-delay="80">
+            <span class="line">Minecraft Java</span>
+            <span class="line gradient-flow">Volt Launcher Plus</span>
+            <span class="line sub-line">
+              Reborn in Rust for
+              <span class="kinetic-word-wrap">
+                <span class="kinetic-word is-active" id="kineticWord">Android</span>
+              </span>
+            </span>
+          </h1>
+
+          <p class="hero-desc reveal" data-delay="160">
+            Native Rust + <code>wgpu</code> (Vulkan &amp; OpenGL ES 3.0) engine running Minecraft: Java Edition
+            <strong>26.3</strong> directly on Android 9–15. Built-in <strong>31+ native shaders</strong>,
+            <strong>260+ mods</strong>, <strong>Replay Studio MP4 export</strong>, custom touch layouts,
+            and instant direct APK updates.
+          </p>
+
+          <div class="hero-cta-row reveal" data-delay="240">
+            <a
+              href="./downloads/Volt-Plus-arm64-v8a.apk"
+              download="Volt-Plus-arm64-v8a.apk"
+              class="btn-hero-primary shimmer-btn magnetic js-apk-download"
+              id="heroSmartDownload"
+              data-abi="arm64"
+            >
+              <span class="btn-glow"></span>
+              <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
+                <path fill="currentColor" d="M12 16l-5-5h3V4h4v7h3l-5 5zm-7 4v-2h14v2H5z"/>
+              </svg>
+              <span class="btn-label-stack">
+                <strong id="heroBtnTitle">Download Latest APK</strong>
+                <small id="heroBtnSub">Auto-syncing latest release...</small>
+              </span>
+            </a>
+
+            <a href="#downloads" class="btn-hero-secondary magnetic">
+              <span>All Builds (64 / 32 / Universal)</span>
+            </a>
+
+            <a
+              href="https://discord.gg/WsBxGsKyhU"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="btn-hero-discord magnetic"
+            >
+              <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
+                <path fill="currentColor" d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028z"/>
+              </svg>
+              <span>Join Discord</span>
+            </a>
+          </div>
+
+          <div class="hero-stats reveal" data-delay="320">
+            <div class="stat-pill">
+              <span class="stat-num" data-count="260" data-suffix=" FPS">0</span>
+              <span class="stat-label">Uncapped Target</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-num" data-count="260" data-suffix="+">0</span>
+              <span class="stat-label">Built-in Mods</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-num" data-count="31" data-suffix="+">0</span>
+              <span class="stat-label">Native Shaders</span>
+            </div>
+            <div class="stat-pill">
+              <span class="stat-num" data-count="3" data-suffix=" APKs">0</span>
+              <span class="stat-label">64 · 32 · Universal</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Interactive 3D Phone Mockup -->
+        <div class="hero-visual reveal" data-delay="180">
+          <div class="phone-stage tilt-card" id="heroPhoneStage">
+            <div class="phone-aura"></div>
+            <div class="phone-frame">
+              <div class="phone-bezel">
+                <img
+                  src="assets/screen-launcher.jpg"
+                  alt="Volt Launcher Plus Home Screen"
+                  class="phone-screen is-visible"
+                  id="heroPreviewImg"
+                />
+                <img
+                  src="assets/intro.gif"
+                  alt="Volt Plus Launch Intro Animation"
+                  class="phone-screen"
+                  id="heroIntroGif"
+                />
+                <div class="phone-shine"></div>
+              </div>
+            </div>
+
+            <button class="preview-mode-toggle magnetic" id="toggleIntroPreview" type="button">
+              <span class="toggle-dot"></span>
+              <span id="toggleIntroLabel">Play Intro Animation</span>
+            </button>
+
+            <div class="float-chip chip-1">
+              <span class="chip-icon">⚡</span>
+              <span>Vulkan + GLES 3.0</span>
+            </div>
+            <div class="float-chip chip-2">
+              <span class="chip-icon">🎬</span>
+              <span>Replay MP4 Export</span>
+            </div>
+            <div class="float-chip chip-3">
+              <span class="chip-icon">🎮</span>
+              <span>MC Java 26.3</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- INFINITE KINETIC MARQUEE -->
+    <div class="marquee-wrap" aria-hidden="true">
+      <div class="marquee-track">
+        <span>VULKAN &amp; OPENGL ES 3.0</span>
+        <span class="sep">✦</span>
+        <span>260 FPS UNCAPPED</span>
+        <span class="sep">✦</span>
+        <span>NATIVE RUST ENGINE</span>
+        <span class="sep">✦</span>
+        <span>31+ .HSHADER PACKS</span>
+        <span class="sep">✦</span>
+        <span>260+ .HMOD MODS</span>
+        <span class="sep">✦</span>
+        <span>REPLAY STUDIO MP4</span>
+        <span class="sep">✦</span>
+        <span>CONTROL HUB &amp; TOUCH EDITOR</span>
+        <span class="sep">✦</span>
+        <span>FULL SAF STORAGE</span>
+        <span class="sep">✦</span>
+        <span>JAVA MULTIPLAYER</span>
+        <span class="sep">✦</span>
+        <span>VULKAN &amp; OPENGL ES 3.0</span>
+        <span class="sep">✦</span>
+        <span>260 FPS UNCAPPED</span>
+        <span class="sep">✦</span>
+        <span>NATIVE RUST ENGINE</span>
+        <span class="sep">✦</span>
+        <span>31+ .HSHADER PACKS</span>
+        <span class="sep">✦</span>
+        <span>260+ .HMOD MODS</span>
+        <span class="sep">✦</span>
+        <span>REPLAY STUDIO MP4</span>
+        <span class="sep">✦</span>
+      </div>
+    </div>
+
+    <!-- DOWNLOADS SECTION -->
+    <section id="downloads" class="section-pad">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Direct Release Downloads</span>
+          <h2 class="section-title">
+            Download <span class="gradient-flow">Volt Plus</span>
+          </h2>
+          <p class="section-sub">
+            Tapping any download button starts your <strong>.apk</strong> download immediately on this domain —
+            <strong>no GitHub redirects</strong>, <strong>no debug builds</strong>, and <strong>no pre-releases</strong>.
+          </p>
+        </div>
+
+        <!-- Live Auto-Sync Release Status Bar -->
+        <div class="release-bar reveal" data-delay="80">
+          <div class="release-bar-left">
+            <span class="live-indicator">
+              <span class="live-ping"></span>
+              <span class="live-core"></span>
+            </span>
+            <div>
+              <div class="release-title-row">
+                <strong id="releaseVersionBadge">Checking latest release...</strong>
+                <span class="tag-strict">RELEASE ONLY</span>
+                <span class="tag-device" id="deviceDetectTag">Detecting device ABI...</span>
+              </div>
+              <p class="release-meta-line" id="releaseMetaLine">
+                Automatically syncing with the newest published stable Release (drafts, debug APKs &amp; pre-releases excluded).
+              </p>
+            </div>
+          </div>
+          <div class="release-bar-actions">
+            <button type="button" class="btn-ghost-sm magnetic" id="refreshReleaseBtn">
+              <svg viewBox="0 0 24 24" class="icon-svg spin-on-active" aria-hidden="true">
+                <path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+              </svg>
+              <span>Check Latest</span>
+            </button>
+            <button type="button" class="btn-ghost-sm magnetic" id="toggleReleaseNotesBtn">
+              <span>Release Notes</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Collapsible Release Changelog -->
+        <div class="release-notes-panel" id="releaseNotesPanel" aria-hidden="true">
+          <div class="release-notes-inner">
+            <h3 id="releaseNotesHeading">Latest Official Release Notes</h3>
+            <pre id="releaseNotesBody">Loading latest stable release details...</pre>
+          </div>
+        </div>
+
+        <!-- 3 APK Download Cards: 64-bit, 32-bit, Universal -->
+        <div class="download-grid">
+          <!-- 64-bit ARM64 -->
+          <article class="dl-card tilt-card reveal" data-delay="0" data-abi="arm64" id="card-arm64">
+            <div class="card-border-beam"></div>
+            <div class="dl-card-top">
+              <span class="arch-chip arch-64">64-BIT · ARM64-V8A</span>
+              <span class="rec-badge" id="badge-arm64">Recommended</span>
+            </div>
+            <h3 class="dl-title">Volt Plus 64-bit</h3>
+            <p class="dl-desc">
+              Built for modern 64-bit Android phones &amp; tablets (Snapdragon, Dimensity, Exynos, Tensor).
+              Smallest footprint and peak Vulkan shader throughput.
+            </p>
+            <ul class="dl-specs">
+              <li><span>ABI Target</span><strong>arm64-v8a (aarch64)</strong></li>
+              <li><span>Version</span><strong class="js-ver">—</strong></li>
+              <li><span>Package Size</span><strong id="size-arm64">~57 MB</strong></li>
+              <li><span>Channel</span><strong>Signed Release APK</strong></li>
+            </ul>
+            <div class="sha-row">
+              <code id="sha-arm64" class="sha-code">SHA-256 verifying...</code>
+              <button type="button" class="copy-sha-btn" data-copy-target="sha-arm64" title="Copy SHA-256">Copy</button>
+            </div>
+            <a
+              id="dl-arm64"
+              href="./downloads/Volt-Plus-arm64-v8a.apk"
+              download="Volt-Plus-arm64-v8a.apk"
+              class="btn-download shimmer-btn magnetic js-apk-download"
+              data-abi="arm64"
+            >
+              <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
+                <path fill="currentColor" d="M12 16l-5-5h3V4h4v7h3l-5 5zm-7 4v-2h14v2H5z"/>
+              </svg>
+              <span>Download 64-bit APK</span>
+            </a>
+          </article>
+
+          <!-- 32-bit ARMv7 -->
+          <article class="dl-card tilt-card reveal" data-delay="100" data-abi="armv7" id="card-armv7">
+            <div class="card-border-beam"></div>
+            <div class="dl-card-top">
+              <span class="arch-chip arch-32">32-BIT · ARMEABI-V7A</span>
+              <span class="rec-badge subtle" id="badge-armv7">Legacy 32-bit</span>
+            </div>
+            <h3 class="dl-title">Volt Plus 32-bit</h3>
+            <p class="dl-desc">
+              Dedicated 32-bit ARM build tuned for older devices or 32-bit Android OS environments that cannot install 64-bit binaries.
+            </p>
+            <ul class="dl-specs">
+              <li><span>ABI Target</span><strong>armeabi-v7a (ARMv7)</strong></li>
+              <li><span>Version</span><strong class="js-ver">—</strong></li>
+              <li><span>Package Size</span><strong id="size-armv7">~52 MB</strong></li>
+              <li><span>Channel</span><strong>Signed Release APK</strong></li>
+            </ul>
+            <div class="sha-row">
+              <code id="sha-armv7" class="sha-code">SHA-256 verifying...</code>
+              <button type="button" class="copy-sha-btn" data-copy-target="sha-armv7" title="Copy SHA-256">Copy</button>
+            </div>
+            <a
+              id="dl-armv7"
+              href="./downloads/Volt-Plus-armeabi-v7a.apk"
+              download="Volt-Plus-armeabi-v7a.apk"
+              class="btn-download shimmer-btn magnetic js-apk-download"
+              data-abi="armv7"
+            >
+              <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
+                <path fill="currentColor" d="M12 16l-5-5h3V4h4v7h3l-5 5zm-7 4v-2h14v2H5z"/>
+              </svg>
+              <span>Download 32-bit APK</span>
+            </a>
+          </article>
+
+          <!-- Universal -->
+          <article class="dl-card tilt-card reveal" data-delay="200" data-abi="universal" id="card-universal">
+            <div class="card-border-beam"></div>
+            <div class="dl-card-top">
+              <span class="arch-chip arch-uni">UNIVERSAL · 64 + 32 BIT</span>
+              <span class="rec-badge subtle" id="badge-universal">All ARM Devices</span>
+            </div>
+            <h3 class="dl-title">Volt Plus Universal</h3>
+            <p class="dl-desc">
+              All-in-one signed Release APK bundling both <code>arm64-v8a</code> and <code>armeabi-v7a</code> libraries. Ideal if you are unsure which CPU your device runs.
+            </p>
+            <ul class="dl-specs">
+              <li><span>ABI Target</span><strong>arm64-v8a + armeabi-v7a</strong></li>
+              <li><span>Version</span><strong class="js-ver">—</strong></li>
+              <li><span>Package Size</span><strong id="size-universal">~96 MB</strong></li>
+              <li><span>Channel</span><strong>Signed Release APK</strong></li>
+            </ul>
+            <div class="sha-row">
+              <code id="sha-universal" class="sha-code">SHA-256 verifying...</code>
+              <button type="button" class="copy-sha-btn" data-copy-target="sha-universal" title="Copy SHA-256">Copy</button>
+            </div>
+            <a
+              id="dl-universal"
+              href="./downloads/Volt-Plus-universal.apk"
+              download="Volt-Plus-universal.apk"
+              class="btn-download shimmer-btn magnetic js-apk-download"
+              data-abi="universal"
+            >
+              <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
+                <path fill="currentColor" d="M12 16l-5-5h3V4h4v7h3l-5 5zm-7 4v-2h14v2H5z"/>
+              </svg>
+              <span>Download Universal APK</span>
+            </a>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- INTERACTIVE FEATURE ENGINE & BENTO SHOWCASE -->
+    <section id="features" class="section-pad">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Engineered For Speed &amp; Control</span>
+          <h2 class="section-title">
+            Everything Inside <span class="gradient-flow">Volt Plus</span>
+          </h2>
+          <p class="section-sub">
+            Switch tabs or explore every subsystem below — every tool you need for mobile Java Edition without compromises.
+          </p>
+        </div>
+
+        <!-- Animated Interactive Tabs -->
+        <div class="feature-tabs-shell reveal" data-delay="80">
+          <div class="feature-tablist" role="tablist" aria-label="Volt Plus Subsystems">
+            <button class="ftab is-active" role="tab" aria-selected="true" data-tab="engine">⚡ Vulkan &amp; 260 FPS</button>
+            <button class="ftab" role="tab" aria-selected="false" data-tab="controls">🎮 Control Hub</button>
+            <button class="ftab" role="tab" aria-selected="false" data-tab="replay">🎬 Replay MP4 Studio</button>
+            <button class="ftab" role="tab" aria-selected="false" data-tab="content">📦 Mods, Packs &amp; Shaders</button>
+            <button class="ftab" role="tab" aria-selected="false" data-tab="multiplayer">🌐 Multiplayer &amp; SAF</button>
+          </div>
+
+          <div class="feature-stage">
+            <div class="ftab-panel is-active" data-panel="engine">
+              <div class="panel-text">
+                <span class="panel-tag">Horizon Rust + wgpu Renderer</span>
+                <h3>Uncapped Frame Rates &amp; Native Shaders</h3>
+                <p>
+                  Built directly on a native Rust rendering pipeline targeting Vulkan 1.0+ and OpenGL ES 3.0.
+                  Includes asynchronous chunk meshing, cave &amp; entity culling, dynamic resolution scaling (25–100%),
+                  and 31+ built-in <code>.hshader</code> projects with volumetric clouds, sun shafts, water reflections, and shadow cascades.
+                </p>
+                <div class="mini-bars">
+                  <div class="bar-row">
+                    <span>Vulkan Frame Pacing</span>
+                    <div class="bar-track"><div class="bar-fill" style="--w: 96%"></div></div>
+                    <strong>260 FPS</strong>
+                  </div>
+                  <div class="bar-row">
+                    <span>Resolution Scaling</span>
+                    <div class="bar-track"><div class="bar-fill" style="--w: 100%"></div></div>
+                    <strong>25–100%</strong>
+                  </div>
+                  <div class="bar-row">
+                    <span>Android API Support</span>
+                    <div class="bar-track"><div class="bar-fill" style="--w: 90%"></div></div>
+                    <strong>API 28–35</strong>
+                  </div>
+                </div>
+              </div>
+              <div class="panel-media">
+                <img src="assets/screen-shaders.jpg" alt="Shader Packs Catalog" />
+              </div>
+            </div>
+
+            <div class="ftab-panel" data-panel="controls">
+              <div class="panel-text">
+                <span class="panel-tag">Mobile Input Architecture</span>
+                <h3>V+ Control Hub &amp; Live Layout Editor</h3>
+                <p>
+                  Choose between four tailored touch styles including MCPE Bedrock and GoyControl, enable the dynamic floating
+                  joystick, adjust button opacity &amp; scaling per control, or import external Java control profiles cleanly.
+                  Includes optional gyroscope aiming with live calibration directly in the launcher.
+                </p>
+                <ul class="bullet-list">
+                  <li>4 built-in touch presets + full drag-and-drop Layout Editor</li>
+                  <li>Floating V+ Control Hub with quick-toggle tabs during gameplay</li>
+                  <li>Keyboard, mouse capture &amp; hardware gamepad support</li>
+                </ul>
+              </div>
+              <div class="panel-media">
+                <img src="assets/screen-settings.jpg" alt="Volt Plus Control Settings" />
+              </div>
+            </div>
+
+            <div class="ftab-panel" data-panel="replay">
+              <div class="panel-text">
+                <span class="panel-tag">Offline H.264 / MediaMuxer Pipeline</span>
+                <h3>Replay Mod &amp; 1440p Screen Recorder</h3>
+                <p>
+                  Record multiplayer &amp; singleplayer sessions to <code>.mcpr</code> archives, scrub timelines smoothly,
+                  place spline camera &amp; time keyframes, and export clean HUD-free MP4 cinematics up to 1440p using Android's
+                  hardware <code>MediaCodec</code> encoder — plus a real-time screen recorder up to 165 FPS.
+                </p>
+                <ul class="bullet-list">
+                  <li>Non-overlapping position &amp; time keyframes with smooth preview</li>
+                  <li>Direct export into <code>Movies/VoltPlus</code> via MediaStore</li>
+                  <li>Configurable audio source (In-Game, Microphone, or Silent)</li>
+                </ul>
+              </div>
+              <div class="panel-media">
+                <img src="assets/screen-launcher.jpg" alt="Volt Plus Launcher & Replay Integration" />
+              </div>
+            </div>
+
+            <div class="ftab-panel" data-panel="content">
+              <div class="panel-text">
+                <span class="panel-tag">Built-In Discovery &amp; File Manager</span>
+                <h3>260+ Mods, Modrinth Packs &amp; CurseForge Worlds</h3>
+                <p>
+                  Browse and install 260 curated <code>.hmod</code> Horizon mods, download Modrinth resource packs &amp; shader packs,
+                  install 31+ native <code>.hshader</code> shaders, explore CurseForge Worlds, and manage every folder from the
+                  built-in Content Library &amp; File Manager.
+                </p>
+                <ul class="bullet-list">
+                  <li>1-tap install &amp; toggle for Mods, Resource Packs, and Shaders</li>
+                  <li>3D Skins &amp; Capes Studio with Classic (4px) / Slim (3px) toggle</li>
+                  <li>Curated .hshader projects ready out of the box</li>
+                </ul>
+              </div>
+              <div class="panel-media">
+                <img src="assets/screen-mods.jpg" alt="Mods Browser" />
+              </div>
+            </div>
+
+            <div class="ftab-panel" data-panel="multiplayer">
+              <div class="panel-text">
+                <span class="panel-tag">Seamless Connectivity &amp; Storage</span>
+                <h3>Java Multiplayer, Discord RPC &amp; Full SAF</h3>
+                <p>
+                  Connect directly to Minecraft Java Edition 26.3 servers and LAN worlds with Microsoft authentication or offline profiles.
+                  Share live status via Discord Rich Presence and import/export worlds, skins, packs, and controls effortlessly
+                  through Android's Storage Access Framework.
+                </p>
+                <ul class="bullet-list">
+                  <li>In-app updater checking stable Releases automatically</li>
+                  <li>Full SAF document provider read &amp; write access</li>
+                  <li>Native Discord Rich Presence bridge</li>
+                </ul>
+              </div>
+              <div class="panel-media">
+                <img src="assets/screen-library.jpg" alt="Content Library & File Manager" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Animated Bento Grid -->
+        <div class="bento-grid">
+          <div class="bento-card tilt-card reveal" data-delay="0">
+            <div class="bento-icon">🚀</div>
+            <h4>Zero-Latency Startup</h4>
+            <p>Custom 1080p60 launch intro &amp; warm Rust initialization straight into your world or server.</p>
+          </div>
+          <div class="bento-card tilt-card reveal" data-delay="60">
+            <div class="bento-icon">🛡️</div>
+            <h4>Signed Release Integrity</h4>
+            <p>Consistent release certificate across 64-bit, 32-bit, and Universal builds for clean in-place updates.</p>
+          </div>
+          <div class="bento-card tilt-card reveal" data-delay="120">
+            <div class="bento-icon">🎨</div>
+            <h4>Skins &amp; Capes Studio</h4>
+            <p>Real-time 3D player inspection, local PNG gallery, and arm thickness switching in one tap.</p>
+          </div>
+          <div class="bento-card tilt-card reveal" data-delay="180">
+            <div class="bento-icon">🧭</div>
+            <h4>Gyroscope Aiming</h4>
+            <p>Hardware sensor-driven camera micro-aiming with adjustable sensitivity right on the main play dock.</p>
+          </div>
+          <div class="bento-card tilt-card reveal" data-delay="240">
+            <div class="bento-icon">🌍</div>
+            <h4>CurseForge Worlds</h4>
+            <p>Discover and import custom maps directly inside the launcher alongside your local saves.</p>
+          </div>
+          <div class="bento-card tilt-card reveal" data-delay="300">
+            <div class="bento-icon">🔋</div>
+            <h4>Battery &amp; Thermals Control</h4>
+            <p>Choose between uncapped 260 FPS competitive mode or smooth VSync power-saving presets.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCREENSHOTS SECTION (All 7 User Screenshots) -->
+    <section id="screenshots" class="section-pad">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">In-App Showcase</span>
+          <h2 class="section-title">
+            <span class="gradient-flow">Screenshots</span> Gallery
+          </h2>
+          <p class="section-sub">
+            Every screen inside Volt Launcher Plus — tap any screenshot to inspect it in full-screen high resolution.
+          </p>
+        </div>
+
+        <!-- Animated Main Carousel Spotlight -->
+        <div class="carousel-shell reveal" data-delay="80">
+          <div class="carousel-stage">
+            <img
+              src="assets/screen-launcher.jpg"
+              alt="Volt Launcher Plus Dashboard"
+              id="carouselMainImg"
+              class="carousel-main-img"
+            />
+            <div class="carousel-overlay-bar">
+              <div>
+                <span class="carousel-tag" id="carouselTag">01 / 07 · PLAY DASHBOARD</span>
+                <h3 id="carouselTitle">Volt Launcher Plus Home</h3>
+                <p id="carouselDesc">3D skin preview, quick Vulkan/GLES renderer switcher, Touch layout selector, Gyroscope toggle, and instant Play Minecraft 26.3.</p>
+              </div>
+              <div class="carousel-controls">
+                <button type="button" class="c-btn magnetic" id="prevSlideBtn" aria-label="Previous Screenshot">‹</button>
+                <button type="button" class="c-btn magnetic" id="nextSlideBtn" aria-label="Next Screenshot">›</button>
+                <button type="button" class="c-btn zoom magnetic" id="openLightboxBtn" aria-label="Fullscreen Screenshot">⤢</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="carousel-thumbs" id="carouselThumbs">
+            <button type="button" class="thumb is-active" data-index="0">
+              <img src="assets/screen-launcher.jpg" alt="Play Dashboard" />
+              <span>Play</span>
+            </button>
+            <button type="button" class="thumb" data-index="1">
+              <img src="assets/screen-mods.jpg" alt="Mods Browser" />
+              <span>Mods</span>
+            </button>
+            <button type="button" class="thumb" data-index="2">
+              <img src="assets/screen-packs.jpg" alt="Resource Packs" />
+              <span>Packs</span>
+            </button>
+            <button type="button" class="thumb" data-index="3">
+              <img src="assets/screen-shaders.jpg" alt="Shader Packs" />
+              <span>Shaders</span>
+            </button>
+            <button type="button" class="thumb" data-index="4">
+              <img src="assets/screen-library.jpg" alt="Content Library" />
+              <span>Installed</span>
+            </button>
+            <button type="button" class="thumb" data-index="5">
+              <img src="assets/screen-skins.jpg" alt="Skins Studio" />
+              <span>Skins</span>
+            </button>
+            <button type="button" class="thumb" data-index="6">
+              <img src="assets/screen-settings.jpg" alt="Settings" />
+              <span>Settings</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- All Screenshots Responsive Animated Grid -->
+        <div class="shots-grid" id="shotsGrid">
+          <figure class="shot-card tilt-card reveal" data-index="0" data-delay="0">
+            <img src="assets/screen-launcher.jpg" alt="Volt Launcher Plus Dashboard" loading="lazy" />
+            <figcaption><strong>Play Dashboard</strong><span>3D Skin, Renderer &amp; Launch</span></figcaption>
+          </figure>
+          <figure class="shot-card tilt-card reveal" data-index="1" data-delay="50">
+            <img src="assets/screen-mods.jpg" alt="Mods Catalog" loading="lazy" />
+            <figcaption><strong>Mods Catalog</strong><span>260 Horizon Mods</span></figcaption>
+          </figure>
+          <figure class="shot-card tilt-card reveal" data-index="2" data-delay="100">
+            <img src="assets/screen-packs.jpg" alt="Resource Packs" loading="lazy" />
+            <figcaption><strong>Resource Packs</strong><span>Modrinth Instant Install</span></figcaption>
+          </figure>
+          <figure class="shot-card tilt-card reveal" data-index="3" data-delay="150">
+            <img src="assets/screen-shaders.jpg" alt="Shader Packs" loading="lazy" />
+            <figcaption><strong>Shader Packs</strong><span>31 Horizon Native Shaders</span></figcaption>
+          </figure>
+          <figure class="shot-card tilt-card reveal" data-index="4" data-delay="200">
+            <img src="assets/screen-library.jpg" alt="Content Library" loading="lazy" />
+            <figcaption><strong>Content Library</strong><span>Library &amp; File Manager</span></figcaption>
+          </figure>
+          <figure class="shot-card tilt-card reveal" data-index="5" data-delay="250">
+            <img src="assets/screen-skins.jpg" alt="Skins &amp; Capes Studio" loading="lazy" />
+            <figcaption><strong>Skins &amp; Capes Studio</strong><span>3D Model &amp; Arm Style</span></figcaption>
+          </figure>
+          <figure class="shot-card tilt-card reveal" data-index="6" data-delay="300">
+            <img src="assets/screen-settings.jpg" alt="Settings Hub" loading="lazy" />
+            <figcaption><strong>Settings Hub</strong><span>Video, Controls &amp; Diagnostics</span></figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <!-- OWNER SECTION -->
+    <section id="owner" class="section-pad">
+      <div class="container">
+        <div class="owner-card tilt-card reveal">
+          <div class="owner-bg-glow"></div>
+          <div class="owner-portrait-col">
+            <div class="owner-frame">
+              <span class="owner-orbit orbit-a"></span>
+              <span class="owner-orbit orbit-b"></span>
+              <img src="assets/owner.jpg" alt="entirybrian — Owner of Volt Plus" class="owner-photo" />
+              <span class="owner-verified">OWNER</span>
+            </div>
+          </div>
+
+          <div class="owner-info-col">
+            <span class="eyebrow">Project Owner &amp; Maintainer</span>
+            <h2 class="owner-name gradient-flow">entirybrian</h2>
+            <p class="owner-role">Creator of Volt Launcher Plus · Android &amp; Rust Modding Enthusiast</p>
+            <p class="owner-bio">
+              <strong>entirybrian</strong> leads the Volt Plus project — crafting the mobile launcher UX,
+              curating native shaders &amp; control hubs, maintaining the official signed APK release pipeline,
+              and helping players get smooth Java Edition 26.3 performance on Android devices.
+            </p>
+
+            <div class="owner-highlights">
+              <div class="oh-item">
+                <span>Role</span>
+                <strong>Founder &amp; Maintainer</strong>
+              </div>
+              <div class="oh-item">
+                <span>Release Policy</span>
+                <strong>Verified Signed Releases Only</strong>
+              </div>
+              <div class="oh-item">
+                <span>Community</span>
+                <strong>Active on Discord</strong>
+              </div>
+            </div>
+
+            <div class="owner-actions">
+              <a
+                href="https://discord.gg/WsBxGsKyhU"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn-hero-discord shimmer-btn magnetic"
+              >
+                <svg viewBox="0 0 24 24" class="icon-svg" aria-hidden="true">
+                  <path fill="currentColor" d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028z"/>
+                </svg>
+                <span>Connect on Discord</span>
+              </a>
+              <a href="#downloads" class="btn-hero-secondary magnetic">
+                <span>Download Latest Build</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- HOW TO INSTALL + ANIMATED FAQ -->
+    <section id="faq" class="section-pad">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="eyebrow">Quick Setup &amp; Answers</span>
+          <h2 class="section-title">
+            Install In <span class="gradient-flow">30 Seconds</span>
+          </h2>
+        </div>
+
+        <div class="steps-grid">
+          <div class="step-card reveal" data-delay="0">
+            <div class="step-num">01</div>
+            <h4>Tap Your Architecture</h4>
+            <p>Tap <strong>64-bit</strong> for modern phones, <strong>32-bit</strong> for older 32-bit Android devices, or <strong>Universal</strong> if you want both inside one APK.</p>
+          </div>
+          <div class="step-card reveal" data-delay="100">
+            <div class="step-num">02</div>
+            <h4>Install Official APK</h4>
+            <p>Open the downloaded <code>.apk</code> directly from your browser notifications or Downloads folder and allow Android package install.</p>
+          </div>
+          <div class="step-card reveal" data-delay="200">
+            <div class="step-num">03</div>
+            <h4>Launch &amp; Customize</h4>
+            <p>Install mods, shaders, or touch layouts right inside the launcher, sign in or choose offline mode, and tap <strong>Play Minecraft 26.3</strong>.</p>
+          </div>
+        </div>
+
+        <div class="faq-list reveal" data-delay="120">
+          <div class="faq-item">
+            <button type="button" class="faq-q">
+              <span>Which APK should I choose: 64-bit, 32-bit, or Universal?</span>
+              <span class="faq-icon">+</span>
+            </button>
+            <div class="faq-a">
+              <p>Almost all Android phones released in the last 7+ years are <strong>64-bit (arm64-v8a)</strong> — it is faster and smaller. Choose <strong>32-bit (armeabi-v7a)</strong> only for older 32-bit-only phones, or pick <strong>Universal</strong> if you are sharing the file across multiple devices.</p>
+            </div>
+          </div>
+
+          <div class="faq-item">
+            <button type="button" class="faq-q">
+              <span>Does clicking Download open GitHub or start downloading right away?</span>
+              <span class="faq-icon">+</span>
+            </button>
+            <div class="faq-a">
+              <p>Every download button links directly to the signed APK hosted on this GitHub Pages domain, so tapping it starts the APK download immediately in your browser without jumping to GitHub.</p>
+            </div>
+          </div>
+
+          <div class="faq-item">
+            <button type="button" class="faq-q">
+              <span>Are debug builds or pre-releases ever listed here?</span>
+              <span class="faq-icon">+</span>
+            </button>
+            <div class="faq-a">
+              <p>No. This site filters strictly for published stable Releases only — debug APKs, drafts, and pre-releases are always excluded, and the download buttons automatically update whenever a new official Release is published.</p>
+            </div>
+          </div>
+
+          <div class="faq-item">
+            <button type="button" class="faq-q">
+              <span>Where can I report bugs, share touch layouts, or request features?</span>
+              <span class="faq-icon">+</span>
+            </button>
+            <div class="faq-a">
+              <p>Join the official Volt Plus Discord server at <a href="https://discord.gg/WsBxGsKyhU" target="_blank" rel="noopener noreferrer">discord.gg/WsBxGsKyhU</a> to chat with entirybrian and the community.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DISCORD COMMUNITY BANNER -->
+    <section class="section-pad discord-section">
+      <div class="container">
+        <div class="discord-banner tilt-card reveal">
+          <div class="discord-waves" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <div class="discord-content">
+            <div class="discord-icon-wrap">
+              <svg viewBox="0 0 24 24" class="discord-big-icon" aria-hidden="true">
+                <path fill="currentColor" d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028z"/>
+              </svg>
+            </div>
+            <div>
+              <h2>Join The Volt Plus Discord</h2>
+              <p>
+                Get instant release alerts, custom touch presets, shader configs, replay tips, and direct support from <strong>entirybrian</strong> &amp; the community.
+              </p>
+              <div class="channel-pills">
+                <span>#announcements</span>
+                <span>#releases</span>
+                <span>#shaders</span>
+                <span>#touch-layouts</span>
+                <span>#support</span>
+              </div>
+            </div>
+            <a
+              href="https://discord.gg/WsBxGsKyhU"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="btn-discord-cta shimmer-btn magnetic"
+            >
+              <span>Join Discord Server →</span>
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <img src="assets/logo.png" alt="Volt Plus" />
+        <div>
+          <strong>Volt Launcher Plus</strong>
+          <small>Owned &amp; maintained by entirybrian · MIT License</small>
+        </div>
+      </div>
+      <div class="footer-links">
+        <a href="#downloads">Downloads</a>
+        <a href="#features">Features</a>
+        <a href="#screenshots">Screenshots</a>
+        <a href="#owner">Owner</a>
+        <a href="https://discord.gg/WsBxGsKyhU" target="_blank" rel="noopener noreferrer">Discord</a>
+      </div>
+      <p class="footer-note">
+        Minecraft is a trademark of Mojang Synergies AB. Volt Plus is an independent community project built on the Horizon Rust engine.
+      </p>
+    </div>
+  </footer>
+
+  <!-- Fullscreen Lightbox Modal -->
+  <div class="lightbox" id="lightbox" aria-hidden="true" role="dialog" aria-label="Screenshot Preview">
+    <button type="button" class="lb-close" id="lbClose" aria-label="Close">✕</button>
+    <button type="button" class="lb-nav lb-prev" id="lbPrev" aria-label="Previous">‹</button>
+    <div class="lb-body">
+      <img src="" alt="" id="lbImg" />
+      <div class="lb-caption">
+        <strong id="lbTitle"></strong>
+        <span id="lbDesc"></span>
+      </div>
+    </div>
+    <button type="button" class="lb-nav lb-next" id="lbNext" aria-label="Next">›</button>
+  </div>
+
+  <!-- Download Toast Notification -->
+  <div class="toast" id="downloadToast" role="status" aria-live="polite">
+    <span class="toast-pulse"></span>
+    <div>
+      <strong id="toastTitle">Starting download...</strong>
+      <small id="toastSub">Your APK is downloading directly.</small>
+    </div>
+  </div>
+
+  <!-- Floating Back-to-Top -->
+  <button type="button" class="scroll-top magnetic" id="scrollTopBtn" aria-label="Back to top">↑</button>
+
+  <script src="app.js"></script>
+</body>
+</html>
