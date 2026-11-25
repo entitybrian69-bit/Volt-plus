@@ -52,8 +52,9 @@ pub(super) fn pack_reads_labpbr(pack: &Pack) -> bool {
                     || src.contains("block_pbr_maps")
             })
     };
-    pack.manifest.material.as_deref().is_some_and(stage_reads)
-        || pack.manifest.shared.iter().any(|s| stage_reads(s))
+    pack.manifest.material.as_ref().is_some_and(|st| {
+        stage_reads(&st.file) || st.files.iter().any(|f| stage_reads(f))
+    }) || pack.manifest.shared.iter().any(|s| stage_reads(s))
 }
 
 impl Game<'_> {

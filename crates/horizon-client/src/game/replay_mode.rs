@@ -168,7 +168,7 @@ impl Game<'_> {
                         } else if let Some(m) = self.mobs.first() {
                             replay.cam_pos = [m.position.x, m.eye_y(), m.position.z];
                             replay.cam_yaw = m.head_yaw;
-                            replay.cam_pitch = m.pitch;
+                            replay.cam_pitch = m.head_pitch;
                             replay.cam_initialized = true;
                         }
                     }

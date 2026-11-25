@@ -19357,7 +19357,7 @@ impl Game<'_> {
                             .with_user(|| self.options.player_name()),
                         );
                     }
-                    self.screen = Screen::Title;
+                    self.screen = Screen::Playing;
                     self.message = Some((format!("Could not open replay: {error}"), Instant::now()));
                 }
             }
