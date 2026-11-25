@@ -81,6 +81,31 @@ public final class HorizonActivity extends android.app.NativeActivity {
         hideOsPointer(this);
     }
 
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            hideOsPointer(this);
+        }
+    }
+
+    @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent ev) {
+        if (android.os.Build.VERSION.SDK_INT >= 24 && ev != null
+                && (ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE)
+                    || (android.os.Build.VERSION.SDK_INT >= 26
+                        && ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE_RELATIVE))
+                    || ev.isFromSource(android.view.InputDevice.SOURCE_TOUCHPAD))) {
+            android.view.Window w = getWindow();
+            if (w != null) {
+                android.view.View decor = w.getDecorView();
+                android.view.PointerIcon hidden = invisiblePointerIcon(this);
+                if (decor != null && hidden != null && decor.getPointerIcon() != hidden) {
+                    hidePointerTree(this, decor);
+                }
+            }
+        }
+        return super.dispatchGenericMotionEvent(ev);
+    }
+
     private void loadGame() {
         if (loaded) {
             return;
@@ -264,11 +289,34 @@ public final class HorizonActivity extends android.app.NativeActivity {
         });
     }
 
+    private static volatile android.view.PointerIcon sInvisiblePointerIcon;
+
+    public static android.view.PointerIcon invisiblePointerIcon(android.content.Context ctx) {
+        if (ctx == null || android.os.Build.VERSION.SDK_INT < 24) return null;
+        android.view.PointerIcon cached = sInvisiblePointerIcon;
+        if (cached != null) return cached;
+        try {
+            android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
+                    1, 1, android.graphics.Bitmap.Config.ARGB_8888);
+            bmp.eraseColor(android.graphics.Color.TRANSPARENT);
+            android.view.PointerIcon icon = android.view.PointerIcon.create(bmp, 0.0f, 0.0f);
+            if (icon != null) {
+                sInvisiblePointerIcon = icon;
+                return icon;
+            }
+        } catch (Throwable ignored) {}
+        try {
+            return android.view.PointerIcon.getSystemIcon(
+                    ctx, android.view.PointerIcon.TYPE_NULL);
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     private static void hidePointerTree(android.content.Context ctx, android.view.View view) {
         if (view == null || ctx == null || android.os.Build.VERSION.SDK_INT < 24) return;
         try {
-            android.view.PointerIcon icon = android.view.PointerIcon.getSystemIcon(
-                    ctx, android.view.PointerIcon.TYPE_NULL);
+            android.view.PointerIcon icon = invisiblePointerIcon(ctx);
             if (icon != null) {
                 view.setPointerIcon(icon);
                 if (view instanceof android.view.ViewGroup) {

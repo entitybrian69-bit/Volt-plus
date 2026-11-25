@@ -275,12 +275,22 @@ impl Ui {
             let _ = env.exception_clear();
             let icon = env
                 .call_static_method(
-                    "android/view/PointerIcon",
-                    "getSystemIcon",
-                    "(Landroid/content/Context;I)Landroid/view/PointerIcon;",
-                    &[JValue::Object(self.activity.as_obj()), JValue::Int(0)],
-                )?
-                .l()?;
+                    "dev/horizon/android/HorizonActivity",
+                    "invisiblePointerIcon",
+                    "(Landroid/content/Context;)Landroid/view/PointerIcon;",
+                    &[JValue::Object(self.activity.as_obj())],
+                )
+                .and_then(|v| v.l())
+                .or_else(|_| {
+                    let _ = env.exception_clear();
+                    env.call_static_method(
+                        "android/view/PointerIcon",
+                        "getSystemIcon",
+                        "(Landroid/content/Context;I)Landroid/view/PointerIcon;",
+                        &[JValue::Object(self.activity.as_obj()), JValue::Int(0)],
+                    )?
+                    .l()
+                })?;
             if !icon.is_null() {
                 env.call_method(
                     &self.native,

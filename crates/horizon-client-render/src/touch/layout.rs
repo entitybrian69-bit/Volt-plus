@@ -448,6 +448,57 @@ impl Placement {
         }
     }
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorIcon {
+    #[default]
+    Default,
+    CrimsonBlade,
+    DiamondSword,
+    GoldenApple,
+    FlameSword,
+}
+
+impl CursorIcon {
+    pub const ALL: [Self; 5] = [
+        Self::Default,
+        Self::CrimsonBlade,
+        Self::DiamondSword,
+        Self::GoldenApple,
+        Self::FlameSword,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "Default Arrow",
+            Self::CrimsonBlade => "Crimson Arrow",
+            Self::DiamondSword => "Diamond Sword",
+            Self::GoldenApple => "Golden Apple",
+            Self::FlameSword => "Flame Sword",
+        }
+    }
+
+    pub fn sprite_name(self) -> Option<&'static str> {
+        match self {
+            Self::Default => None,
+            Self::CrimsonBlade => Some("horizon/cursor/crimson_blade"),
+            Self::DiamondSword => Some("horizon/cursor/diamond_sword"),
+            Self::GoldenApple => Some("horizon/cursor/golden_apple"),
+            Self::FlameSword => Some("horizon/cursor/flame_sword"),
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Self::Default => Self::CrimsonBlade,
+            Self::CrimsonBlade => Self::DiamondSword,
+            Self::DiamondSword => Self::GoldenApple,
+            Self::GoldenApple => Self::FlameSword,
+            Self::FlameSword => Self::Default,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -486,6 +537,12 @@ pub struct Settings {
     /// Rendered size of the virtual mouse pointer, where 1.0 is the default height.
     #[serde(default = "default_pointer_scale")]
     pub virtual_mouse_pointer_scale: f32,
+    /// Rendered opacity of the virtual/physical mouse pointer (`0.15..=1.0`).
+    #[serde(default = "default_one")]
+    pub virtual_mouse_opacity: f32,
+    /// Selected pointer graphic (`Default` vector arrow or bundled custom cursor PNG).
+    #[serde(default)]
+    pub virtual_mouse_cursor: CursorIcon,
     pub crosshair_gestures: bool,
     pub attack_button_look: bool,
     pub gyroscope: bool,
@@ -647,6 +704,8 @@ impl Default for Settings {
             resolution_scale_percent: default_res_scale(),
             virtual_mouse_sensitivity: 1.0,
             virtual_mouse_pointer_scale: default_pointer_scale(),
+            virtual_mouse_opacity: 1.0,
+            virtual_mouse_cursor: CursorIcon::Default,
             crosshair_gestures: false,
             attack_button_look: true,
             gyroscope: false,
@@ -848,6 +907,11 @@ impl Settings {
             self.virtual_mouse_pointer_scale.clamp(0.5, 2.0)
         } else {
             default_pointer_scale()
+        };
+        self.virtual_mouse_opacity = if self.virtual_mouse_opacity.is_finite() {
+            self.virtual_mouse_opacity.clamp(0.15, 1.0)
+        } else {
+            1.0
         };
         self.gyro_sensitivity = if self.gyro_sensitivity.is_finite() {
             self.gyro_sensitivity.clamp(0.1, 3.0)
@@ -1461,6 +1525,8 @@ impl Settings {
         let prev_vm_enabled = self.virtual_mouse_enabled;
         let prev_vm_sens = self.virtual_mouse_sensitivity;
         let prev_pointer_scale = self.virtual_mouse_pointer_scale;
+        let prev_pointer_opacity = self.virtual_mouse_opacity;
+        let prev_pointer_cursor = self.virtual_mouse_cursor;
         let prev_vibrate = self.vibrate;
         let prev_auto_jump = self.auto_jump;
         let prev_zero_latency = self.zero_latency_touch;
@@ -1486,6 +1552,8 @@ impl Settings {
         loaded.virtual_mouse_enabled = prev_vm_enabled;
         loaded.virtual_mouse_sensitivity = prev_vm_sens;
         loaded.virtual_mouse_pointer_scale = prev_pointer_scale;
+        loaded.virtual_mouse_opacity = prev_pointer_opacity;
+        loaded.virtual_mouse_cursor = prev_pointer_cursor;
         loaded.vibrate = prev_vibrate;
         loaded.auto_jump = prev_auto_jump;
         loaded.zero_latency_touch = prev_zero_latency;
@@ -1527,6 +1595,8 @@ impl Settings {
         let prev_vm_enabled = self.virtual_mouse_enabled;
         let prev_vm_sens = self.virtual_mouse_sensitivity;
         let prev_pointer_scale = self.virtual_mouse_pointer_scale;
+        let prev_pointer_opacity = self.virtual_mouse_opacity;
+        let prev_pointer_cursor = self.virtual_mouse_cursor;
         let prev_vibrate = self.vibrate;
         let prev_auto_jump = self.auto_jump;
         let prev_zero_latency = self.zero_latency_touch;
@@ -1544,6 +1614,8 @@ impl Settings {
         loaded.virtual_mouse_enabled = prev_vm_enabled;
         loaded.virtual_mouse_sensitivity = prev_vm_sens;
         loaded.virtual_mouse_pointer_scale = prev_pointer_scale;
+        loaded.virtual_mouse_opacity = prev_pointer_opacity;
+        loaded.virtual_mouse_cursor = prev_pointer_cursor;
         loaded.vibrate = prev_vibrate;
         loaded.auto_jump = prev_auto_jump;
         loaded.zero_latency_touch = prev_zero_latency;
@@ -2233,6 +2305,8 @@ impl Settings {
             let prev_vm_enabled = self.virtual_mouse_enabled;
             let prev_vm_sens = self.virtual_mouse_sensitivity;
             let prev_pointer_scale = self.virtual_mouse_pointer_scale;
+            let prev_pointer_opacity = self.virtual_mouse_opacity;
+            let prev_pointer_cursor = self.virtual_mouse_cursor;
             let prev_vibrate = self.vibrate;
             let prev_auto_jump = self.auto_jump;
             let prev_zero_latency = self.zero_latency_touch;
@@ -2249,6 +2323,8 @@ impl Settings {
             self.virtual_mouse_enabled = prev_vm_enabled;
             self.virtual_mouse_sensitivity = prev_vm_sens;
             self.virtual_mouse_pointer_scale = prev_pointer_scale;
+            self.virtual_mouse_opacity = prev_pointer_opacity;
+            self.virtual_mouse_cursor = prev_pointer_cursor;
             self.vibrate = prev_vibrate;
             self.auto_jump = prev_auto_jump;
             self.zero_latency_touch = prev_zero_latency;
@@ -2290,6 +2366,8 @@ impl Settings {
         loaded.virtual_mouse_enabled = active.virtual_mouse_enabled;
         loaded.virtual_mouse_sensitivity = active.virtual_mouse_sensitivity;
         loaded.virtual_mouse_pointer_scale = active.virtual_mouse_pointer_scale;
+        loaded.virtual_mouse_opacity = active.virtual_mouse_opacity;
+        loaded.virtual_mouse_cursor = active.virtual_mouse_cursor;
         loaded.vibrate = active.vibrate;
         loaded.auto_jump = active.auto_jump;
         loaded.zero_latency_touch = active.zero_latency_touch;

@@ -409,6 +409,29 @@ impl HudAtlas {
                 vec![0; side * side * 4],
             ));
         }
+        // Custom mouse pointer sprites for Launcher & in-game virtual/physical mouse.
+        for (name, bytes) in [
+            (
+                "horizon/cursor/crimson_blade",
+                include_bytes!("../assets/cursors/crimson_blade.png").as_slice(),
+            ),
+            (
+                "horizon/cursor/diamond_sword",
+                include_bytes!("../assets/cursors/diamond_sword.png").as_slice(),
+            ),
+            (
+                "horizon/cursor/golden_apple",
+                include_bytes!("../assets/cursors/golden_apple.png").as_slice(),
+            ),
+            (
+                "horizon/cursor/flame_sword",
+                include_bytes!("../assets/cursors/flame_sword.png").as_slice(),
+            ),
+        ] {
+            if let Ok((w, h, rgba)) = decode_bytes(bytes) {
+                images.push((name.into(), w, h, rgba));
+            }
+        }
         // The on-screen keyboard's text and corner masks (ui_theme), rasterized at run time.
         images.push((
             "horizon/ui-text".into(),

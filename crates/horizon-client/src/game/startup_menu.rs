@@ -2552,7 +2552,11 @@ impl Loading {
                 } else {
                     self.progress.line()
                 },
-                self.progress.fraction(),
+                if android_boot_loading && self.loaded.is_none() {
+                    (self.progress.fraction() * (9.0 / 5.0)).clamp(0.0, 1.0)
+                } else {
+                    self.progress.fraction()
+                },
                 self.settings.file.bool("darkMojangStudiosBackground"),
             );
         } else if let Some((win, frame)) = &mut self.menu.win {
@@ -2644,11 +2648,13 @@ impl Loading {
                 .touch
                 .sync_viewport_cursor(&mut self.menu.cursor, [batch.width, batch.height]);
             if self.menu.touch.virtual_mouse || crate::keyboard_mouse_input() {
-                horizon_client::touch_ui::draw_pointer(
+                horizon_client::touch_ui::draw_pointer_styled(
                     batch,
                     &gui.atlas,
                     self.menu.cursor,
                     self.menu.controls.settings.virtual_mouse_pointer_scale,
+                    self.menu.controls.settings.virtual_mouse_opacity,
+                    self.menu.controls.settings.virtual_mouse_cursor,
                 );
             }
             // Touch controls only render during gameplay, never in title/options menus.

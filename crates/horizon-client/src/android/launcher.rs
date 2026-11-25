@@ -57,6 +57,7 @@ pub(super) struct Launcher {
     auto_launch_after_install: bool,
     pub(super) anim: pages::AnimState,
     pub(super) control_editor: Option<horizon_client::touch::TouchControls>,
+    pub(super) mouse_touch: horizon_client::touch::Settings,
     worker: Option<mpsc::Receiver<std::result::Result<(), String>>>,
     error: Option<String>,
     catalog: Catalog,
@@ -273,6 +274,9 @@ impl Launcher {
             horizon_client::discord_presence::start(true, false);
             horizon_client::discord_presence::set(horizon_client::discord_presence::Status::Menus);
         }
+        let initial_game_home = catalog.config.game_home(&home);
+        let mouse_touch =
+            horizon_client::touch::Settings::load_from(&initial_game_home.join("horizon-touch.json"));
         Self {
             wardrobe,
             home,
@@ -295,6 +299,7 @@ impl Launcher {
             auto_launch_after_install: false,
             anim: Default::default(),
             control_editor: None,
+            mouse_touch,
             worker: None,
             error: None,
             catalog,
@@ -340,6 +345,9 @@ impl Launcher {
         crate::platform::hide();
         horizon_client::auth::clear_current();
         self.catalog.refresh_replays(&self.home);
+        let game_home = self.catalog.config.game_home(&self.home);
+        self.mouse_touch =
+            horizon_client::touch::Settings::load_from(&game_home.join("horizon-touch.json"));
         self.session_ready = false;
         self.prepared_session = None;
         self.launching = false;
@@ -879,6 +887,7 @@ impl ApplicationHandler for Launcher {
                 button: MouseButton::Left,
                 ..
             } => {
+                crate::touch_input(false);
                 if state == ElementState::Pressed {
                     self.mouse_down = true;
                     Ok(())
@@ -889,6 +898,7 @@ impl ApplicationHandler for Launcher {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                crate::touch_input(false);
                 if self.exit_confirmation {
                     return;
                 }

@@ -151,6 +151,7 @@ pub enum Icon {
     Trash,
     Share,
     Skins,
+    Mouse,
 }
 
 struct Fonts {
@@ -739,6 +740,15 @@ fn icon_hit(icon: Icon, u: f32, v: f32) -> bool {
                 && (v - 0.22) >= (u - 0.72) * 0.55;
             let neck_cut = ((u - 0.50).powi(2) + (v - 0.20).powi(2)).sqrt() <= 0.12;
             (body || left_sleeve || right_sleeve) && !neck_cut
+        }
+        Icon::Mouse => {
+            // Crisp pointer arrow outline.
+            let e1 = seg_dist(u, v, 0.26, 0.14, 0.26, 0.78) <= 0.048;
+            let e2 = seg_dist(u, v, 0.26, 0.14, 0.74, 0.56) <= 0.048;
+            let e3 = seg_dist(u, v, 0.74, 0.56, 0.48, 0.58) <= 0.048;
+            let e4 = seg_dist(u, v, 0.48, 0.58, 0.26, 0.78) <= 0.048;
+            let stem = seg_dist(u, v, 0.46, 0.60, 0.62, 0.86) <= 0.052;
+            e1 || e2 || e3 || e4 || stem
         }
     }
 }
@@ -1444,6 +1454,76 @@ impl<'a> Ui<'a> {
                 rect.v1,
                 color,
             );
+        }
+    }
+
+    /// Draws a live preview of `CursorIcon` centered in `[x, y, box_size, box_size]` dp,
+    /// respecting scroll clipping, `pointer_scale` (`0.5..=2.0`), and `opacity` (`0.15..=1.0`).
+    pub fn cursor_preview(
+        &mut self,
+        x: f32,
+        y: f32,
+        box_size: f32,
+        icon: crate::touch::CursorIcon,
+        pointer_scale: f32,
+        opacity: f32,
+    ) {
+        let alpha = opacity.clamp(0.15, 1.0);
+        let scale = pointer_scale.clamp(0.50, 2.00);
+        if let Some(slot) = icon.atlas_slot()
+            && let Some(&rect) = self.atlas.sprites.get(slot)
+        {
+            let (dy, stagger_alpha) = self.stagger_transform(x, y, box_size, box_size);
+            let y = y + dy;
+            let alpha = (alpha * stagger_alpha).clamp(0.0, 1.0);
+            let size_dp = (box_size * 0.52 * scale).clamp(12.0, box_size * 0.92);
+            let px_x = self.px_x(x + (box_size - size_dp) * 0.5);
+            let px_y = self.px_y(y + (box_size - size_dp) * 0.5);
+            let px_s = (size_dp * self.density).round().max(8.0);
+            let tint = color::with_alpha(0xFFFF_FFFF, alpha);
+            self.emit_clipped_uv(
+                px_x,
+                px_y,
+                px_x + px_s,
+                px_y + px_s,
+                rect.u0,
+                rect.v0,
+                rect.u1,
+                rect.v1,
+                tint,
+            );
+            return;
+        }
+        // Classic default vector arrow preview
+        let s = (box_size / 26.0 * scale).clamp(0.45, box_size / 14.0);
+        let ox = x + (box_size - 10.0 * s) * 0.5;
+        let oy = y + (box_size - 13.0 * s) * 0.5;
+        let outline = color::with_alpha(0xFF00_0000, alpha);
+        let white = color::with_alpha(0xFFFF_FFFF, alpha);
+        let rows: [(f32, f32); 13] = [
+            (0.0, 1.0),
+            (0.0, 2.0),
+            (0.0, 3.0),
+            (0.0, 4.0),
+            (0.0, 5.0),
+            (0.0, 6.0),
+            (0.0, 7.0),
+            (0.0, 8.0),
+            (0.0, 9.0),
+            (0.0, 6.0),
+            (4.0, 7.0),
+            (5.0, 8.0),
+            (6.0, 9.0),
+        ];
+        for (i, &(rx, rw)) in rows.iter().enumerate() {
+            let py = oy + i as f32 * s;
+            let px = ox + rx * s;
+            self.fill(px - s * 0.6, py - s * 0.4, (rw + 1.2) * s, s * 1.8, outline);
+        }
+        for (i, &(rx, rw)) in rows.iter().enumerate() {
+            let py = oy + i as f32 * s;
+            let px = ox + rx * s;
+            self.fill(px, py, rw * s, s, white);
         }
     }
 

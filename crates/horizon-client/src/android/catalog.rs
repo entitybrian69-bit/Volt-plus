@@ -484,6 +484,7 @@ pub enum SettingsCategory {
     Launcher,
     Theme,
     Controls,
+    Mouse,
     Experimental,
     Diagnostics,
     Account,
@@ -496,6 +497,7 @@ impl SettingsCategory {
             Self::Launcher => "Launcher Settings",
             Self::Theme => "Theme Customization",
             Self::Controls => "Controls & HUD Layout",
+            Self::Mouse => "Mouse Customization",
             Self::Experimental => "Experimental Stuff",
             Self::Diagnostics => "Diagnostics & Logs",
             Self::Account => "Account",
@@ -1479,8 +1481,10 @@ impl Catalog {
                 }))
             || (project.kind == Kind::Shader
                 && self.local.iter().any(|item| {
+                    let clean_id = horizon_client::jar_transpiler::sanitize_mod_id(&project.id);
                     item.kind == horizon_client::content_files::Kind::Shaders
                         && (item.file == format!("{}.hshader", project.id)
+                            || item.file == format!("{clean_id}.hshader")
                             || item.file == format!("{}-1.0.0.hshader", project.id)
                             || item.file == format!("{}.zip", project.slug))
                 }))
@@ -2245,9 +2249,17 @@ impl Catalog {
                 crate::shader_catalog::install(source.as_ref(), &project, &game, &report)?
             } else if project.kind == Kind::Shader
                 && project.source == browser::SourceId::Horizon
-                && horizon_shader_api::builtin_shader_pack(&project.id).is_some()
             {
-                crate::shader_catalog::install_horizon_builtin_shader(&project, &game, &report)?
+                if horizon_shader_api::builtin_shader_pack(&project.id).is_some() {
+                    crate::shader_catalog::install_horizon_builtin_shader(&project, &game, &report)?
+                } else {
+                    match browser::installed::install(source.as_ref(), &project, true, &game, &report) {
+                        Ok(entries) => entries.len(),
+                        Err(_) => crate::shader_catalog::install_horizon_synthesized_shader(
+                            &project, &game, &report,
+                        )?,
+                    }
+                }
             } else if project.kind == Kind::Mod
                 && project.source == browser::SourceId::Horizon
             {

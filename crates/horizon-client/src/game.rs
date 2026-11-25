@@ -15150,11 +15150,13 @@ impl Game<'_> {
             // and strictly underneath our touch controls and floating menu overlays.
             #[cfg(target_os = "android")]
             if self.pad.touch_ui.virtual_mouse || (!self.captured && crate::keyboard_mouse_input()) {
-                horizon_client::touch_ui::draw_pointer(
+                horizon_client::touch_ui::draw_pointer_styled(
                     &mut hud,
                     &self.gui.atlas,
                     self.cursor,
                     self.pad.touch.settings.virtual_mouse_pointer_scale,
+                    self.pad.touch.settings.virtual_mouse_opacity,
+                    self.pad.touch.settings.virtual_mouse_cursor,
                 );
             }
             let in_menu = self.pad_in_menu();
@@ -16391,26 +16393,22 @@ impl ApplicationHandler for Game<'_> {
                     if self.os_mouse_captured {
                         self.os_mouse_captured = false;
                         let _ = crate::platform::capture_mouse(false);
-                    }
-                    if let Some(saved) = self.pad.physical_cursor.take() {
-                        self.cursor = saved;
-                    }
-                    if let Some(b) = self.gui_scale() {
-                        let sens = f64::from(
-                            self.pad
-                                .touch
-                                .settings
-                                .virtual_mouse_sensitivity
-                                .clamp(0.25, 4.0),
-                        );
-                        let nx = (f64::from(self.cursor.0) + x * sens / f64::from(b.scale))
-                            .clamp(0.0, f64::from((b.width - 1.0).max(0.0))) as f32;
-                        let ny = (f64::from(self.cursor.1) + y * sens / f64::from(b.scale))
-                            .clamp(0.0, f64::from((b.height - 1.0).max(0.0))) as f32;
-                        self.cursor = (nx, ny);
-                        self.pad.physical_cursor = Some(self.cursor);
-                        self.pad.touch_ui.cursor_initialized = true;
-                        self.pad.touch_ui.cancel_relative();
+                        if let Some(b) = self.gui_scale() {
+                            let sens = f64::from(
+                                self.pad
+                                    .touch
+                                    .settings
+                                    .virtual_mouse_sensitivity
+                                    .clamp(0.25, 4.0),
+                            );
+                            let nx = (f64::from(self.cursor.0) + x * sens / f64::from(b.scale))
+                                .clamp(0.0, f64::from((b.width - 1.0).max(0.0))) as f32;
+                            let ny = (f64::from(self.cursor.1) + y * sens / f64::from(b.scale))
+                                .clamp(0.0, f64::from((b.height - 1.0).max(0.0))) as f32;
+                            self.cursor = (nx, ny);
+                            self.pad.touch_ui.cursor_initialized = true;
+                            self.pad.touch_ui.cancel_relative();
+                        }
                     }
                     self.last_input = Instant::now();
                     return;
@@ -16444,10 +16442,12 @@ impl ApplicationHandler for Game<'_> {
                     return;
                 }
                 crate::touch_input(false);
-                if let Some(saved) = self.pad.physical_cursor.take() {
-                    self.cursor = saved;
-                }
-                if let Some(b) = self.gui_scale() {
+                // When OS mouse is not captured, WindowEvent::CursorMoved already drives
+                // the unified cursor directly at the OS pointer's position. Only integrate
+                // relative deltas here if pointer capture is still transitioning off.
+                if self.os_mouse_captured
+                    && let Some(b) = self.gui_scale()
+                {
                     let sens = f64::from(
                         self.pad
                             .touch
@@ -16460,7 +16460,8 @@ impl ApplicationHandler for Game<'_> {
                     let ny = (f64::from(self.cursor.1) + y * sens / f64::from(b.scale))
                         .clamp(0.0, f64::from((b.height - 1.0).max(0.0))) as f32;
                     self.cursor = (nx, ny);
-                    self.pad.physical_cursor = Some(self.cursor);
+                    self.pad.touch_ui.cursor_initialized = true;
+                    self.pad.touch_ui.cancel_relative();
                 }
                 self.android_sync_pointer();
                 self.last_input = Instant::now();
@@ -17476,10 +17477,6 @@ impl Game<'_> {
                                 crate::touch_input(false);
                             }
                             self.android_sync_pointer();
-                        } else if !self.pad.touch_ui.virtual_mouse
-                            && self.pad.physical_cursor.is_none()
-                        {
-                            self.pad.physical_cursor = Some(self.cursor);
                         }
                     }
                     if let Some(r) = &self.renderer {
@@ -17487,7 +17484,6 @@ impl Game<'_> {
                         self.cursor = (position.x as f32 / b.scale, position.y as f32 / b.scale);
                         #[cfg(target_os = "android")]
                         if native_pointer {
-                            self.pad.physical_cursor = Some(self.cursor);
                             self.pad.touch_ui.cursor_initialized = true;
                             self.pad.touch_ui.cancel_relative();
                         }
@@ -19822,7 +19818,11 @@ fn load_resources(
     progress: &Progress,
     publish: &mut dyn FnMut(UiResources, &std::path::Path),
 ) -> Result<Loaded> {
-    let threads = settings.horizon.worker_threads();
+    let threads = if cfg!(target_os = "android") && settings.horizon.workers == 0 {
+        std::thread::available_parallelism().map_or(4, |n| n.get().saturating_sub(1).clamp(2, 6))
+    } else {
+        settings.horizon.worker_threads()
+    };
     horizon_client::sprites::set_texture_budget(settings.horizon.texture_budget_mib);
     horizon_client::sprites::set_labpbr_maps(shader_packs::picks_native_pack(settings));
     // Stage A: the menu bundle (atlas and panorama). With a loading screen it is
@@ -19956,8 +19956,23 @@ fn load_resources(
     // Finish fallible CPU preparation before starting the tail, so an error
     // cannot detach a tail worker that races the next pack-loader generation.
     let prepared_at = Instant::now();
-    let game_cpu = menu.then(|| GameCpuResources::load(&root)).transpose()?;
-    let renderer_cpu = menu.then(|| prepare_renderer_textures(&pack));
+    let (game_cpu, renderer_cpu) = if menu {
+        if parallel {
+            std::thread::scope(|scope| {
+                let cpu = scope.spawn(|| GameCpuResources::load(&root));
+                let tex = prepare_renderer_textures(&pack);
+                (cpu.join().unwrap().map(Some), Some(tex))
+            })
+        } else {
+            (
+                GameCpuResources::load(&root).map(Some),
+                Some(prepare_renderer_textures(&pack)),
+            )
+        }
+    } else {
+        (Ok(None), None)
+    };
+    let game_cpu = game_cpu?;
     if menu {
         log::info!(
             "Horizon: handoff CPU resources prepared on worker in {} ms",
@@ -19967,9 +19982,9 @@ fn load_resources(
     // The block entity renderer's face visibility: the meshes' own, whose
     // shapes already hold their faces, not a second load of the same tables.
     let visibility = pack.context.tables.visibility.clone();
-    // On Android, complete all rest resources and worldgen preload on the loading worker
-    // before transitioning to the MC Title Menu so the title menu never freezes on handoff.
-    let rest_loader = if menu && !cfg!(target_os = "android") {
+    // Run rest resource loading on a background worker during menu startup on all platforms
+    // so the Mojang Studios loading screen finishes as soon as core tables are ready.
+    let rest_loader = if menu {
         let resources = resources.clone();
         let root = root.clone();
         let rest_progress = progress.clone();
@@ -20959,6 +20974,15 @@ impl Loading {
             } else {
                 w.request_redraw();
             }
+        }
+        #[cfg(target_os = "android")]
+        if self.shown && self.loaded.is_none() {
+            // Avoid burning main-thread CPU/GPU redrawing the static boot overlay at
+            // 120fps so the resource-loader workers finish faster.
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(33),
+            ));
+            return;
         }
         event_loop.set_control_flow(ControlFlow::Poll);
     }

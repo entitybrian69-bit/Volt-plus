@@ -434,6 +434,9 @@ pub(super) enum Action {
     ToggleVirtualMouseEnabled,
     ToggleOverlayButton,
     PointerSizeDelta(f32),
+    PointerOpacityDelta(f32),
+    SelectCursorIcon(horizon_client::touch::CursorIcon),
+    ResetMouseCustomization,
     CycleJoystickZone,
     ToggleTouchVibrate,
     ToggleAutoJump,
@@ -2380,14 +2383,17 @@ impl Launcher {
         let pointer_density = ui.density;
         ui.finish();
         if crate::keyboard_mouse_input() {
-            horizon_client::touch_ui::draw_pointer(
+            horizon_client::touch_ui::draw_pointer_styled(
                 &mut b,
                 &gui.atlas,
                 (
                     self.cursor.0 as f32 / pointer_density,
                     self.cursor.1 as f32 / pointer_density,
                 ),
-                1.0,
+                true,
+                self.mouse_touch.virtual_mouse_cursor,
+                self.mouse_touch.virtual_mouse_pointer_scale,
+                self.mouse_touch.virtual_mouse_opacity,
             );
         }
 
@@ -2858,6 +2864,7 @@ impl Launcher {
                     "Open Viewer",
                 );
                 if let Some(c) = ui.clip_rect(open_r) {
+                    self.targets.push((c, Action::PlayReplay(i)));
                     list_targets.push((c, Action::PlayReplay(i)));
                 }
                 let confirming = delete_confirm == Some(i);
@@ -2882,6 +2889,7 @@ impl Launcher {
                     if confirming { "Confirm" } else { "Delete" },
                 );
                 if let Some(c) = ui.clip_rect(del_r) {
+                    self.targets.push((c, Action::DeleteReplay(i)));
                     list_targets.push((c, Action::DeleteReplay(i)));
                 }
             }
@@ -5058,7 +5066,7 @@ impl Launcher {
                 "Settings",
             );
 
-            let cards: [(Icon, &str, &str, Action); 7] = [
+            let cards: [(Icon, &str, &str, Action); 8] = [
                 (
                     Icon::Monitor,
                     "Video Settings",
@@ -5076,6 +5084,12 @@ impl Launcher {
                     "Controls",
                     "HUD touch layout, buttons, sensitivity and profiles",
                     Action::SettingsCat(SettingsCategory::Controls),
+                ),
+                (
+                    Icon::Mouse,
+                    "Mouse Customization",
+                    "Cursor icon, pointer size, opacity & virtual mouse",
+                    Action::SettingsCat(SettingsCategory::Mouse),
                 ),
                 (
                     Icon::Gamepad,
@@ -5105,25 +5119,25 @@ impl Launcher {
 
             let grid_top = 98.0 + slide_y;
             let gap_x = 14.0;
-            let gap_y = 12.0;
+            let gap_y = 10.0;
             let card_h = if compact {
-                ((h - grid_top - 52.0 - gap_y * 6.0) / 7.0).clamp(44.0, 68.0)
+                ((h - grid_top - 44.0 - gap_y * 7.0) / 8.0).clamp(38.0, 60.0)
             } else {
-                ((h - grid_top - 52.0 - gap_y * 2.0) / 3.0).clamp(64.0, 90.0)
+                ((h - grid_top - 48.0 - gap_y * 3.0) / 4.0).clamp(52.0, 76.0)
             };
 
             for (idx, (icon, title, subtitle, action)) in cards.into_iter().enumerate() {
                 let (cx, cy, card_w) = if compact {
                     (content_x, grid_top + idx as f32 * (card_h + gap_y), content_w)
-                } else if idx < 4 {
+                } else {
                     let col = idx % 2;
                     let row = idx / 2;
                     let w2 = (content_w - gap_x) * 0.5;
-                    (content_x + col as f32 * (w2 + gap_x), grid_top + row as f32 * (card_h + gap_y), w2)
-                } else {
-                    let col = idx - 4;
-                    let w3 = (content_w - gap_x * 2.0) / 3.0;
-                    (content_x + col as f32 * (w3 + gap_x), grid_top + 2.0 * (card_h + gap_y), w3)
+                    (
+                        content_x + col as f32 * (w2 + gap_x),
+                        grid_top + row as f32 * (card_h + gap_y),
+                        w2,
+                    )
                 };
                 let rect = [cx, cy, card_w, card_h];
 
@@ -5215,6 +5229,7 @@ impl Launcher {
         let opts = horizon_client::settings::Settings::load(&game_home.join("options.txt"));
         let touch_cfg =
             horizon_client::touch::Settings::load_from(&game_home.join("horizon-touch.json"));
+        self.mouse_touch = touch_cfg.clone();
 
         match cat {
             SettingsCategory::Video => {
@@ -6609,6 +6624,222 @@ impl Launcher {
                 }
                 ui.set_clip(None);
             }
+            SettingsCategory::Mouse => {
+                use horizon_client::touch::CursorIcon;
+
+                let preview_h = 84.0;
+                let rows_start = preview_h + 14.0;
+                let slider_count = 4;
+                let picker_hdr_y = rows_start + slider_count as f32 * step_y + 8.0;
+                let cols = if compact { 2 } else { 3 };
+                let picker_rows = CursorIcon::ALL.len().div_ceil(cols);
+                let picker_card_h = 66.0;
+                let picker_gap = 10.0;
+                let total_h = picker_hdr_y
+                    + 28.0
+                    + picker_rows as f32 * (picker_card_h + picker_gap)
+                    + 12.0;
+                let max_scroll = (total_h - (list_bottom - list_top)).max(0.0);
+                self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
+                self.list_view = Some([list_top, list_bottom, max_scroll]);
+
+                ui.set_clip(Some([
+                    content_x - 2.0,
+                    list_top,
+                    content_w + 4.0,
+                    (list_bottom - list_top).max(1.0),
+                ]));
+
+                let py = list_top - self.catalog.scroll;
+                if py + preview_h >= list_top && py <= list_bottom {
+                    ui.rounded(content_x, py, content_w, preview_h, 18.0, my3_surface());
+                    ui.border(content_x, py, content_w, preview_h, 18.0, my3_accent());
+
+                    let box_s = 60.0;
+                    let box_x = content_x + 12.0;
+                    let box_y = py + (preview_h - box_s) * 0.5;
+                    ui.rounded(box_x, box_y, box_s, box_s, 14.0, my3_surface_high());
+                    ui.border(box_x, box_y, box_s, box_s, 14.0, my3_card_border());
+                    ui.cursor_preview(
+                        box_x,
+                        box_y,
+                        box_s,
+                        touch_cfg.virtual_mouse_cursor,
+                        touch_cfg.virtual_mouse_pointer_scale,
+                        touch_cfg.virtual_mouse_opacity,
+                    );
+
+                    let reset_w = 112.0;
+                    let reset_r = [
+                        content_x + content_w - reset_w - 14.0,
+                        py + (preview_h - 36.0) * 0.5,
+                        reset_w,
+                        36.0,
+                    ];
+                    let text_x = box_x + box_s + 14.0;
+                    let text_max = (reset_r[0] - text_x - 12.0).max(60.0);
+                    let title_str = format!("Active Cursor: {}", touch_cfg.virtual_mouse_cursor.label());
+                    let fitted_title = ui.fit_text(Face::SemiBold, 15.0, &title_str, text_max);
+                    ui.text(Face::SemiBold, 15.0, text_x, py + 17.0, my3_text(), &fitted_title);
+
+                    let stats = format!(
+                        "Size {:.0}%  •  Opacity {:.0}%  •  Sensitivity {:.0}%",
+                        touch_cfg.virtual_mouse_pointer_scale * 100.0,
+                        touch_cfg.virtual_mouse_opacity * 100.0,
+                        opts.sensitivity * 100.0,
+                    );
+                    let fitted_stats = ui.fit_text(Face::Regular, 12.0, &stats, text_max);
+                    ui.text(Face::Regular, 12.0, text_x, py + 43.0, my3_muted(), &fitted_stats);
+
+                    button(
+                        ui,
+                        &mut self.targets,
+                        reset_r,
+                        "Reset Default",
+                        Action::ResetMouseCustomization,
+                        false,
+                    );
+                    self.list_targets.push((reset_r, Action::ResetMouseCustomization));
+                }
+
+                let size_lbl = format!("{:.0}%", touch_cfg.virtual_mouse_pointer_scale * 100.0);
+                let size_frac =
+                    ((touch_cfg.virtual_mouse_pointer_scale - 0.50) / 1.50).clamp(0.0, 1.0);
+                let op_lbl = format!("{:.0}%", touch_cfg.virtual_mouse_opacity * 100.0);
+                let op_frac = ((touch_cfg.virtual_mouse_opacity - 0.15) / 0.85).clamp(0.0, 1.0);
+                let sens_lbl = format!("{:.0}%", opts.sensitivity * 100.0);
+                let sens_frac = ((opts.sensitivity - 0.05) / 0.95).clamp(0.0, 1.0);
+
+                let rows: [(&str, &str, SettingControl<'_>); 4] = [
+                    (
+                        "Cursor Size",
+                        "Scale of both the physical mouse pointer and virtual menu cursor (50% - 200%)",
+                        SettingControl::Slider {
+                            value_label: &size_lbl,
+                            fraction: size_frac,
+                            minus_action: Action::PointerSizeDelta(-0.10),
+                            plus_action: Action::PointerSizeDelta(0.10),
+                        },
+                    ),
+                    (
+                        "Cursor Opacity",
+                        "Transparency of the in-game & launcher custom cursor (15% - 100%)",
+                        SettingControl::Slider {
+                            value_label: &op_lbl,
+                            fraction: op_frac,
+                            minus_action: Action::PointerOpacityDelta(-0.05),
+                            plus_action: Action::PointerOpacityDelta(0.05),
+                        },
+                    ),
+                    (
+                        "Mouse Look Sensitivity",
+                        "Camera turn speed for physical mouse and trackpad input",
+                        SettingControl::Slider {
+                            value_label: &sens_lbl,
+                            fraction: sens_frac,
+                            minus_action: Action::MouseSensDelta(-0.05),
+                            plus_action: Action::MouseSensDelta(0.05),
+                        },
+                    ),
+                    (
+                        "Virtual Mouse in Touch Menus",
+                        "Show draggable on-screen cursor when using touch controls in menus",
+                        SettingControl::Toggle(
+                            touch_cfg.virtual_mouse_enabled,
+                            Action::ToggleVirtualMouseEnabled,
+                        ),
+                    ),
+                ];
+
+                for (i, (title, sub, ctrl)) in rows.into_iter().enumerate() {
+                    let y = list_top + rows_start + i as f32 * step_y - self.catalog.scroll;
+                    if y + card_h < list_top || y > list_bottom {
+                        continue;
+                    }
+                    draw_setting_card(
+                        ui,
+                        &mut self.targets,
+                        &mut self.list_targets,
+                        &mut self.anim,
+                        content_x,
+                        y,
+                        content_w,
+                        card_h,
+                        title,
+                        sub,
+                        ctrl,
+                    );
+                }
+
+                let hdr_y = list_top + picker_hdr_y - self.catalog.scroll;
+                if hdr_y + 24.0 >= list_top && hdr_y <= list_bottom {
+                    ui.text(
+                        Face::SemiBold,
+                        12.5,
+                        content_x + 4.0,
+                        hdr_y + 4.0,
+                        my3_accent(),
+                        "CURSOR ICON",
+                    );
+                }
+
+                let grid_y0 = list_top + picker_hdr_y + 28.0 - self.catalog.scroll;
+                let gap_x = 12.0;
+                let tile_w = (content_w - gap_x * (cols as f32 - 1.0)) / cols as f32;
+                for (idx, &icon) in CursorIcon::ALL.iter().enumerate() {
+                    let col = idx % cols;
+                    let row = idx / cols;
+                    let tx = content_x + col as f32 * (tile_w + gap_x);
+                    let ty = grid_y0 + row as f32 * (picker_card_h + picker_gap);
+                    if ty + picker_card_h < list_top || ty > list_bottom {
+                        continue;
+                    }
+                    let selected = touch_cfg.virtual_mouse_cursor == icon;
+                    let rect = [tx, ty, tile_w, picker_card_h];
+                    ui.rounded(
+                        tx,
+                        ty,
+                        tile_w,
+                        picker_card_h,
+                        16.0,
+                        if selected { my3_accent_soft() } else { my3_card_bg() },
+                    );
+                    ui.border(
+                        tx,
+                        ty,
+                        tile_w,
+                        picker_card_h,
+                        16.0,
+                        if selected { my3_accent() } else { my3_card_border() },
+                    );
+                    let p_box = 44.0;
+                    let p_x = tx + 11.0;
+                    let p_y = ty + (picker_card_h - p_box) * 0.5;
+                    ui.rounded(p_x, p_y, p_box, p_box, 11.0, my3_surface_high());
+                    ui.cursor_preview(p_x, p_y, p_box, icon, 1.0, 1.0);
+
+                    let lx = p_x + p_box + 10.0;
+                    let lmax = (tile_w - p_box - 28.0).max(40.0);
+                    let fitted_lbl = ui.fit_text(Face::SemiBold, 13.5, icon.label(), lmax);
+                    ui.text(Face::SemiBold, 13.5, lx, ty + 14.0, my3_text(), &fitted_lbl);
+                    let sub_lbl = if selected { "Active" } else { "Tap to equip" };
+                    ui.text(
+                        Face::Regular,
+                        11.5,
+                        lx,
+                        ty + 36.0,
+                        if selected { my3_accent() } else { my3_muted() },
+                        sub_lbl,
+                    );
+
+                    if let Some(c) = ui.clip_rect(rect) {
+                        self.targets.push((c, Action::SelectCursorIcon(icon)));
+                    }
+                    self.list_targets.push((rect, Action::SelectCursorIcon(icon)));
+                }
+
+                ui.set_clip(None);
+            }
             SettingsCategory::Experimental => {
                 let c = &self.catalog.config;
                 let count = 9;
@@ -7453,6 +7684,24 @@ impl Launcher {
                 self.modify_touch_settings(|t| {
                     t.virtual_mouse_pointer_scale =
                         (t.virtual_mouse_pointer_scale + delta).clamp(0.50, 2.00);
+                });
+            }
+            Some(Action::PointerOpacityDelta(delta)) => {
+                self.modify_touch_settings(|t| {
+                    t.virtual_mouse_opacity =
+                        (t.virtual_mouse_opacity + delta).clamp(0.15, 1.00);
+                });
+            }
+            Some(Action::SelectCursorIcon(icon)) => {
+                self.modify_touch_settings(|t| {
+                    t.virtual_mouse_cursor = icon;
+                });
+            }
+            Some(Action::ResetMouseCustomization) => {
+                self.modify_touch_settings(|t| {
+                    t.virtual_mouse_cursor = horizon_client::touch::CursorIcon::Default;
+                    t.virtual_mouse_pointer_scale = 1.0;
+                    t.virtual_mouse_opacity = 1.0;
                 });
             }
             Some(Action::CycleJoystickZone) => {
@@ -8688,6 +8937,7 @@ impl Launcher {
         } else {
             let _ = t.save_to(&game_home.join("horizon-touch.json"));
         }
+        self.mouse_touch = t;
     }
 
     fn apply_slider_fraction(&mut self, action: Action, frac: f32) {
@@ -8734,6 +8984,12 @@ impl Launcher {
                 let v = ((0.50 + t * 1.50) * 100.0).round() / 100.0;
                 self.modify_touch_settings(|ts| {
                     ts.virtual_mouse_pointer_scale = v.clamp(0.50, 2.0)
+                });
+            }
+            Action::PointerOpacityDelta(_) => {
+                let v = ((0.15 + t * 0.85) * 100.0).round() / 100.0;
+                self.modify_touch_settings(|ts| {
+                    ts.virtual_mouse_opacity = v.clamp(0.15, 1.0)
                 });
             }
             Action::GyroSensDelta(_) => {

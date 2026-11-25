@@ -464,24 +464,68 @@ fn mouse_button_rects(w: f32, h: f32) -> [([f32; 4], bool); 2] {
 /// vector geometry, crisp dark outline, pure white body, subtle contact shadow,
 /// and exact tip hotspot at `(cursor.0, cursor.1)` clamped cleanly to the screen bounds.
 pub fn draw_pointer(batch: &mut HudBatch, atlas: &HudAtlas, cursor: (f32, f32), scale: f32) {
+    draw_pointer_styled(
+        batch,
+        atlas,
+        cursor,
+        scale,
+        1.0,
+        crate::touch::CursorIcon::Default,
+    );
+}
+
+/// Renders either the default Windows 11-style vector arrow or one of the bundled
+/// custom cursor icons with the configured scale and opacity, anchored at the tip `(cursor.0, cursor.1)`.
+pub fn draw_pointer_styled(
+    batch: &mut HudBatch,
+    atlas: &HudAtlas,
+    cursor: (f32, f32),
+    scale: f32,
+    opacity: f32,
+    icon: crate::touch::CursorIcon,
+) {
     let scale = if scale.is_finite() {
         scale.clamp(0.5, 2.0)
     } else {
         1.0
     };
+    let opacity = if opacity.is_finite() {
+        opacity.clamp(0.15, 1.0)
+    } else {
+        1.0
+    };
     let sw = batch.width.max(1.0);
     let sh = batch.height.max(1.0);
-    let h = (sh * 0.052).clamp(12.0, 15.5) * scale;
-    let s = h / 16.0;
     let x = cursor.0.clamp(0.0, (sw - 3.0 * scale).max(0.0));
     let y = cursor.1.clamp(0.0, (sh - 3.0 * scale).max(0.0));
+
+    if let Some(sprite_name) = icon.sprite_name()
+        && let Some(rect) = atlas.sprites.get(sprite_name).copied()
+    {
+        let size = (sh * 0.068).clamp(16.0, 22.0) * scale;
+        let alpha = (opacity * 255.0).round().clamp(0.0, 255.0) as u8;
+        // Offset by 2/64 of sprite size so the visual tip aligns tightly with (x, y).
+        let pad = size * (2.0 / 64.0);
+        batch.rect_uv(
+            (x - pad).clamp(0.0, (sw - 4.0).max(0.0)),
+            (y - pad).clamp(0.0, (sh - 4.0).max(0.0)),
+            size,
+            size,
+            rect,
+            rgba(255, 255, 255, alpha),
+        );
+        return;
+    }
+
+    let h = (sh * 0.052).clamp(12.0, 15.5) * scale;
+    let s = h / 16.0;
     let pt = |dx: f32, dy: f32| -> [f32; 2] {
         [(x + dx * s).clamp(0.0, sw), (y + dy * s).clamp(0.0, sh)]
     };
 
-    let shadow: u32 = rgba(0, 0, 0, 64);
-    let outline: u32 = rgba(18, 18, 22, 248);
-    let fill: u32 = rgba(255, 255, 255, 255);
+    let shadow: u32 = rgba(0, 0, 0, (64.0 * opacity).round() as u8);
+    let outline: u32 = rgba(18, 18, 22, (248.0 * opacity).round() as u8);
+    let fill: u32 = rgba(255, 255, 255, (255.0 * opacity).round() as u8);
 
     // 1. Subtle contact drop shadow (+0.65, +0.90) for contrast over bright surfaces
     let sx = 0.65;
@@ -972,11 +1016,13 @@ impl TouchUi {
     pub fn draw(&self, b: &mut HudBatch, a: &HudAtlas, menu: bool) {
         let touch_active = crate::android_runtime::active_input() == crate::android_gamepad::InputMode::Touch;
         let hud_vis = crate::touch::current_hud_opacity_scale() > 0.01;
-        if menu && hud_vis && self.virtual_mouse && !self.pointer_off {
+        if menu && self.virtual_mouse && !self.pointer_off {
             draw_pri_button(b, a, pri_button_rect(b.width, b.height));
         }
-        if menu && !self.goy_mode && touch_active && hud_vis {
-            button(b, a, "Back", b.width - 53.0, 3.0, 50.0);
+        if menu && !self.goy_mode && touch_active {
+            if hud_vis {
+                button(b, a, "Back", b.width - 53.0, 3.0, 50.0);
+            }
             if self.virtual_mouse && !self.pointer_off {
                 let [_, rmb] = mouse_button_rects(b.width, b.height);
                 button(b, a, "RMB", rmb.0[0], rmb.0[1], rmb.0[2]);

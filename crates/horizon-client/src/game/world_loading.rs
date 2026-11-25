@@ -388,6 +388,7 @@ pub(super) fn preload_world_data(
 /// Reads the same world data as `preload_world_data` on the calling thread.
 /// Android's loading worker runs this before the title menu takes over, so
 /// the first world handoff never waits for the worldgen bundle or loot data.
+#[allow(dead_code)]
 pub(super) fn preload_world_data_now(
     resources: &std::path::Path,
     registry: &'static horizon_world::registry::BlockRegistry,
