@@ -81,31 +81,6 @@ public final class HorizonActivity extends android.app.NativeActivity {
         hideOsPointer(this);
     }
 
-    @Override public void onWindowFocusChanged(boolean hasFocus) {
-        super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) {
-            hideOsPointer(this);
-        }
-    }
-
-    @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent ev) {
-        if (android.os.Build.VERSION.SDK_INT >= 24 && ev != null
-                && (ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE)
-                    || (android.os.Build.VERSION.SDK_INT >= 26
-                        && ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE_RELATIVE))
-                    || ev.isFromSource(android.view.InputDevice.SOURCE_TOUCHPAD))) {
-            android.view.Window w = getWindow();
-            if (w != null) {
-                android.view.View decor = w.getDecorView();
-                android.view.PointerIcon hidden = invisiblePointerIcon(this);
-                if (decor != null && hidden != null && decor.getPointerIcon() != hidden) {
-                    hidePointerTree(this, decor);
-                }
-            }
-        }
-        return super.dispatchGenericMotionEvent(ev);
-    }
-
     private void loadGame() {
         if (loaded) {
             return;
@@ -245,12 +220,18 @@ public final class HorizonActivity extends android.app.NativeActivity {
     }
 
     @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent ev) {
-        if (ev != null && (ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE)
-                || ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE_RELATIVE)
-                || ev.isFromSource(android.view.InputDevice.SOURCE_TOUCHPAD))) {
+        if (android.os.Build.VERSION.SDK_INT >= 24 && ev != null
+                && (ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE)
+                    || (android.os.Build.VERSION.SDK_INT >= 26
+                        && ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE_RELATIVE))
+                    || ev.isFromSource(android.view.InputDevice.SOURCE_TOUCHPAD))) {
             android.view.Window w = getWindow();
             if (w != null) {
-                hidePointerTree(this, w.getDecorView());
+                android.view.View decor = w.getDecorView();
+                android.view.PointerIcon hidden = invisiblePointerIcon(this);
+                if (decor != null && hidden != null && decor.getPointerIcon() != hidden) {
+                    hidePointerTree(this, decor);
+                }
             }
         }
         return super.dispatchGenericMotionEvent(ev);
