@@ -58,6 +58,9 @@ impl Game<'_> {
             if !quit {
                 return self.leave_server(None);
             }
+            if self.replay.is_none() && !self.options.split_guest {
+                let _ = horizon_client::replay::global_recorder().stop_and_save(None, None);
+            }
             if let Some(mut remote) = self.remote.take() {
                 remote.session.disconnect();
             }

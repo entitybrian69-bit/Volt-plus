@@ -1133,6 +1133,27 @@ impl Game<'_> {
                     }
                     horizon_client::recorder::publish(status);
                 }
+                InGameMenuAction::Replay(act) => {
+                    self.handle_replay_action(act)?;
+                }
+            }
+            return Ok(true);
+        }
+        if self.replay.is_some()
+            && self.screen == Screen::Playing
+            && let Some(maybe_act) =
+                self.pad
+                    .touch_ui
+                    .replay_touch(b.width, b.height, t.id, t.phase, p)
+        {
+            self.pad.touch.clear();
+            self.pad.touch.ignore(t.id);
+            if let Some(act) = maybe_act {
+                if t.phase == TouchPhase::Started {
+                    self.audio.play_button_click();
+                    self.android_touch_haptic(10);
+                }
+                self.handle_replay_action(act)?;
             }
             return Ok(true);
         }

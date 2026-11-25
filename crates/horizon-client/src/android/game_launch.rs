@@ -8,6 +8,7 @@ pub(crate) struct LaunchRequest {
     pub session_file: Option<PathBuf>,
     pub offline_name: String,
     pub server: String,
+    pub replay_path: Option<PathBuf>,
     pub control_socket: Option<PathBuf>,
     pub extra_arguments: Vec<String>,
     pub open_gl: bool,
@@ -35,7 +36,12 @@ impl LaunchRequest {
         } else if !self.offline_name.is_empty() {
             args.extend(["--name".into(), self.offline_name.clone()]);
         }
-        if !self.server.is_empty() {
+        if let Some(replay) = &self.replay_path {
+            args.extend([
+                "--replay".into(),
+                replay.to_string_lossy().into_owned(),
+            ]);
+        } else if !self.server.is_empty() {
             args.extend(["--server".into(), self.server.clone()]);
         }
         args.extend(self.extra_arguments.iter().cloned());
@@ -77,6 +83,7 @@ mod tests {
             session_file: None,
             offline_name: "Offline".into(),
             server: "example.test".into(),
+            replay_path: None,
             control_socket: None,
             extra_arguments: vec![],
             open_gl: false,

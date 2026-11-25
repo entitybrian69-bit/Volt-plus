@@ -96,6 +96,7 @@ pub enum Event {
 
 pub struct Session {
     events: Receiver<Event>,
+    _replay_keepalive: Option<Sender<Event>>,
     writer: Arc<Mutex<Option<ConnWriter>>>,
     /// The connection is in configuration (else in play). Changed only
     /// with `writer` locked, as the packet that switches is sent.
@@ -110,6 +111,22 @@ pub struct Session {
     debug: bool,
 }
 impl Session {
+    /// A dummy session for offline `.mcpr` Replay Playback (never connects or sends).
+    pub fn replay(name: &str) -> Self {
+        let (send, events) = channel();
+        Self {
+            events,
+            _replay_keepalive: Some(send),
+            writer: Arc::new(Mutex::new(None)),
+            configuring: Arc::new(AtomicBool::new(false)),
+            thread: None,
+            address: "replay".to_owned(),
+            name: name.to_owned(),
+            counters: Arc::new(Mutex::new(None)),
+            cookies: Arc::new(Mutex::new(HashMap::new())),
+            debug: false,
+        }
+    }
     /// Start connecting in the background, as `auth`'s account when there is one.
     pub fn connect(
         address: &str,
@@ -120,7 +137,7 @@ impl Session {
         resources: PathBuf,
     ) -> Self {
         Self::start(
-            address, name, auth, info, lang, None, None, resources, false,
+            address, name, auth, info, lang, None, None, resources, false, None,
         )
     }
     /// `ClientHandshakePacketListenerImpl.handleHello`: LAN entries can continue
@@ -134,7 +151,9 @@ impl Session {
         lang: Arc<Language>,
         resources: PathBuf,
     ) -> Self {
-        Self::start(address, name, auth, info, lang, None, None, resources, true)
+        Self::start(
+            address, name, auth, info, lang, None, None, resources, true, None,
+        )
     }
     /// `ConnectScreen.startConnecting` for a `transfer`: the cookies the
     /// server stored carry to the new connection (`TransferState`).
@@ -157,6 +176,7 @@ impl Session {
             Some(cookies),
             resources,
             false,
+            None,
         )
     }
     /// Join an integrated server through memory (`Connection.connectToLocalServer`).
@@ -177,8 +197,27 @@ impl Session {
             None,
             resources,
             false,
+            None,
         )
     }
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_with_recorder(
+        address: &str,
+        name: &str,
+        auth: Option<Arc<AuthSession>>,
+        info: cfg::ClientInformation,
+        lang: Arc<Language>,
+        local: Option<horizon_protocol::connection::Pipe>,
+        cookies: Option<Cookies>,
+        resources: PathBuf,
+        lan: bool,
+        recorder: Option<crate::replay::ReplayRecorder>,
+    ) -> Self {
+        Self::start(
+            address, name, auth, info, lang, local, cookies, resources, lan, recorder,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
     fn start(
         address: &str,
         name: &str,
@@ -189,7 +228,13 @@ impl Session {
         cookies: Option<Cookies>,
         resources: PathBuf,
         lan: bool,
+        recorder: Option<crate::replay::ReplayRecorder>,
     ) -> Self {
+        let recorder = recorder.or_else(|| {
+            let r = crate::replay::global_recorder().clone();
+            r.reset_connection_prelude();
+            Some(r)
+        });
         let (send, events) = channel();
         let writer = Arc::new(Mutex::new(None));
         let configuring = Arc::new(AtomicBool::new(true));
@@ -220,6 +265,7 @@ impl Session {
                     transferred,
                     &resources,
                     lan,
+                    recorder.as_ref(),
                 );
                 let from_server = result.is_ok();
                 let why = result.unwrap_or_else(|e| e);
@@ -236,6 +282,7 @@ impl Session {
         let debug = std::env::var_os("HORIZON_NET_DEBUG").is_some();
         Self {
             events,
+            _replay_keepalive: None,
             writer,
             configuring,
             thread,
@@ -524,6 +571,7 @@ fn connection_lost(e: horizon_protocol::Error, lang: &Language) -> String {
 /// `ClientHandshakePacketListenerImpl.handleHello`: the whole connection.
 /// Ok: why it ended for good (the server's reason, or
 /// a refusal no retry fixes); Err: the connection failed.
+#[allow(clippy::too_many_arguments)]
 fn run(
     local: Option<horizon_protocol::connection::Pipe>,
     address: &str,
@@ -539,7 +587,11 @@ fn run(
     transferred: bool,
     resources: &Path,
     lan: bool,
+    recorder: Option<&crate::replay::ReplayRecorder>,
 ) -> Result<Reason, Reason> {
+    if let Some(rec) = recorder {
+        rec.reset_connection_prelude();
+    }
     let (host, port, mut c) = if let Some(pipe) = local {
         (address.to_owned(), 0, Connection::local(pipe))
     } else {
@@ -695,6 +747,7 @@ fn run(
         send,
         cookies,
         resources,
+        recorder,
     )?;
     let _ = send.send(Event::Joined {
         registries: Arc::new(registries),
@@ -709,9 +762,11 @@ fn run(
         send,
         cookies,
         resources,
+        recorder,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn receive_play(
     reader: &mut ConnReader,
     shared_writer: &Mutex<Option<ConnWriter>>,
@@ -720,11 +775,15 @@ fn receive_play(
     send: &Sender<Event>,
     cookies: &Cookies,
     resources: &Path,
+    recorder: Option<&crate::replay::ReplayRecorder>,
 ) -> Result<Reason, Reason> {
     loop {
         let (id, payload) = reader
             .recv()
             .map_err(|e| Reason::plain(connection_lost(e, lang)))?;
+        if let Some(rec) = recorder {
+            rec.record_play_raw(id, &payload);
+        }
         let packet = match play::Clientbound::decode(id, &payload) {
             Ok(p) => p,
             Err(err) => {
@@ -766,6 +825,7 @@ fn receive_play(
                     send,
                     cookies,
                     resources,
+                    recorder,
                 )?;
                 let _ = send.send(Event::Reconfigured(Arc::new(registries)));
             }
@@ -808,6 +868,7 @@ fn receive_play(
 
 /// The configuration phase: registries, tags and known packs until the
 /// server finishes it (ClientConfigurationPacketListenerImpl).
+#[allow(clippy::too_many_arguments)]
 fn configure(
     reader: &mut ConnReader,
     writer: &Mutex<Option<ConnWriter>>,
@@ -816,6 +877,7 @@ fn configure(
     send: &Sender<Event>,
     cookies: &Cookies,
     resources: &Path,
+    recorder: Option<&crate::replay::ReplayRecorder>,
 ) -> Result<Dynamic, Reason> {
     let mut registries = Dynamic::default();
     let mut content_verified = false;
@@ -831,6 +893,9 @@ fn configure(
         let (id, payload) = reader
             .recv()
             .map_err(|e| Reason::plain(connection_lost(e, lang)))?;
+        if let Some(rec) = recorder {
+            rec.record_cfg_raw(id, &payload);
+        }
         match cfg::Clientbound::decode(id, &payload)
             .map_err(|e| Reason::plain(connection_lost(e, lang)))?
         {

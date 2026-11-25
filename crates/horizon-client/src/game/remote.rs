@@ -787,6 +787,35 @@ impl Game<'_> {
         let builtin = Builtin::find(&root)
             .and_then(|p| Builtin::load(&p).ok())
             .ok_or("Resources are incomplete: registries.json is missing or invalid. Click \"Prepare again\" in the launcher (or run horizon-prepare), then try again.")?;
+        if !self.options.split_guest && self.replay.is_none() {
+            let game_dir = Self::game_dir();
+            horizon_client::replay::init_settings(&game_dir);
+            let rs = horizon_client::replay::settings();
+            let singleplayer = local.is_some();
+            let should_auto = if singleplayer {
+                rs.auto_record_sp
+            } else {
+                rs.auto_record_mp
+            };
+            if should_auto {
+                let label = if singleplayer {
+                    name.to_owned()
+                } else {
+                    horizon_client::net::shown_address(address)
+                };
+                let player_type_id = builtin
+                    .get("minecraft:entity_type")
+                    .and_then(|t| t.id("minecraft:player"));
+                if let Err(err) = horizon_client::replay::global_recorder().start(
+                    &game_dir,
+                    singleplayer,
+                    &label,
+                    player_type_id,
+                ) {
+                    log::warn!("Replay auto-record failed: {err}");
+                }
+            }
+        }
         let lang = Arc::new(horizon_client::net::load_language(&root));
         // Options.createInformation: what the server learns about this player,
         // sent again when one of those options changes.
@@ -1081,6 +1110,9 @@ impl Game<'_> {
         self.clear_narrator();
         // A world is leaving either way: its icon attempt goes with it.
         self.world_icon = None;
+        if self.replay.is_none() && !self.options.split_guest {
+            let _ = horizon_client::replay::global_recorder().stop_and_save(None, None);
+        }
         if let Some(mut r) = self.remote.take() {
             r.session.disconnect();
         }
@@ -1691,6 +1723,306 @@ impl Game<'_> {
         Ok(())
     }
 
+    pub(super) fn init_replay_remote(&mut self, title_name: &str) -> Result<()> {
+        self.reset_tutorial();
+        self.world_biomes = None;
+        let root = self.options.resources.clone();
+        let builtin = Builtin::find(&root)
+            .and_then(|p| Builtin::load(&p).ok())
+            .ok_or("Resources are incomplete: registries.json is missing or invalid.")?;
+        let lang = Arc::new(horizon_client::net::load_language(&root));
+        let info = self
+            .settings
+            .client_information(client_view_distance(self.settings.render_distance));
+        let session = Session::replay(title_name);
+        let player_type = super::perspective::player_type(&root);
+        let streaming_threads = if cfg!(target_os = "android") {
+            self.res.threads().min(4)
+        } else {
+            self.res.threads()
+        };
+        let mut streaming = Streaming::new(
+            Arc::new(NoTerrain),
+            self.pack.context.clone(),
+            streaming_threads,
+        );
+        streaming.remote = true;
+        streaming.radius = self.settings.render_distance;
+        self.streaming = streaming;
+        self.world = World::new(self.res.facts().air, 0);
+        self.save = Arc::new(SaveDir::new(
+            std::env::temp_dir().join("horizon-replay-unused"),
+            horizon_client::save::LevelShape::OVERWORLD,
+        ));
+        self.potions = Default::default();
+        self.inventory = vec![None; 36];
+        self.armor = [None, None, None, None];
+        self.offhand = None;
+        self.selected = 0;
+        self.carried = None;
+        self.player = None;
+        self.mobs.clear();
+        self.clear_remote_objects();
+        self.clear_remote_projectiles();
+        self.dropped.clear();
+        self.particles.clear();
+        self.pickups.clear();
+        self.ui.registries = Default::default();
+        self.build_registries();
+        self.ui.registries.permission = 0;
+        self.ui.chat.clear();
+        self.screen = Screen::Playing;
+        self.title = None;
+        self.dim = Dim::Overworld;
+        self.clear_lod();
+        self.pending_uploads.clear();
+        if let Some(r) = self.renderer.as_mut() {
+            r.clear_sections(self.world.layout());
+        }
+        self.apply_settings();
+        self.clear_waypoints();
+        self.boss_overlay.reset();
+        let chat_tree = self.chat_tree_for(None);
+        let services_keys = Arc::new(std::sync::Mutex::new(ServicesKeys::Missing));
+        self.remote = Some(Remote {
+            session,
+            brand: "replay".into(),
+            quiet_commands: false,
+            mod_net: false,
+            builtin: Arc::new(builtin),
+            status: "Opening replay...".into(),
+            lang,
+            registries: Arc::new(Dynamic::default()),
+            joined: false,
+            reconfiguring: None,
+            logged_in: false,
+            entity_id: 0,
+            camera: None,
+            use_item: None,
+            dimension: DimensionType::vanilla("minecraft:overworld"),
+            chunk_format: Arc::new(ChunkFormat::new(
+                &DimensionType::vanilla("minecraft:overworld"),
+                Vec::new(),
+                7,
+            )),
+            decoder: ChunkDecoder::new(),
+            view_distance: self.settings.render_distance,
+            simulation_distance: self.settings.simulation_distance,
+            sequence: 0,
+            position_sender: Default::default(),
+            last_input: 0,
+            was_sprinting: false,
+            carried: None,
+            abilities: None,
+            loaded_sent: true,
+            level_load: horizon_client::level_loading::LevelLoadTracker::new(0),
+            sent_info: info,
+            predictions: HashMap::new(),
+            menu: None,
+            menu_title: None,
+            state_id: 0,
+            use_target: None,
+            entities: HashMap::new(),
+            lerps: HashMap::new(),
+            cart_lerps: HashMap::new(),
+            stepped: HashMap::new(),
+            head_lerps: HashMap::new(),
+            ghast_dismount: None,
+            first_passenger: false,
+            pending_items: HashMap::new(),
+            health: (20.0, 20, 5.0),
+            flash_on_set_health: false,
+            game_mode: 0,
+            chat: Vec::new(),
+            chat_received: 0,
+            chat_queue: VecDeque::new(),
+            signatures: Default::default(),
+            chat_previous: None,
+            next_chat_index: 0,
+            enforces_secure_chat: false,
+            services_keys,
+            chat_sessions: HashMap::new(),
+            chat_validators: HashMap::new(),
+            joining_narrated: None,
+            chat_tree,
+            chat_tree_received: false,
+            secure_chat: Default::default(),
+            custom_completions: Default::default(),
+            players: HashMap::new(),
+            tab_players: HashMap::new(),
+            skin_textures: HashMap::new(),
+            own_profile: OwnProfile::Idle,
+            skins: HashMap::new(),
+            listed: Default::default(),
+            online_mode: false,
+            level_players: HashMap::new(),
+            level_player_names: HashMap::new(),
+            level_player_textures: HashMap::new(),
+            glowing: Default::default(),
+            own_invisible: false,
+            own_arrows: 0,
+            own_stingers: 0,
+            own_shoulders: [None; 2],
+            profile: 0,
+            profile_name: String::new(),
+            destroying: None,
+            destroying_item: String::new(),
+            is_destroying: false,
+            destroy_delay: 0,
+            input: Default::default(),
+            pending_keys: Vec::new(),
+            swap_answer: [false; 2],
+            stop_mining: false,
+            placing: None,
+            flat: false,
+            death_message: None,
+            show_death_screen: false,
+            player_type,
+            synced: vec![None; CREATIVE_SYNCED],
+            decode_errors: 0,
+            clock: None,
+            clock_rate: 1.0,
+            clock_partial: 0.0,
+            clock_game_time: 0,
+            chunk_center: (0, 0),
+            backlog: VecDeque::new(),
+            backlog_since: None,
+            server_links: Vec::new(),
+            debug_query: Default::default(),
+            transfer: None,
+        });
+        self.clock = horizon_client::clock::FixedStep::client();
+        self.adv = Default::default();
+        self.stats = Default::default();
+        Ok(())
+    }
+
+    pub(super) fn reset_remote_for_replay_rewind(&mut self) {
+        let mut streaming = Streaming::new(
+            Arc::new(NoTerrain),
+            self.pack.context.clone(),
+            if cfg!(target_os = "android") {
+                self.res.threads().min(4)
+            } else {
+                self.res.threads()
+            },
+        );
+        streaming.remote = true;
+        streaming.radius = self.settings.render_distance;
+        self.streaming = streaming;
+        let old = std::mem::take(&mut self.world.chunks);
+        let count = old.len();
+        horizon_client::chunk::free_columns(old, count);
+        self.world = World::new(self.res.facts().air, 0);
+        self.mobs.clear();
+        self.clear_remote_objects();
+        self.clear_remote_projectiles();
+        self.dropped.clear();
+        self.particles.clear();
+        self.pickups.clear();
+        self.orbs.clear();
+        self.falling.clear();
+        self.player = None;
+        self.clear_lod();
+        self.pending_uploads.clear();
+        self.boss_overlay.reset();
+        self.clear_waypoints();
+        if let Some(renderer) = self.renderer.as_mut() {
+            renderer.clear_sections(self.world.layout());
+        }
+        if let Some(r) = self.remote.as_mut() {
+            r.joined = false;
+            r.logged_in = false;
+            r.reconfiguring = None;
+            r.entity_id = 0;
+            r.camera = None;
+            r.decoder = ChunkDecoder::new();
+            r.entities.clear();
+            r.lerps.clear();
+            r.cart_lerps.clear();
+            r.stepped.clear();
+            r.head_lerps.clear();
+            r.pending_items.clear();
+            r.players.clear();
+            r.tab_players.clear();
+            r.listed.clear();
+            r.level_players.clear();
+            r.level_player_names.clear();
+            r.level_player_textures.clear();
+            r.backlog.clear();
+            r.chunk_center = (0, 0);
+            r.level_load.finish();
+        }
+    }
+
+    pub(super) fn handle_replay_joined(&mut self, registries: Arc<Dynamic>, uuid: u128, name: String) {
+        self.set_registries(registries);
+        self.close_dialogs();
+        if let Some(r) = self.remote.as_mut() {
+            r.joined = true;
+            r.reconfiguring = None;
+            r.profile = uuid;
+            r.profile_name = name;
+            r.level_load.finish();
+        }
+    }
+
+    pub(super) fn handle_replay_reconfiguring(&mut self) {
+        self.player = None;
+        let ticks = self.ticks;
+        if let Some(r) = self.remote.as_mut() {
+            r.reconfiguring = Some(ticks);
+            r.chat_tree_received = false;
+        }
+    }
+
+    pub(super) fn handle_replay_reconfigured(&mut self, registries: Arc<Dynamic>) {
+        self.score.board = Default::default();
+        self.clear_waypoints();
+        if let Some(r) = self.remote.as_mut() {
+            r.players.clear();
+            r.tab_players.clear();
+            r.listed.clear();
+            r.signatures = Default::default();
+            r.custom_completions.clear();
+        }
+        self.ui.registries.custom_completions.clear();
+        self.set_registries(registries);
+    }
+
+    pub(super) fn handle_replay_packet(&mut self, packet: C) -> Result<()> {
+        if let C::LevelChunkWithLight(p) = packet {
+            self.remote_chunk(&p, None);
+            return Ok(());
+        }
+        self.handle_packet(packet)
+    }
+
+    pub(super) fn replay_player_rows(&self) -> Vec<horizon_client::replay::ReplayPlayerRow> {
+        let Some(r) = self.remote.as_ref() else {
+            return Vec::new();
+        };
+        let mut rows = Vec::new();
+        for m in &self.mobs {
+            let eid = m.id as i32;
+            let uuid = r.level_players.get(&eid).copied();
+            let name = uuid
+                .and_then(|u| r.tab_players.get(&u))
+                .map(|t| t.name.clone())
+                .or_else(|| r.level_player_names.get(&eid).cloned());
+            let Some(name) = name else {
+                continue;
+            };
+            rows.push(horizon_client::replay::ReplayPlayerRow {
+                entity_id: m.id,
+                name,
+                pos: [m.position.x, m.position.y, m.position.z],
+                is_self: uuid == Some(r.profile) || eid >= 1_000_000_000,
+            });
+        }
+        rows
+    }
+
     /// Process what the network thread received (once per frame, like the
     /// client's packet processor), in order. Chunk packets get
     /// `CHUNK_PACKETS_PER_FRAME`: once a frame has spent it, the events from
@@ -1699,6 +2031,9 @@ impl Game<'_> {
     /// A chunk packet still decoding holds
     /// back what follows it.
     pub(super) fn poll_remote(&mut self) -> Result<()> {
+        if self.replay.is_some() {
+            return Ok(());
+        }
         let Some(r) = self.remote.as_mut() else {
             return Ok(());
         };
@@ -5444,6 +5779,12 @@ impl Game<'_> {
 
     /// One client tick while connected (Minecraft.tick with a ClientLevel).
     pub(super) fn tick_remote(&mut self) -> Result<()> {
+        if let Some(replay) = self.replay.as_ref() {
+            if (replay.playing || replay.path_playing) && !self.replay_seeking {
+                self.tick_remote_level()?;
+            }
+            return Ok(());
+        }
         self.tick_remote_level()?;
         // Client mods tick on any server, single player's own included.
         self.tick_mods();
@@ -5455,6 +5796,7 @@ impl Game<'_> {
         if self.remote.as_ref().is_some_and(|r| r.joined) {
             self.send(S::ClientTickEnd(Empty));
         }
+        self.sync_replay_local_player();
         Ok(())
     }
 
@@ -5469,15 +5811,17 @@ impl Game<'_> {
         self.tick_bundle_hover();
         // Options.broadcastOptions: a changed render distance or Chat option
         // is sent again.
-        let info = self
-            .settings
-            .client_information(client_view_distance(self.settings.render_distance));
-        if let Some(r) = self.remote.as_mut()
-            && r.joined
-            && r.sent_info != info
-        {
-            r.sent_info = info.clone();
-            self.send(S::ClientInformation(info));
+        if self.replay.is_none() {
+            let info = self
+                .settings
+                .client_information(client_view_distance(self.settings.render_distance));
+            if let Some(r) = self.remote.as_mut()
+                && r.joined
+                && r.sent_info != info
+            {
+                r.sent_info = info.clone();
+                self.send(S::ClientInformation(info));
+            }
         }
         // Minecraft.tick: TickRateManager.tick; ClientLevel.tickTime advances
         // the time only while the level runs normally.
@@ -5498,7 +5842,9 @@ impl Game<'_> {
         // Minecraft.handleKeybinds precedes entity ticking and sendChanges.
         // Window callbacks only queue clicks, so an interaction cannot leak
         // between CLIENT_TICK_END and a later pong.
-        self.remote_handle_input();
+        if self.replay.is_none() {
+            self.remote_handle_input();
+        }
         // Player.tick's ItemCooldowns.tick, in ClientLevel.tickEntities after
         // handleKeybinds: this path replaces `tick_world`'s for a server's
         // client (multiplayer and the default single player), so the entries
@@ -5545,6 +5891,9 @@ impl Game<'_> {
         self.tick_hud();
         self.tick_subtitles();
         self.tick_client_load();
+        if self.replay.is_some() {
+            return Ok(());
+        }
         let entity_collisions = self.player_entity_collisions();
         let pushed = self.remote_pushes();
         let sprint_window = self.settings.sprint_window;

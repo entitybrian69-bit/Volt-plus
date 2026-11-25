@@ -104,6 +104,9 @@ impl Game<'_> {
     }
     /// Each name tag this frame.
     fn name_tags(&self, camera: glam::DVec3, alpha: f64) -> Vec<NameTag> {
+        if self.replay.as_ref().is_some_and(|r| r.hide_nametags) {
+            return Vec::new();
+        }
         let target = self.mob_hit().map(|(i, _)| self.mobs[i].id);
         let viewer = self.player_team();
         let mut tags = Vec::new();

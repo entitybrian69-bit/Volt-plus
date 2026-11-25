@@ -269,6 +269,7 @@ mod remote_stations;
 mod remote_vehicles;
 mod render_control;
 mod render_tick;
+mod replay_mode;
 mod respawn_anchor;
 mod saves_control;
 mod saving;
@@ -459,6 +460,8 @@ struct Options {
     window_size: [u32; 2],
     /// Multiplayer: `--server HOST[:PORT]` joins at start; `--name` is the offline player name.
     server: Option<String>,
+    /// Replay Mod: `--replay PATH` opens a `.mcpr` recording in Replay Viewer mode.
+    pub replay: Option<PathBuf>,
     /// `--name`, `HORIZON_PLAYER_NAME` or the signed-in account's name; else
     /// [`Options::player_name`] uses the kept offline name.
     player_name: Option<String>,
@@ -617,6 +620,7 @@ impl Options {
                 .ok()
                 .and_then(|v| v.parse().ok()),
             server: None,
+            replay: None,
             player_name: std::env::var("HORIZON_PLAYER_NAME")
                 .ok()
                 .filter(|n| !n.is_empty()),
@@ -740,6 +744,7 @@ impl Options {
                                 o.benchmark = Some(value);
                             }
                             "--server" | "--quickPlayMultiplayer" => o.server = Some(value),
+                            "--replay" => o.replay = Some(value.into()),
                             "--name" => o.player_name = Some(value),
                             "--session-file" => o.session_file = Some(value),
                             "--control-socket" => o.control = Some(value.into()),
@@ -2708,6 +2713,11 @@ struct Game<'a> {
     persist: persist::EntityMemory,
     /// Connected to a server: the world comes from the network (game/remote.rs).
     remote: Option<remote::Remote>,
+    replay: Option<horizon_client::replay::ReplayPlayer>,
+    replay_seeking: bool,
+    replay_last_step: Option<std::time::Instant>,
+    replay_swing_main: bool,
+    replay_swing_off: bool,
     /// This world is open to the network (game/lan.rs).
     lan: Option<lan::LanHost>,
     /// Single player's server thread, which `remote` is connected to.
@@ -8012,6 +8022,9 @@ impl Game<'_> {
         }
     }
     fn hud(&mut self, size: [u32; 2]) -> HudBatch {
+        if self.replay.is_some() && self.screen == Screen::Playing {
+            return HudBatch::new(size);
+        }
         #[cfg(target_os = "android")]
         if let Some(batch) = self.smartf3_hud(size) {
             return batch;
@@ -12106,6 +12119,9 @@ impl Game<'_> {
         if self.title.is_some() || self.saved_for_exit {
             return Ok(());
         }
+        if self.replay.is_none() && !self.options.split_guest {
+            let _ = horizon_client::replay::global_recorder().stop_and_save(None, None);
+        }
         if let Some(server) = self.integrated.take() {
             // The server thread saves the world.
             server.stop()?;
@@ -14958,12 +14974,14 @@ impl Game<'_> {
         );
         // visual/water_fog_color: no dimension sets it, its default is #050533.
         let water_fog = blend(|b| Some(b.water_fog), [0.0; 3]);
-        let mut sky = environment.sample(self.world.day_time, Some(biome_sky), Some(biome_fog));
-        let (rain, thunder) = if self.dim == Dim::Overworld {
+        let (raw_rain, raw_thunder) = if self.dim == Dim::Overworld {
             self.world.weather.levels(alpha as f32)
         } else {
             (0.0, 0.0)
         };
+        let (effective_day_time, rain, thunder) =
+            self.replay_sky_overrides(self.world.day_time, raw_rain, raw_thunder);
+        let mut sky = environment.sample(effective_day_time, Some(biome_sky), Some(biome_fog));
         horizon_client::environment::apply_weather(&mut sky, rain, thunder);
         self.end_flash_sky(&mut sky, alpha);
         if self.flash > 0 && !self.settings.file.bool("hideLightningFlashes") {
@@ -14979,6 +14997,7 @@ impl Game<'_> {
         let mut lines = self.fishing_line(alpha, size);
         let g = self.debug_gizmos(alpha as f32, camera.to_array());
         lines.extend(g.lines);
+        lines.extend(self.replay_gizmos());
         let on_top = g.on_top;
         let colored_lights = if self.title.is_none() {
             self.native_frame_visuals(camera, &mut lines)
@@ -15032,6 +15051,7 @@ impl Game<'_> {
         // screen does not hide it: vanilla checks the HUD and the game mode, not the screen.
         let adventure = self.mode == horizon_client::command::args::GameMode::Adventure;
         let outline = if !skip_world_for_blur
+            && self.replay.is_none()
             && touch_target_visible
             && !self.ui.hide_gui
             && (self.may_build() || adventure)
@@ -15146,6 +15166,7 @@ impl Game<'_> {
             if !in_menu
                 && !waiting_for_key
                 && !self.ui.hide_gui
+                && self.replay.is_none()
                 && (self.player.is_some() || self.settings.keypad.enabled)
             {
                 self.pad.touch.context_use =
@@ -15162,6 +15183,7 @@ impl Game<'_> {
                 && !waiting_for_key
                 && !self.settings.keypad.enabled
                 && !self.ui.hide_gui
+                && self.replay.is_none()
             {
                 horizon_client::touch_ui::draw_goy_hud(
                     &self.pad.touch,
@@ -15181,9 +15203,15 @@ impl Game<'_> {
                 self.pad
                     .touch_ui
                     .draw(&mut hud, &self.gui.atlas, self.pad_in_menu());
+                if self.replay.is_some() && self.screen == Screen::Playing {
+                    self.pad.touch_ui.draw_replay_hud(&mut hud, &self.gui.atlas);
+                } else if self.replay.is_none() && self.screen == Screen::Playing && !self.ui.hide_gui {
+                    horizon_client::touch_ui::draw_recording_badge(&mut hud, &self.gui.atlas);
+                }
                 // The overlay button belongs to the menus by default, and also responds to
                 // the Overlay Menu settings (hide completely, hide in menus, show in gameplay).
-                if self.pad.touch_ui.overlay_button_visible(
+                if self.replay.is_none()
+                    && self.pad.touch_ui.overlay_button_visible(
                     &self.pad.touch.settings,
                     self.pad_in_menu(),
                     horizon_client::recorder::hiding_controls(),
@@ -15231,23 +15259,35 @@ impl Game<'_> {
         } else {
             (view_yaw, view_pitch)
         };
+        let replay_cam = if title {
+            None
+        } else {
+            self.replay_camera_override(camera_alpha as f32)
+        };
         let fov_degrees = if title {
             85.0
+        } else if let Some((_, _, _, _, fov)) = replay_cam {
+            fov
         } else {
             self.fov_degrees(camera_alpha as f32, camera.to_array())
         };
         self.locator_camera =
             (!title).then_some((camera.to_array(), view_yaw, view_pitch, fov_degrees));
-        let bob = if title {
+        let bob = if title || replay_cam.is_some() {
             glam::Mat4::IDENTITY
         } else {
             self.bob_matrix(camera_alpha as f32)
         };
-        let spin = if title {
+        let mut spin = if title || replay_cam.is_some() {
             glam::Mat4::IDENTITY
         } else {
             self.spinning_matrix(camera_alpha as f32)
         };
+        if let Some((_, _, _, roll, _)) = replay_cam
+            && roll.abs() > 0.001
+        {
+            spin *= glam::Mat4::from_rotation_z(-roll.to_radians());
+        }
         let requested_post_effects = self.requested_post_effects();
         let terrain_distance = self.terrain_distance();
         let distance = (terrain_distance * 16) as f32;
@@ -15294,19 +15334,19 @@ impl Game<'_> {
         } else {
             (Vec::new(), None)
         };
-        let mut hand = if skip_world || self.scoping() {
+        let mut hand = if skip_world || self.scoping() || self.replay.is_some() {
             Vec::new()
         } else {
             self.hand_geometry(camera_alpha)
         };
         // GameRenderer.render3dHud: the screen effects after the hand, in
         // its pass (the hand pass draws with `bob * view`).
-        if !skip_world {
+        if !skip_world && self.replay.is_none() {
             let view = bob * horizon_client::camera::view_matrix(yaw, pitch);
             let aspect = size[0] as f32 / size[1].max(1) as f32;
             self.item_activation_geometry(camera_alpha as f32, view, aspect, &mut hand);
         }
-        let screen = if skip_world {
+        let screen = if skip_world || self.replay.is_some() {
             Vec::new()
         } else {
             let scale = self
@@ -16027,7 +16067,12 @@ impl Game<'_> {
                 self.lod_observe.insert((x >> 4, z >> 4));
             }
         }
-        if let Some(p) = &self.player {
+        if let Some((cam_pos, _, _, _, _)) = self.replay_camera_override(1.0) {
+            self.streaming.center = (
+                (cam_pos.x.floor() as i32) >> 4,
+                (cam_pos.z.floor() as i32) >> 4,
+            );
+        } else if let Some(p) = &self.player {
             self.streaming.center = (
                 (p.position.x.floor() as i32) >> 4,
                 (p.position.z.floor() as i32) >> 4,
@@ -16854,7 +16899,7 @@ impl Game<'_> {
                     }
                     return;
                 }
-                if touch.phase == TouchPhase::Started {
+                if touch.phase == TouchPhase::Started && self.replay.is_none() {
                     let batch = HudBatch::new([size.width, size.height]);
                     let point = [
                         touch.location.x as f32 / batch.scale,
@@ -18236,6 +18281,9 @@ impl Game<'_> {
                         }
                     }
                     if self.title.is_none() {
+                        if let Err(e) = self.poll_replay(elapsed) {
+                            log::warn!("Replay poll error: {e}");
+                        }
                         horizon_client::spans::time("update_world", || self.update_world());
                         horizon_client::spans::time("spawn_player", || self.spawn_player())?;
                     }
@@ -18245,7 +18293,16 @@ impl Game<'_> {
                     // For the "I'm playing" ping: an atomic, sent on when it changes.
                     horizon_client::heartbeat::set_lan(self.is_published());
                     self.update_discord_presence();
-                    let steps = self.clock.advance(elapsed);
+                    let clock_elapsed = if let Some(r) = self.replay.as_ref() {
+                        if r.playing || r.path_playing {
+                            elapsed.mul_f32(r.speed.clamp(0.05, 8.0))
+                        } else {
+                            Duration::ZERO
+                        }
+                    } else {
+                        elapsed
+                    };
+                    let steps = self.clock.advance(clock_elapsed);
                     // The world ticking in the frame: once its ticks took a
                     // tick's length, the rest are dropped (`FixedStep::tick_fits`).
                     let in_frame = self.remote.is_none();
@@ -18286,10 +18343,16 @@ impl Game<'_> {
                     self.extras_retry()?;
                     self.apply_mouse_look();
                     self.pad_look(elapsed.as_secs_f32());
+                    self.replay_update_freecam(elapsed.as_secs_f32());
+                    if let Err(e) = self.replay_step_render_pre_frame() {
+                        log::warn!("Replay render step error: {e}");
+                    }
+                    self.replay_publish_hud_snapshot();
                     self.advance_flight();
                     self.tick_world_icon();
                     let ticked = Instant::now();
                     let rendered = self.render()?;
+                    self.replay_step_render_post_frame();
                     self.apply_cursor_icon();
                     if let Some(threshold) = self.options.spikes
                         && let Some(r) = self.renderer.as_ref()
@@ -18977,6 +19040,11 @@ impl<'a> Game<'a> {
             water_plane_scan: Default::default(),
             persist: Default::default(),
             remote: None,
+            replay: None,
+            replay_seeking: false,
+            replay_last_step: None,
+            replay_swing_main: false,
+            replay_swing_off: false,
             lan: None,
             integrated: None,
             level_shapes: Default::default(),
@@ -19155,6 +19223,9 @@ enum PendingWorldEntry {
         /// A transfer's carried-over server cookies (`TransferState`).
         cookies: Option<horizon_client::net::Cookies>,
     },
+    Replay {
+        path: PathBuf,
+    },
 }
 
 struct WorldRestLoader {
@@ -19253,6 +19324,9 @@ impl Game<'_> {
                 lan,
             }) => {
                 self.connect_server_with_options(&address, &name, cookies, lan)?;
+            }
+            Some(PendingWorldEntry::Replay { path }) => {
+                self.open_replay(&path)?;
             }
             None => {}
         }
@@ -20431,6 +20505,11 @@ fn start_game<'a>(
         return Ok(None);
     }
     match game.options.world.clone() {
+        _ if game.options.replay.is_some() => {
+            if let Some(path) = game.options.replay.clone() {
+                game.open_replay(&path)?;
+            }
+        }
         _ if game.options.server.is_some() => {
             let (address, name) = (
                 game.options.server.clone().unwrap_or_default(),

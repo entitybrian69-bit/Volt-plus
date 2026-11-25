@@ -116,6 +116,12 @@ impl Game<'_> {
     }
     /// `LevelRenderer`: the camera entity is not drawn from its own eyes.
     pub(super) fn hides_as_camera(&self, id: u32) -> bool {
+        if let Some(r) = self.replay.as_ref() {
+            return matches!(
+                r.camera_mode,
+                horizon_client::replay::CameraMode::Spectate(cam_id) if cam_id == id
+            );
+        }
         self.camera_type.first_person() && self.remote_camera_id() == Some(id)
     }
 }

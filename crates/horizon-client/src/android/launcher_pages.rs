@@ -377,6 +377,13 @@ pub(super) enum Action {
     GpuProfile,
     // Video settings actions (options.txt)
     RenderScaleDelta(i32),
+    // Replay Mod browser & settings
+    PlayReplay(usize),
+    DeleteReplay(usize),
+    RefreshReplays,
+    ReplayToggleAutoSp,
+    ReplayToggleAutoMp,
+    ReplayToggleRecordSelf,
     RenderDistDelta(i32),
     SimDistDelta(i32),
     CycleMaxFps,
@@ -835,6 +842,7 @@ fn page_icon(page: Page) -> Icon {
         Page::Shaders => Icon::Shaders,
         Page::Compiler => Icon::Terminal,
         Page::Installed => Icon::Installed,
+        Page::Replays => Icon::Play,
         Page::Settings => Icon::Settings,
         Page::Skins => Icon::Skins,
     }
@@ -1334,10 +1342,11 @@ impl Launcher {
             Page::ControlsStudio,
             Page::Shaders,
             Page::Installed,
+            Page::Replays,
             Page::Skins,
             Page::Settings,
         ];
-        let nav_w = (w - 24.0).min(690.0);
+        let nav_w = (w - 24.0).min(760.0);
         let nav_x = (w - nav_w) * 0.5;
         let nav_y = full_h - 49.0;
         let nav_h = 42.0;
@@ -2037,6 +2046,8 @@ impl Launcher {
             self.draw_compiler_page(&mut ui, content_x, content_w, h, compact, slide_y);
         } else if page == Page::Installed {
             self.draw_installed(&mut ui, content_x, content_w, h, compact, slide_y);
+        } else if page == Page::Replays {
+            self.draw_replays_page(&mut ui, content_x, content_w, h, compact, slide_y);
         } else {
             self.draw_settings_page(
                 &mut ui, content_x, content_w, h, compact, slide_y, ime_top_dp,
@@ -2628,6 +2639,246 @@ impl Launcher {
             );
         }
         ui.set_clip(None);
+    }
+
+    fn draw_replays_page(
+        &mut self,
+        ui: &mut Ui,
+        content_x: f32,
+        content_w: f32,
+        h: f32,
+        compact: bool,
+        slide_y: f32,
+    ) {
+        let header_y = 60.0 + slide_y;
+        ui.text(
+            Face::SemiBold,
+            19.0,
+            content_x,
+            header_y + 2.0,
+            my3_text(),
+            "Replay Mod (.mcpr)",
+        );
+        let refresh_w = 94.0;
+        let refresh_r = [
+            content_x + content_w - refresh_w,
+            header_y,
+            refresh_w,
+            30.0,
+        ];
+        button(
+            ui,
+            &mut self.targets,
+            refresh_r,
+            "Refresh",
+            Action::RefreshReplays,
+            false,
+        );
+
+        let rs = horizon_client::replay::settings();
+        let chip_y = 98.0 + slide_y;
+        let chip_gap = 6.0;
+        let cw = ((content_w - chip_gap * 2.0) / 3.0).min(165.0);
+        let chips = [
+            (
+                if rs.auto_record_sp {
+                    "Auto SP: ON"
+                } else {
+                    "Auto SP: OFF"
+                },
+                rs.auto_record_sp,
+                Action::ReplayToggleAutoSp,
+            ),
+            (
+                if rs.auto_record_mp {
+                    "Auto MP: ON"
+                } else {
+                    "Auto MP: OFF"
+                },
+                rs.auto_record_mp,
+                Action::ReplayToggleAutoMp,
+            ),
+            (
+                if rs.record_self {
+                    "Self Player: ON"
+                } else {
+                    "Self Player: OFF"
+                },
+                rs.record_self,
+                Action::ReplayToggleRecordSelf,
+            ),
+        ];
+        for (i, (label, on, act)) in chips.into_iter().enumerate() {
+            let r = [content_x + i as f32 * (cw + chip_gap), chip_y, cw, 28.0];
+            ui.m3_filter_chip(r, label, on, None);
+            self.targets.push((r, act));
+        }
+
+        let info_y = chip_y + 34.0;
+        let info_txt = ui.fit_text(
+            Face::Regular,
+            10.2,
+            &format!(
+                "{} replay(s)  •  Exported MP4 clips save to Movies/VoltPlus Replays",
+                self.catalog.replays.len()
+            ),
+            content_w,
+        );
+        ui.text(
+            Face::Regular,
+            10.2,
+            content_x,
+            info_y,
+            my3_muted(),
+            &info_txt,
+        );
+
+        let list_top = info_y + 20.0;
+        let list_bottom = (h - 46.0).max(list_top + 60.0);
+        let row_h = if compact { 82.0 } else { 72.0 };
+        let row_gap = 8.0;
+        let total_h = self.catalog.replays.len() as f32 * (row_h + row_gap);
+        let max_scroll = (total_h - (list_bottom - list_top)).max(0.0);
+        self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
+        self.list_view = Some([list_top, list_bottom, max_scroll]);
+
+        let replays = self.catalog.replays.clone();
+        let delete_confirm = self.catalog.replay_delete_confirm;
+        let list_targets = &mut self.list_targets;
+        ui.clipped([content_x - 2.0, list_top, content_w + 4.0, list_bottom - list_top], |ui| {
+            if replays.is_empty() {
+                ui.rounded(content_x, list_top + 6.0, content_w, 84.0, 14.0, my3_card_bg());
+                ui.border(content_x, list_top + 6.0, content_w, 84.0, 14.0, my3_card_border());
+                ui.text(
+                    Face::SemiBold,
+                    13.0,
+                    content_x + 14.0,
+                    list_top + 20.0,
+                    my3_text(),
+                    "No .mcpr replays recorded yet",
+                );
+                let hint = ui.fit_text(
+                    Face::Regular,
+                    10.8,
+                    "Enable Auto SP/MP above or start recording from the Control Hub -> Replay tab in-game.",
+                    content_w - 28.0,
+                );
+                ui.text(
+                    Face::Regular,
+                    10.8,
+                    content_x + 14.0,
+                    list_top + 44.0,
+                    my3_muted(),
+                    &hint,
+                );
+                return;
+            }
+            for (i, item) in replays.iter().enumerate() {
+                let ry = list_top + i as f32 * (row_h + row_gap) - self.catalog.scroll;
+                if ry + row_h < list_top || ry > list_bottom {
+                    continue;
+                }
+                ui.rounded(content_x, ry, content_w, row_h, 13.0, my3_card_bg());
+                ui.border(content_x, ry, content_w, row_h, 13.0, my3_card_border());
+                let badge = if item.singleplayer {
+                    "Singleplayer"
+                } else {
+                    "Multiplayer"
+                };
+                let title = ui.fit_text(Face::SemiBold, 13.0, &item.name, content_w - 230.0);
+                ui.text(
+                    Face::SemiBold,
+                    13.0,
+                    content_x + 14.0,
+                    ry + 11.0,
+                    my3_text(),
+                    &title,
+                );
+                let size_mb = item.size_bytes as f64 / 1_048_576.0;
+                let dur = horizon_client::replay::format_duration_ms(item.duration_ms);
+                let meta = ui.fit_text(
+                    Face::Regular,
+                    10.4,
+                    &format!(
+                        "{badge}  •  {dur}  •  {size_mb:.2} MB  •  {} KF  •  {} Mrk",
+                        item.keyframe_count, item.marker_count
+                    ),
+                    content_w - 210.0,
+                );
+                ui.text(
+                    Face::Regular,
+                    10.4,
+                    content_x + 14.0,
+                    ry + 33.0,
+                    my3_muted(),
+                    &meta,
+                );
+                let date_line = ui.fit_text(
+                    Face::Regular,
+                    9.6,
+                    &item.recorded_at,
+                    content_w - 210.0,
+                );
+                ui.text(
+                    Face::Regular,
+                    9.6,
+                    content_x + 14.0,
+                    ry + 50.0,
+                    my3_muted(),
+                    &date_line,
+                );
+
+                let open_w = 104.0;
+                let del_w = 72.0;
+                let open_r = [
+                    content_x + content_w - open_w - del_w - 18.0,
+                    ry + (row_h - 32.0) * 0.5,
+                    open_w,
+                    32.0,
+                ];
+                let del_r = [
+                    content_x + content_w - del_w - 12.0,
+                    ry + (row_h - 32.0) * 0.5,
+                    del_w,
+                    32.0,
+                ];
+                ui.rounded(open_r[0], open_r[1], open_r[2], open_r[3], 9.0, my3_accent());
+                ui.centered_fit(
+                    Face::SemiBold,
+                    11.0,
+                    open_r,
+                    horizon_client::ui_theme::active_theme().on_accent,
+                    "Open Viewer",
+                );
+                if let Some(c) = ui.clip_rect(open_r) {
+                    list_targets.push((c, Action::PlayReplay(i)));
+                }
+                let confirming = delete_confirm == Some(i);
+                ui.rounded(
+                    del_r[0],
+                    del_r[1],
+                    del_r[2],
+                    del_r[3],
+                    9.0,
+                    if confirming {
+                        horizon_client::hud::rgba(220, 38, 38, 220)
+                    } else {
+                        my3_surface()
+                    },
+                );
+                ui.border(del_r[0], del_r[1], del_r[2], del_r[3], 9.0, my3_card_border());
+                ui.centered_fit(
+                    Face::SemiBold,
+                    10.6,
+                    del_r,
+                    my3_text(),
+                    if confirming { "Confirm" } else { "Delete" },
+                );
+                if let Some(c) = ui.clip_rect(del_r) {
+                    list_targets.push((c, Action::DeleteReplay(i)));
+                }
+            }
+        });
     }
 
     fn draw_installed(
@@ -7518,6 +7769,54 @@ impl Launcher {
                 self.catalog.browse(&self.home);
             }
             Some(Action::Play) => self.action(events)?,
+            Some(Action::RefreshReplays) => {
+                self.catalog.refresh_replays(&self.home);
+                self.catalog.status = format!("Found {} replay(s).", self.catalog.replays.len());
+            }
+            Some(Action::PlayReplay(idx)) => {
+                if let Some(item) = self.catalog.replays.get(idx) {
+                    self.pending_replay = Some(item.path.clone());
+                    self.action(events)?;
+                }
+            }
+            Some(Action::DeleteReplay(idx)) => {
+                if self.catalog.replay_delete_confirm == Some(idx) {
+                    if let Some(item) = self.catalog.replays.get(idx) {
+                        let name = item.name.clone();
+                        match horizon_client::replay::delete_replay(&item.path) {
+                            Ok(()) => {
+                                self.catalog.refresh_replays(&self.home);
+                                self.catalog.status = format!("Deleted replay: {name}");
+                            }
+                            Err(err) => {
+                                self.error = Some(format!("Delete failed: {err}"));
+                            }
+                        }
+                    }
+                    self.catalog.replay_delete_confirm = None;
+                } else {
+                    self.catalog.replay_delete_confirm = Some(idx);
+                    self.catalog.status = "Tap Delete again to confirm removing this .mcpr file.".into();
+                }
+            }
+            Some(Action::ReplayToggleAutoSp) => {
+                let game_home = self.catalog.config.game_home(&self.home);
+                horizon_client::replay::update_settings(&game_home, |s| {
+                    s.auto_record_sp = !s.auto_record_sp
+                });
+            }
+            Some(Action::ReplayToggleAutoMp) => {
+                let game_home = self.catalog.config.game_home(&self.home);
+                horizon_client::replay::update_settings(&game_home, |s| {
+                    s.auto_record_mp = !s.auto_record_mp
+                });
+            }
+            Some(Action::ReplayToggleRecordSelf) => {
+                let game_home = self.catalog.config.game_home(&self.home);
+                horizon_client::replay::update_settings(&game_home, |s| {
+                    s.record_self = !s.record_self
+                });
+            }
             Some(Action::WardrobeKind(cape)) => {
                 self.wardrobe.set_tab(cape);
                 self.catalog.scroll = 0.0;

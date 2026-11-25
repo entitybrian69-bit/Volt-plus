@@ -194,6 +194,10 @@ impl Game<'_> {
         let duration = swing_duration(animation, dig_speed, fatigue);
         if self.swing.start_if_able(hand, animation, duration) {
             self.swings_started += 1;
+            match hand {
+                Hand::Main => self.replay_swing_main = true,
+                Hand::Off => self.replay_swing_off = true,
+            }
         }
     }
     /// `swing(hand)` for the hand that acts, with the default animation.

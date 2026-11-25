@@ -11,6 +11,10 @@ use std::{
 };
 use winit::{event::TouchPhase, keyboard::KeyCode};
 
+#[path = "replay_hud.rs"]
+mod replay_hud;
+pub use replay_hud::draw_recording_badge;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PresetDialogState {
     pub is_copy: bool,
@@ -84,6 +88,12 @@ pub struct TouchUi {
     pointer_drag: Option<u64>,
     held_keys: BTreeMap<u64, KeyCode>,
     pub f3_latched: bool,
+    pub replay_timeline_drag: Option<u64>,
+    pub replay_fly_pad: Option<(u64, [f32; 2])>,
+    pub replay_fly_vert: Option<(u64, f32)>,
+    pub replay_export_res_idx: usize,
+    pub replay_export_fps_idx: usize,
+    pub replay_export_bitrate_idx: usize,
 }
 
 impl Default for TouchUi {
@@ -132,6 +142,12 @@ impl Default for TouchUi {
             pointer_drag: None,
             held_keys: BTreeMap::new(),
             f3_latched: false,
+            replay_timeline_drag: None,
+            replay_fly_pad: None,
+            replay_fly_vert: None,
+            replay_export_res_idx: 1,
+            replay_export_fps_idx: 1,
+            replay_export_bitrate_idx: 1,
         }
     }
 }
@@ -204,6 +220,8 @@ pub enum InGameMenuAction {
     RecorderPlay(String),
     /// Send a custom keyboard key, mouse button/scroll, or gameplay action token immediately.
     SendCustomInput(String),
+    /// Replay Mod recording / settings action from Control Hub.
+    Replay(crate::replay::ReplayAction),
 }
 
 fn key_code_to_char(code: KeyCode) -> Option<char> {
@@ -1805,7 +1823,7 @@ fn hub_metrics(w: f32, h: f32) -> (f32, f32, f32, f32, f32, f32, f32, f32, f32) 
 
 struct HubSidebarRects {
     quick_studio: [f32; 4],
-    tabs: [[f32; 4]; 7],
+    tabs: [[f32; 4]; 8],
     done_btn: [f32; 4],
     close_x: [f32; 4],
     mode_badge: [f32; 4],
@@ -1820,8 +1838,8 @@ fn hub_sidebar_rects(dx: f32, dy: f32, dw: f32, dh: f32, side_w: f32) -> HubSide
     let tabs_top = quick_studio[1] + quick_studio[3] + 8.0;
     let tabs_avail = (done_y - 8.0 - tabs_top).max(120.0);
     let gap = 4.0;
-    let tab_h = ((tabs_avail - gap * 6.0) / 7.0).clamp(16.0, 27.0);
-    let mut tabs = [[0.0f32; 4]; 7];
+    let tab_h = ((tabs_avail - gap * 7.0) / 8.0).clamp(15.0, 24.0);
+    let mut tabs = [[0.0f32; 4]; 8];
     for (i, slot) in tabs.iter_mut().enumerate() {
         *slot = [
             dx + pad,
@@ -2644,8 +2662,8 @@ impl TouchUi {
                 }
             }
 
-            // Check if touch started on the Overlay Size or Opacity slider tracks in Tab 6 (Overlay)
-            if self.hub_tab == 6 && inside(content_pane) {
+            // Check if touch started on the Overlay Size or Opacity slider tracks in Tab 7 (Overlay)
+            if self.hub_tab == 7 && inside(content_pane) {
                 let body_y = body_top - self.hub_scroll;
                 if inside([cx, body_y + 18.0, cw, 50.0]) {
                     self.overlay_scale_dragging = true;
@@ -2944,8 +2962,13 @@ impl TouchUi {
                     }
                 }
             }
+            6 => {
+                if let Some(act) = replay_hud::control_hub_replay_tab_touch(cx, cw, body_y, p) {
+                    return Some(act);
+                }
+            }
             _ => {
-                // Tab 6: Overlay Menu — size, opacity & visibility rules for the V+ button.
+                // Tab 7: Overlay Menu — size, opacity & visibility rules for the V+ button.
                 if inside([cx, body_y + 18.0, cw, 50.0]) {
                     let sl_x = cx + 14.0;
                     let sl_w = (cw - 28.0).max(40.0);
@@ -3178,14 +3201,15 @@ impl TouchUi {
             "Customize HUD",
         );
 
-        // 7 Category Tabs in Sidebar (Volt Graphics rounded plates + crisp active outline)
-        let tabs: [(Icon, &str); 7] = [
+        // 8 Category Tabs in Sidebar (Volt Graphics rounded plates + crisp active outline)
+        let tabs: [(Icon, &str); 8] = [
             (Icon::HorizonLogo, "Recommended"),
             (Icon::Gamepad, "Controls"),
             (Icon::Crosshair, "Aiming"),
             (Icon::MicrosoftGrid, "Buttons"),
             (Icon::Flask, "Advanced"),
             (Icon::Monitor, "Record"),
+            (Icon::Play, "Replay"),
             (Icon::Settings, "Overlay"),
         ];
         for (ti, (ic, lbl)) in tabs.iter().enumerate() {
@@ -3263,6 +3287,7 @@ impl TouchUi {
             3 => 242.0,
             4 => 340.0,
             5 => 488.0,
+            6 => 340.0,
             _ => 310.0,
         };
         let max_scroll = (content_height - body_h).max(0.0);
@@ -4496,8 +4521,11 @@ impl TouchUi {
                     );
                 }
             }
+            6 => {
+                replay_hud::draw_control_hub_replay_tab(&mut ui, cx, cw, body_y);
+            }
             _ => {
-                // Tab 6: Overlay Menu — size, opacity & visibility rules for the V+ button.
+                // Tab 7: Overlay Menu — size, opacity & visibility rules for the V+ button.
                 ui.text(
                     Face::SemiBold,
                     10.2,

@@ -77,7 +77,9 @@ impl StartupMenu {
     }
 
     pub fn new(options: &Options, pack_error: Option<&str>) -> Result<Self> {
-        let pending = if let Some(address) = &options.server {
+        let pending = if let Some(path) = &options.replay {
+            Some(PendingWorldEntry::Replay { path: path.clone() })
+        } else if let Some(address) = &options.server {
             Some(PendingWorldEntry::Server {
                 address: address.clone(),
                 name: options.player_name(),

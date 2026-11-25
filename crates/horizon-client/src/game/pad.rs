@@ -739,7 +739,11 @@ impl Game<'_> {
             }
         }
         let settings = &self.settings.controller;
-        if !settings.enabled || self.pad_in_menu() || self.player.is_none() || !self.pad_focused() {
+        if !settings.enabled
+            || self.pad_in_menu()
+            || (self.player.is_none() && self.replay.is_none())
+            || !self.pad_focused()
+        {
             return;
         }
         // A long frame (a hitch) must not spin the view.

@@ -433,17 +433,19 @@ pub enum Page {
     Shaders,
     Compiler,
     Installed,
+    Replays,
     Settings,
     Skins,
 }
 impl Page {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Play,
         Self::Mods,
         Self::Packs,
         Self::ControlsStudio,
         Self::Shaders,
         Self::Installed,
+        Self::Replays,
         Self::Settings,
         Self::Skins,
     ];
@@ -456,6 +458,7 @@ impl Page {
             Page::Shaders => "Shaders",
             Page::Compiler => "Compiler",
             Page::Installed => "Installed",
+            Page::Replays => "Replays",
             Page::Settings => "Settings",
             Page::Skins => "Skins",
         }
@@ -754,6 +757,8 @@ pub struct Catalog {
     pub compiler_query: String,
     pub compiler_logs: Vec<String>,
     pub last_port_result: Option<horizon_port_pack::android_port::AndroidPortResult>,
+    pub replays: Vec<horizon_client::replay::ReplaySummary>,
+    pub replay_delete_confirm: Option<usize>,
     worker: Option<mpsc::Receiver<Result<Reply, String>>>,
     search_worker: Option<mpsc::Receiver<Result<Vec<Project>, String>>>,
     icon_worker: Option<mpsc::Receiver<IconData>>,
@@ -801,6 +806,8 @@ impl Catalog {
             page: Page::Play,
             query: String::new(),
             results: vec![],
+            replays: vec![],
+            replay_delete_confirm: None,
             icons: HashMap::new(),
             enriched_summaries: HashMap::new(),
             project_modal: None,
@@ -832,7 +839,15 @@ impl Catalog {
         };
         crate::updater::check_in_background();
         result.refresh(home);
+        result.refresh_replays(home);
         result
+    }
+
+    pub fn refresh_replays(&mut self, home: &Path) {
+        let game_home = self.config.game_home(home);
+        horizon_client::replay::init_settings(&game_home);
+        self.replays = horizon_client::replay::list_replays(&game_home);
+        self.replay_delete_confirm = None;
     }
     pub fn show_installed(&mut self, kind: Option<horizon_client::content_files::Kind>) {
         self.searches.cancel_interest();
@@ -1970,7 +1985,9 @@ impl Catalog {
     }
     pub fn browse(&mut self, home: &Path) {
         self.searches.cancel_interest();
-        if self.page.is_catalog() {
+        if self.page == Page::Replays {
+            self.refresh_replays(home);
+        } else if self.page.is_catalog() {
             self.request_search(home, false);
         }
     }

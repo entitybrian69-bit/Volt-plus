@@ -966,6 +966,8 @@ pub struct Renderer {
     started: Instant,
     /// The next frame to write to a PNG path (control socket, F2, world icon).
     pub screenshot: Option<ScreenshotRequest>,
+    pub replay_capture_requested: bool,
+    pub replay_frame: Option<(u32, u32, Vec<u8>)>,
     /// Outcome of the last screenshot: frame size, or the error.
     pub screenshot_result: Option<std::result::Result<[u32; 2], String>>,
     /// Screenshot Quality (Horizon setting): a `scaled` screenshot's frame is this many
@@ -4046,6 +4048,8 @@ impl Renderer {
             uploaded_bytes: 0,
             started: Instant::now(),
             screenshot: None,
+            replay_capture_requested: false,
+            replay_frame: None,
             screenshot_result: None,
             screenshot_quality: 1,
             screenshot_halvings: 0,
@@ -6257,7 +6261,8 @@ impl Renderer {
                 .target_for(
                     &self.device,
                     &f.texture,
-                    self.screenshot.is_some() && !scaled_presentation,
+                    (self.screenshot.is_some() || self.replay_capture_requested)
+                        && !scaled_presentation,
                     self.record.is_some() && !scaled_presentation,
                 )
                 .unwrap_or_else(|| f.texture.clone()),
@@ -9024,6 +9029,16 @@ impl Renderer {
         };
         #[cfg(not(target_os = "android"))]
         let record_frame: Option<wgpu::SurfaceTexture> = None;
+        // Replay Mod path renderer grabs its clean HUD-less frame right here,
+        // before touch controls and the replay editor timeline draw on top.
+        let replay_readback = if std::mem::take(&mut self.replay_capture_requested)
+            && self.config.format.block_copy_size(None) == Some(4)
+        {
+            let size = [self.config.width, self.config.height];
+            Some((size[0], size[1], copy_frame(&self.device, &mut encoder, &target_texture, size)))
+        } else {
+            None
+        };
         self.hud.draw_range(
             &mut encoder,
             &view_target,
@@ -9149,6 +9164,22 @@ impl Renderer {
                     self.write_screenshot(&request, &buffer)
                         .map_err(|e| e.to_string()),
                 );
+            }
+        }
+        if let Some((rw, rh, replay_buf)) = replay_readback {
+            if failed.is_none()
+                && let Ok(raw_pixels) = self.read_frame(&replay_buf)
+            {
+                let bgra = matches!(
+                    self.config.format.remove_srgb_suffix(),
+                    wgpu::TextureFormat::Bgra8Unorm
+                );
+                let mut rgba = Vec::with_capacity((rw * rh * 4) as usize);
+                for px in raw_pixels {
+                    let (r, b) = if bgra { (px[2], px[0]) } else { (px[0], px[2]) };
+                    rgba.extend_from_slice(&[r, px[1], b, 255]);
+                }
+                self.replay_frame = Some((rw, rh, rgba));
             }
         }
         let present = Instant::now();
@@ -9282,6 +9313,16 @@ impl Renderer {
             });
         }
     }
+    /// Requests the next rendered world frame (without touch/replay HUD) to be captured into `replay_frame`.
+    pub fn request_replay_frame(&mut self) {
+        self.replay_capture_requested = true;
+    }
+
+    /// Takes the last captured HUD-less RGBA replay frame, if ready.
+    pub fn take_replay_frame(&mut self) -> Option<(u32, u32, Vec<u8>)> {
+        self.replay_frame.take()
+    }
+
     /// Take a screenshot request: queue the frame's copy, or report why the
     /// frame cannot be read back.
     fn take_readback(

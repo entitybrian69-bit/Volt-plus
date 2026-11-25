@@ -5907,6 +5907,9 @@ impl Game<'_> {
             // A player keeps its armour, elytra and held items
             // (`LivingEntityRenderer.submit` skips only the body).
             let is_player = &*mob.kind.id == "minecraft:player";
+            if is_player && self.replay.as_ref().is_some_and(|r| r.hide_players) {
+                continue;
+            }
             let layers_only = mob.invisible && outline.is_none() && is_player;
             if mob.invisible && outline.is_none() && !layers_only {
                 continue;

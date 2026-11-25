@@ -81,6 +81,7 @@ pub(super) struct Launcher {
     prepared_session: Option<PathBuf>,
     pub(super) launching: bool,
     pub(super) launch_pending_tick: bool,
+    pub(super) pending_replay: Option<PathBuf>,
     pub(super) diagnostics_modal_open: bool,
     focus: Option<usize>,
     diagnostic_export: Option<mpsc::Receiver<std::result::Result<String, String>>>,
@@ -317,6 +318,7 @@ impl Launcher {
             prepared_session: None,
             launching: false,
             launch_pending_tick: false,
+            pending_replay: None,
             diagnostics_modal_open: false,
             focus: None,
             diagnostic_export: None,
@@ -337,6 +339,7 @@ impl Launcher {
         let _ = crate::platform::capture_mouse(false);
         crate::platform::hide();
         horizon_client::auth::clear_current();
+        self.catalog.refresh_replays(&self.home);
         self.session_ready = false;
         self.prepared_session = None;
         self.launching = false;
@@ -696,6 +699,7 @@ impl Launcher {
             horizon_client::android_runtime::clear_gamepads();
             self.controller_edges = Default::default();
             self.controller_repeat = None;
+            let replay_path = self.pending_replay.take();
             let request = crate::game_launch::LaunchRequest {
                 resources: self
                     .home
@@ -704,7 +708,12 @@ impl Launcher {
                 game_home,
                 session_file: self.prepared_session.take(),
                 offline_name: crate::catalog::truncate_player_name(&self.catalog.config.name),
-                server: self.catalog.config.server.clone(),
+                server: if replay_path.is_some() {
+                    String::new()
+                } else {
+                    self.catalog.config.server.clone()
+                },
+                replay_path,
                 control_socket: (!crate::PUBLIC_BUILD).then(|| self.home.join("control.json")),
                 extra_arguments,
                 open_gl: self.catalog.config.renderer == crate::catalog::RendererMode::OpenGl,

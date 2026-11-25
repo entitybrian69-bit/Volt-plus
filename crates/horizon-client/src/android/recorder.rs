@@ -566,3 +566,135 @@ pub fn play(uri: &str) -> String {
     };
     raw.split_once(';').map(|(_, note)| note.to_owned()).unwrap_or(raw)
 }
+
+fn replay_encoder_class<'a>(
+    env: &mut JNIEnv<'a>,
+    activity: &JObject<'_>,
+) -> jni::errors::Result<JClass<'a>> {
+    let name = JObject::from(env.new_string("dev.horizon.android.ReplayVideoEncoder")?);
+    let loader = env
+        .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
+        .l()?;
+    let class = env
+        .call_method(
+            &loader,
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &[JValue::Object(&name)],
+        )?
+        .l()?;
+    if class.is_null() {
+        return Err(jni::errors::Error::NullPtr(
+            "dev.horizon.android.ReplayVideoEncoder",
+        ));
+    }
+    Ok(JClass::from(class))
+}
+
+fn replay_export_start(
+    width: u32,
+    height: u32,
+    fps: u32,
+    bitrate_mbps: u32,
+    name: &str,
+) -> horizon_client::Result<String> {
+    let name_owned = name.to_owned();
+    let res = crate::platform::with_context(|env, activity| {
+        let class = replay_encoder_class(env, activity)?;
+        let jname = JObject::from(env.new_string(&name_owned)?);
+        let value = env
+            .call_static_method(
+                class,
+                "start",
+                "(Landroid/content/Context;IIIILjava/lang/String;)Ljava/lang/String;",
+                &[
+                    JValue::Object(activity),
+                    JValue::Int(width as i32),
+                    JValue::Int(height as i32),
+                    JValue::Int(fps as i32),
+                    JValue::Int(bitrate_mbps as i32),
+                    JValue::Object(&jname),
+                ],
+            )?
+            .l()?;
+        text(env, value)
+    });
+    let raw = res.ok_or("Could not reach Android ReplayVideoEncoder")?;
+    if let Some(note) = raw.strip_prefix("ok;") {
+        Ok(note.to_owned())
+    } else if let Some(err) = raw.strip_prefix("error;") {
+        Err(err.into())
+    } else {
+        Ok(raw)
+    }
+}
+
+fn replay_export_push_frame(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    pts_us: u64,
+) -> horizon_client::Result<()> {
+    let res = crate::platform::with_context(|env, activity| {
+        let class = replay_encoder_class(env, activity)?;
+        let jbytes = env.byte_array_from_slice(rgba)?;
+        let jobj = JObject::from(jbytes);
+        let value = env
+            .call_static_method(
+                class,
+                "pushFrame",
+                "([BIIJ)Ljava/lang/String;",
+                &[
+                    JValue::Object(&jobj),
+                    JValue::Int(width as i32),
+                    JValue::Int(height as i32),
+                    JValue::Long(pts_us as i64),
+                ],
+            )?
+            .l()?;
+        text(env, value)
+    });
+    let raw = res.ok_or("Could not reach Android ReplayVideoEncoder")?;
+    if raw == "ok" || raw.starts_with("retry;") {
+        Ok(())
+    } else if let Some(err) = raw.strip_prefix("error;") {
+        Err(err.into())
+    } else {
+        Err(raw.into())
+    }
+}
+
+fn replay_export_finish() -> horizon_client::Result<String> {
+    let res = crate::platform::with_context(|env, activity| {
+        let class = replay_encoder_class(env, activity)?;
+        let value = env
+            .call_static_method(class, "finish", "()Ljava/lang/String;", &[])?
+            .l()?;
+        text(env, value)
+    });
+    let raw = res.ok_or("Could not reach Android ReplayVideoEncoder")?;
+    if let Some(where_saved) = raw.strip_prefix("saved;") {
+        Ok(where_saved.to_owned())
+    } else if let Some(err) = raw.strip_prefix("error;") {
+        Err(err.into())
+    } else {
+        Ok(raw)
+    }
+}
+
+fn replay_export_cancel() {
+    let _ = crate::platform::with_context(|env, activity| {
+        let class = replay_encoder_class(env, activity)?;
+        let _ = env.call_static_method(class, "cancel", "()V", &[])?;
+        Ok(())
+    });
+}
+
+pub fn register_replay_video_exporter() {
+    horizon_client::replay::register_video_exporter(horizon_client::replay::VideoExportCallbacks {
+        start: replay_export_start,
+        push_frame: replay_export_push_frame,
+        finish: replay_export_finish,
+        cancel: replay_export_cancel,
+    });
+}
