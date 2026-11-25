@@ -12,12 +12,16 @@ use crate::{
 };
 use winit::event::TouchPhase;
 
+const fn pack_rgba(r: u8, g: u8, b: u8, a: u8) -> u32 {
+    ((a as u32) << 24) | ((b as u32) << 16) | ((g as u32) << 8) | (r as u32)
+}
+
 const EXPORT_BITRATES: [u32; 4] = [10, 18, 28, 40];
-const REPLAY_TEXT: u32 = rgba(246, 248, 255, 255);
-const REPLAY_MUTED: u32 = rgba(196, 206, 232, 255);
-const REPLAY_ACCENT: u32 = rgba(168, 130, 255, 255);
-const REPLAY_ACCENT_TEXT: u32 = rgba(232, 224, 255, 255);
-const REPLAY_ON_ACCENT: u32 = rgba(255, 255, 255, 255);
+const REPLAY_TEXT: u32 = pack_rgba(246, 248, 255, 255);
+const REPLAY_MUTED: u32 = pack_rgba(196, 206, 232, 255);
+const REPLAY_ACCENT: u32 = pack_rgba(168, 130, 255, 255);
+const REPLAY_ACCENT_TEXT: u32 = pack_rgba(232, 224, 255, 255);
+const REPLAY_ON_ACCENT: u32 = pack_rgba(255, 255, 255, 255);
 
 fn hit(p: [f32; 2], r: [f32; 4]) -> bool {
     p[0] >= r[0] && p[0] <= r[0] + r[2] && p[1] >= r[1] && p[1] <= r[1] + r[3]
