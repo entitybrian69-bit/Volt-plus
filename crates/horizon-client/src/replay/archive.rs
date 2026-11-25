@@ -447,7 +447,7 @@ pub fn update_mcpr_edits(
 
         for i in 0..src_zip.len() {
             let mut entry = src_zip.by_index(i)?;
-            let name = entry.name().to_owned();
+            let name = entry.name()?.into_owned();
             if name == "markers.json" || name == "timelines.json" {
                 continue;
             }

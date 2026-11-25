@@ -575,6 +575,7 @@ impl ReplayRecorder {
             return Ok(None);
         };
         r.writer.flush()?;
+        let duration_ms = u64::from(r.current_timestamp_ms());
         drop(r.writer);
 
         if r.packet_count == 0 {
@@ -582,7 +583,7 @@ impl ReplayRecorder {
             return Ok(None);
         }
 
-        r.meta.duration = u64::from(r.current_timestamp_ms());
+        r.meta.duration = duration_ms;
         r.meta.players = r
             .players_seen
             .iter()

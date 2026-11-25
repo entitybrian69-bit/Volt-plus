@@ -33,6 +33,7 @@ pub struct ReplayPlayerRow {
     pub entity_id: u32,
     pub name: String,
     pub pos: [f64; 3],
+    pub is_self: bool,
 }
 
 /// Read-only snapshot published each frame by `Game` so `touch_ui` can render
@@ -98,9 +99,10 @@ pub fn hud_snapshot() -> ReplayHudSnapshot {
 /// Platform hooks for Replay Mod deterministic MP4 path export (registered on Android).
 #[derive(Clone, Copy)]
 pub struct VideoExportCallbacks {
-    pub start: fn(width: u32, height: u32, fps: u32, bitrate_mbps: u32, name: &str) -> Result<String>,
-    pub push_frame: fn(rgba: &[u8], width: u32, height: u32, pts_us: u64) -> Result<()>,
-    pub finish: fn() -> Result<String>,
+    pub start:
+        fn(width: u32, height: u32, fps: u32, bitrate_mbps: u32, name: &str) -> crate::Result<String>,
+    pub push_frame: fn(rgba: &[u8], width: u32, height: u32, pts_us: u64) -> crate::Result<()>,
+    pub finish: fn() -> crate::Result<String>,
     pub cancel: fn(),
 }
 
@@ -120,7 +122,7 @@ pub fn video_export_start(
     fps: u32,
     bitrate_mbps: u32,
     name: &str,
-) -> Result<String> {
+) -> crate::Result<String> {
     let cb = VIDEO_EXPORTER
         .get()
         .ok_or("Replay MP4 export is not registered on this platform")?;
@@ -132,14 +134,14 @@ pub fn video_export_push_frame(
     width: u32,
     height: u32,
     pts_us: u64,
-) -> Result<()> {
+) -> crate::Result<()> {
     let cb = VIDEO_EXPORTER
         .get()
         .ok_or("Replay MP4 export is not registered on this platform")?;
     (cb.push_frame)(rgba, width, height, pts_us)
 }
 
-pub fn video_export_finish() -> Result<String> {
+pub fn video_export_finish() -> crate::Result<String> {
     let cb = VIDEO_EXPORTER
         .get()
         .ok_or("Replay MP4 export is not registered on this platform")?;
