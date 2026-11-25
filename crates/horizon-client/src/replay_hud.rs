@@ -714,16 +714,19 @@ impl TouchUi {
     /// - `Some(Some(action))`: touch triggered `ReplayAction`.
     pub fn replay_touch(
         &mut self,
-        w: f32,
-        h: f32,
+        batch: &mut HudBatch,
+        atlas: &HudAtlas,
         id: u64,
         phase: TouchPhase,
-        p: [f32; 2],
+        p_gui: [f32; 2],
     ) -> Option<Option<ReplayAction>> {
         let snap = replay::hud_snapshot();
         if !snap.active {
             return None;
         }
+        let ui = Ui::mobile(atlas, batch, (p_gui[0], p_gui[1]));
+        let (w, h) = (ui.w, ui.h);
+        let p = [ui.cursor.0, ui.cursor.1];
         let lay = replay_layout(w, h);
 
         // Handle active timeline scrubber drag

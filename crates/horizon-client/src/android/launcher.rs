@@ -354,6 +354,7 @@ impl Launcher {
         horizon_client::auth::clear_current();
         self.catalog.refresh_replays(&self.home);
         self.catalog.refresh_worlds(&self.home);
+        self.catalog.refresh_screenshots(&self.home);
         let game_home = self.catalog.config.game_home(&self.home);
         self.mouse_touch =
             horizon_client::touch::Settings::load_from(&game_home.join("horizon-touch.json"));
@@ -414,7 +415,7 @@ impl Launcher {
         }
         let section = match self.catalog.page {
             Page::Play => LauncherSection::Play,
-            Page::Worlds => LauncherSection::Worlds,
+            Page::Worlds | Page::Inventory => LauncherSection::Worlds,
             Page::Mods => LauncherSection::Mods,
             Page::Shaders => LauncherSection::Shaders,
             Page::Packs => LauncherSection::Resources,
@@ -551,7 +552,7 @@ impl Launcher {
             self.login.hide();
         } else if self.chooser.take().is_some() {
             // Back dismisses the current dialog, including the exit question.
-        } else if self.catalog.page == Page::Worlds && self.catalog.world_inspection.take().is_some() {
+        } else if self.catalog.page == Page::Inventory && self.catalog.world_inspection.take().is_some() {
             self.catalog.scroll = 0.0;
         } else if self.catalog.page == Page::Installed
             && self.catalog.installed_sub_tab == crate::catalog::InstalledSubTab::FileManager
@@ -1094,7 +1095,8 @@ impl ApplicationHandler for Launcher {
             if notice.changed {
                 self.catalog.refresh(&self.home);
                 self.catalog.refresh_worlds(&self.home);
-                if notice.kind.is_some() || self.catalog.page != Page::Worlds {
+                self.catalog.refresh_screenshots(&self.home);
+                if notice.kind.is_some() || self.catalog.page != Page::Inventory {
                     self.catalog.show_installed(notice.kind);
                 }
             }

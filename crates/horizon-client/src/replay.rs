@@ -12,9 +12,10 @@ pub mod record;
 pub mod timeline;
 
 pub use archive::{
-    MCPR_EXT, REPLAYS_DIR, ReplayMetadata, ReplaySummary, delete_replay, format_duration_ms,
-    format_size_bytes, list_replays, read_mcpr_summary, rename_replay, replays_dir,
-    sanitize_replay_stem, unique_mcpr_path,
+    MCPR_EXT, RAW_REPLAYS_SUBDIR, RENDERED_REPLAYS_SUBDIR, REPLAYS_DIR, RenderedReplaySummary,
+    ReplayMetadata, ReplaySummary, delete_rendered_replay, delete_replay, format_duration_ms,
+    format_size_bytes, list_rendered_replays, list_replays, raw_replays_dir, read_mcpr_summary,
+    rename_replay, rendered_replays_dir, replays_dir, sanitize_replay_stem, unique_mcpr_path,
 };
 pub use playback::{CameraMode, ReplayPlayer, ReplayRenderJob, ReplayStep, WeatherOverride};
 pub use record::{
@@ -78,6 +79,20 @@ pub struct ReplayHudSnapshot {
 
 static GLOBAL_RECORDER: OnceLock<ReplayRecorder> = OnceLock::new();
 static HUD_SNAPSHOT: OnceLock<Mutex<ReplayHudSnapshot>> = OnceLock::new();
+static RENDERED_OUTPUT_DIR: OnceLock<Mutex<Option<std::path::PathBuf>>> = OnceLock::new();
+
+pub fn set_rendered_output_dir(dir: Option<std::path::PathBuf>) {
+    let lock = RENDERED_OUTPUT_DIR.get_or_init(|| Mutex::new(None));
+    *lock.lock().unwrap_or_else(|e| e.into_inner()) = dir;
+}
+
+pub fn rendered_output_dir() -> Option<std::path::PathBuf> {
+    RENDERED_OUTPUT_DIR
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
 
 pub fn global_recorder() -> &'static ReplayRecorder {
     GLOBAL_RECORDER.get_or_init(ReplayRecorder::new)

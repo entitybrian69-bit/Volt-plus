@@ -2,8 +2,8 @@
 
 use super::{
     archive::{
-        Crc32, ReplayMetadata, encode_raw_body, replays_dir, unique_mcpr_path, write_mcpr_archive,
-        write_tmcpr_record,
+        Crc32, ReplayMetadata, encode_raw_body, raw_replays_dir, replays_dir, unique_mcpr_path,
+        write_mcpr_archive, write_tmcpr_record,
     },
     timeline::{ReplayMarker, ReplayTimelineSet},
 };
@@ -403,6 +403,7 @@ impl ReplayRecorder {
         entity_id: i32,
         uuid: u128,
         name: &str,
+        properties: Vec<horizon_protocol::packets::login::Property>,
         pos: [f64; 3],
         yaw: f32,
         pitch: f32,
@@ -447,6 +448,7 @@ impl ReplayRecorder {
                 entries: vec![play::PlayerInfo {
                     uuid,
                     name: Some(name.to_owned()),
+                    properties,
                     listed: Some(true),
                     ..Default::default()
                 }],
@@ -599,7 +601,8 @@ impl ReplayRecorder {
             .map(|u| format!("{u:032x}"))
             .collect();
 
-        let dir = replays_dir(&r.game_dir);
+        let dir = raw_replays_dir(&r.game_dir);
+        let _ = fs::create_dir_all(&dir);
         let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
         let default_stem = format!("{stamp}_{}", r.meta.server_name);
         let stem = custom_name.unwrap_or(&default_stem);

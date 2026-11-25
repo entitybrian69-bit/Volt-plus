@@ -1211,7 +1211,7 @@ impl Game<'_> {
             && let Some(maybe_act) =
                 self.pad
                     .touch_ui
-                    .replay_touch(b.width, b.height, t.id, t.phase, p)
+                    .replay_touch(&mut b, &self.gui.atlas, t.id, t.phase, p)
         {
             if t.phase == TouchPhase::Started {
                 self.pad.touch.ignore(t.id);

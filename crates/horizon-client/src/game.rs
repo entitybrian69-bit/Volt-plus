@@ -8023,6 +8023,8 @@ impl Game<'_> {
     }
     fn hud(&mut self, size: [u32; 2]) -> HudBatch {
         if self.replay.is_some() && self.screen == Screen::Playing {
+            self.flush_skin_slots();
+            self.update_remote_skins();
             return HudBatch::new(size);
         }
         #[cfg(target_os = "android")]
@@ -16878,8 +16880,9 @@ impl Game<'_> {
                 self.pad.hotbar_finger = None;
             }
             if !self.pad_in_menu() {
-                if touch_controls_hidden
-                    || (!crate::touch_visible() && !self.settings.keypad.enabled)
+                if self.replay.is_none()
+                    && (touch_controls_hidden
+                        || (!crate::touch_visible() && !self.settings.keypad.enabled))
                 {
                     return;
                 }

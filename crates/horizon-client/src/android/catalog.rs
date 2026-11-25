@@ -428,6 +428,7 @@ impl CompilerMode {
 pub enum Page {
     Play,
     Worlds,
+    Inventory,
     Mods,
     Packs,
     ControlsStudio,
@@ -455,6 +456,7 @@ impl Page {
         match self {
             Page::Play => "Play",
             Page::Worlds => "Worlds",
+            Page::Inventory => "Inventory",
             Page::Mods => "Mods",
             Page::Packs => "Resource Pack",
             Page::ControlsStudio => "Controls Studio",
@@ -509,11 +511,26 @@ impl SettingsCategory {
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub enum WorldsSubTab {
+pub enum InventorySubTab {
     #[default]
-    Worlds,
-    Servers,
-    Discover,
+    World,
+    Server,
+    Screenshot,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum ReplaysSubTab {
+    #[default]
+    Raw,
+    Rendered,
+}
+
+#[derive(Clone, Debug)]
+pub struct ScreenshotSummary {
+    pub path: PathBuf,
+    pub file_name: String,
+    pub size_bytes: u64,
+    pub modified_secs: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -823,9 +840,12 @@ pub struct Catalog {
     pub compiler_query: String,
     pub compiler_logs: Vec<String>,
     pub last_port_result: Option<horizon_port_pack::android_port::AndroidPortResult>,
+    pub replays_sub_tab: ReplaysSubTab,
     pub replays: Vec<horizon_client::replay::ReplaySummary>,
     pub replay_delete_confirm: Option<usize>,
-    pub worlds_sub_tab: WorldsSubTab,
+    pub rendered_replays: Vec<horizon_client::replay::RenderedReplaySummary>,
+    pub rendered_replay_delete_confirm: Option<usize>,
+    pub inventory_sub_tab: InventorySubTab,
     pub worlds: Vec<WorldSummary>,
     pub world_delete_confirm: Option<usize>,
     pub world_inspection: Option<WorldInspection>,
@@ -833,6 +853,8 @@ pub struct Catalog {
     pub server_delete_confirm: Option<usize>,
     pub add_server_name: String,
     pub add_server_ip: String,
+    pub screenshots: Vec<ScreenshotSummary>,
+    pub screenshot_delete_confirm: Option<usize>,
     pub world_search_query: String,
     pub world_discover_results: Vec<Project>,
     pub world_discover_busy: bool,
@@ -885,9 +907,12 @@ impl Catalog {
             page: Page::Play,
             query: String::new(),
             results: vec![],
+            replays_sub_tab: ReplaysSubTab::Raw,
             replays: vec![],
             replay_delete_confirm: None,
-            worlds_sub_tab: WorldsSubTab::Worlds,
+            rendered_replays: vec![],
+            rendered_replay_delete_confirm: None,
+            inventory_sub_tab: InventorySubTab::World,
             worlds: vec![],
             world_delete_confirm: None,
             world_inspection: None,
@@ -895,6 +920,8 @@ impl Catalog {
             server_delete_confirm: None,
             add_server_name: String::new(),
             add_server_ip: String::new(),
+            screenshots: vec![],
+            screenshot_delete_confirm: None,
             world_search_query: String::new(),
             world_discover_results: vec![],
             world_discover_busy: false,
@@ -933,6 +960,7 @@ impl Catalog {
         result.refresh(home);
         result.refresh_replays(home);
         result.refresh_worlds(home);
+        result.refresh_screenshots(home);
         result
     }
 
@@ -940,7 +968,77 @@ impl Catalog {
         let game_home = self.config.game_home(home);
         horizon_client::replay::init_settings(&game_home);
         self.replays = horizon_client::replay::list_replays(&game_home);
+        self.rendered_replays = horizon_client::replay::list_rendered_replays(&game_home);
         self.replay_delete_confirm = None;
+        self.rendered_replay_delete_confirm = None;
+    }
+
+    pub fn refresh_screenshots(&mut self, home: &Path) {
+        let shots_dir = self.config.game_home(home).join("screenshots");
+        let mut out = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&shots_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let is_img = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "webp"));
+                if !is_img {
+                    continue;
+                }
+                let Ok(meta) = entry.metadata() else {
+                    continue;
+                };
+                if !meta.is_file() {
+                    continue;
+                }
+                let file_name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let modified_secs = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_secs());
+                out.push(ScreenshotSummary {
+                    path,
+                    file_name,
+                    size_bytes: meta.len(),
+                    modified_secs,
+                });
+            }
+        }
+        out.sort_by(|a, b| b.modified_secs.cmp(&a.modified_secs));
+        self.screenshots = out;
+        self.screenshot_delete_confirm = None;
+    }
+
+    pub fn delete_screenshot(&mut self, home: &Path, idx: usize) {
+        let Some(shot) = self.screenshots.get(idx) else {
+            return;
+        };
+        let name = shot.file_name.clone();
+        match std::fs::remove_file(&shot.path) {
+            Ok(()) => {
+                self.refresh_screenshots(home);
+                self.status = format!("Deleted screenshot '{name}'.");
+            }
+            Err(err) => {
+                self.status = format!("Could not delete '{name}': {err}");
+            }
+        }
+    }
+
+    pub fn export_screenshot(&mut self, idx: usize) {
+        let Some(shot) = self.screenshots.get(idx) else {
+            return;
+        };
+        let name = shot.file_name.clone();
+        match crate::gallery::save(&shot.path) {
+            Ok(()) => self.status = format!("Exported '{name}' to Gallery!"),
+            Err(err) => self.status = format!("Export failed for '{name}': {err}"),
+        }
     }
 
     pub fn refresh_worlds(&mut self, home: &Path) {
@@ -1059,19 +1157,22 @@ impl Catalog {
     }
 
     pub fn search_discover_worlds(&mut self) {
-        let mut q = Query::new(self.world_search_query.trim(), Kind::DataPack);
-        q.everything = true;
-        q.limit = 20;
+        const WORLDS_CURSEFORGE_API_KEY: &str =
+            "$2a$10$bL4bIL5pUWqfcO7KQtnMReakwtfHbNKh6v1uTpKlzhwoueEJQnPnm";
+        let query = self.world_search_query.clone();
         self.world_discover_busy = true;
         let (tx, rx) = mpsc::channel();
         self.world_discover_worker = Some(rx);
         std::thread::spawn(move || {
-            let res = browser::modrinth::Modrinth.search(&q);
+            let cf = browser::curseforge::CurseForge::with_key(WORLDS_CURSEFORGE_API_KEY);
+            let res = cf.search_worlds(&query, 25);
             let _ = tx.send(res);
         });
     }
 
     pub fn install_discover_world(&mut self, home: &Path, idx: usize) {
+        const WORLDS_CURSEFORGE_API_KEY: &str =
+            "$2a$10$bL4bIL5pUWqfcO7KQtnMReakwtfHbNKh6v1uTpKlzhwoueEJQnPnm";
         let Some(project) = self.world_discover_results.get(idx).cloned() else {
             return;
         };
@@ -1079,13 +1180,22 @@ impl Catalog {
         let (tx, rx) = mpsc::channel();
         self.world_discover_busy = true;
         self.world_discover_install_worker = Some(rx);
-        self.status = format!("Downloading '{}'...", project.title);
+        self.status = format!("Downloading '{}' from CurseForge...", project.title);
         std::thread::spawn(move || {
             let res = (|| -> Result<String, String> {
-                let versions = browser::modrinth::Modrinth.versions(&project)?;
+                let cf = browser::curseforge::CurseForge::with_key(WORLDS_CURSEFORGE_API_KEY);
+                let versions = cf.versions(&project)?;
                 let ver = versions
-                    .first()
-                    .ok_or_else(|| format!("No downloadable files for '{}'", project.title))?;
+                    .iter()
+                    .find(|v| !v.files.is_empty())
+                    .ok_or_else(|| {
+                        versions
+                            .first()
+                            .and_then(|v| v.blocked.clone())
+                            .unwrap_or_else(|| {
+                                format!("No downloadable files for '{}'", project.title)
+                            })
+                    })?;
                 let file = ver
                     .files
                     .iter()
@@ -1094,7 +1204,7 @@ impl Catalog {
                     .ok_or_else(|| format!("No files in latest version of '{}'", project.title))?;
                 let staging_dir = game_home.join(".cache").join("world-discover");
                 let _ = std::fs::create_dir_all(&staging_dir);
-                let staged = browser::modrinth::Modrinth.fetch(file, &staging_dir, &|_| {})?;
+                let staged = cf.fetch(file, &staging_dir, &|_| {})?;
                 let saves_dir = game_home.join("saves");
                 let _ = std::fs::create_dir_all(&saves_dir);
                 let out = match crate::document_store::extract_world_zip_if_valid(
@@ -1104,7 +1214,7 @@ impl Catalog {
                 )? {
                     Some(world_folder) => {
                         let _ = std::fs::remove_file(&staged);
-                        format!("Installed world '{world_folder}' into Worlds!")
+                        format!("Installed world '{world_folder}' into Inventory -> World!")
                     }
                     None => {
                         let dp_dir = game_home.join("datapacks");
@@ -1112,7 +1222,7 @@ impl Catalog {
                         let dest = dp_dir.join(&file.name);
                         std::fs::rename(&staged, &dest).map_err(|e| e.to_string())?;
                         format!(
-                            "Downloaded '{}' to datapacks/ (not a full world save .zip with level.dat).",
+                            "Downloaded '{}' to datapacks/ (archive had no level.dat).",
                             file.name
                         )
                     }

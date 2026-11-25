@@ -245,60 +245,71 @@ fn const_ident(line: &str) -> Option<&str> {
 /// Extracts the pack's `[vertex]` stage code after `<prelude>` and shared files
 /// so all `override` constants (e.g. `waving_plants`), helper functions, and `fn vertex`
 /// are linked into the material module without duplicating shared declarations.
+fn has_fn_vertex(source: &str) -> bool {
+    source.lines().any(|line| {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("fn vertex(") || trimmed.starts_with("fn vertex ")
+    })
+}
+
 fn vertex_shim(material_source: &str, vertex_stage: Option<&CheckedStage>) -> String {
     let mut out = String::new();
     if !material_source.contains("struct VertexInput {") {
         out += &horizon_shader_api::inputs::VERTEX_INPUT.wgsl();
     }
     if let Some(vs) = vertex_stage {
-        let api = if material_source.contains("0.2 prelude") {
-            horizon_shader_api::Api::V0_2
-        } else {
-            horizon_shader_api::Api::V0_1
-        };
-        let v_prelude = StageKind::Vertex.prelude(api);
-        let m_prelude = StageKind::Material.prelude(api);
-        let v_after = vs.source.strip_prefix(&v_prelude).unwrap_or(&vs.source);
-        let m_after = material_source
-            .strip_prefix(&m_prelude)
-            .unwrap_or(material_source);
-
-        // Strip common line-aligned prefix (texture declarations + shared WGSL files)
-        let mut common_bytes = 0usize;
-        for (vl, ml) in v_after.split_inclusive('\n').zip(m_after.split_inclusive('\n')) {
-            if vl == ml {
-                common_bytes += vl.len();
+        // `stages::compose` already appends the `[vertex]` stage files into `StageKind::Material`.
+        // Only emit `vertex_own` if `material_source` does not already define `fn vertex(...)`.
+        if !has_fn_vertex(material_source) {
+            let api = if material_source.contains("0.2 prelude") {
+                horizon_shader_api::Api::V0_2
             } else {
-                break;
-            }
-        }
-        let vertex_own = &v_after[common_bytes..];
+                horizon_shader_api::Api::V0_1
+            };
+            let v_prelude = StageKind::Vertex.prelude(api);
+            let m_prelude = StageKind::Material.prelude(api);
+            let v_after = vs.source.strip_prefix(&v_prelude).unwrap_or(&vs.source);
+            let m_after = material_source
+                .strip_prefix(&m_prelude)
+                .unwrap_or(material_source);
 
-        // Collect override and const names already declared in material_source so we never emit duplicates.
-        let existing_overrides: std::collections::HashSet<&str> = material_source
-            .lines()
-            .filter_map(override_ident)
-            .collect();
-        let existing_consts: std::collections::HashSet<&str> = material_source
-            .lines()
-            .filter_map(const_ident)
-            .collect();
+            // Strip common line-aligned prefix (texture declarations + shared WGSL files)
+            let mut common_bytes = 0usize;
+            for (vl, ml) in v_after.split_inclusive('\n').zip(m_after.split_inclusive('\n')) {
+                if vl == ml {
+                    common_bytes += vl.len();
+                } else {
+                    break;
+                }
+            }
+            let vertex_own = &v_after[common_bytes..];
 
-        for line in vertex_own.split_inclusive('\n') {
-            if let Some(id) = override_ident(line)
-                && existing_overrides.contains(id)
-            {
-                continue;
+            // Collect override and const names already declared in material_source so we never emit duplicates.
+            let existing_overrides: std::collections::HashSet<&str> = material_source
+                .lines()
+                .filter_map(override_ident)
+                .collect();
+            let existing_consts: std::collections::HashSet<&str> = material_source
+                .lines()
+                .filter_map(const_ident)
+                .collect();
+
+            for line in vertex_own.split_inclusive('\n') {
+                if let Some(id) = override_ident(line)
+                    && existing_overrides.contains(id)
+                {
+                    continue;
+                }
+                if let Some(id) = const_ident(line)
+                    && existing_consts.contains(id)
+                {
+                    continue;
+                }
+                out += line;
             }
-            if let Some(id) = const_ident(line)
-                && existing_consts.contains(id)
-            {
-                continue;
+            if !out.ends_with('\n') {
+                out.push('\n');
             }
-            out += line;
-        }
-        if !out.ends_with('\n') {
-            out.push('\n');
         }
         out += "fn horizon_vertex_move(input: VertexInput) -> vec3<f32> { return vertex(input); }\n";
     } else {

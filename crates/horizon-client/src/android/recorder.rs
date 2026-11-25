@@ -599,14 +599,18 @@ fn replay_export_start(
     name: &str,
 ) -> horizon_client::Result<String> {
     let name_owned = name.to_owned();
+    let rendered_dir = horizon_client::replay::rendered_output_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let res = crate::platform::with_context(|env, activity| {
         let class = replay_encoder_class(env, activity)?;
         let jname = JObject::from(env.new_string(&name_owned)?);
+        let jdir = JObject::from(env.new_string(&rendered_dir)?);
         let value = env
             .call_static_method(
                 class,
                 "start",
-                "(Landroid/content/Context;IIIILjava/lang/String;)Ljava/lang/String;",
+                "(Landroid/content/Context;IIIILjava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
                 &[
                     JValue::Object(activity),
                     JValue::Int(width as i32),
@@ -614,6 +618,7 @@ fn replay_export_start(
                     JValue::Int(fps as i32),
                     JValue::Int(bitrate_mbps as i32),
                     JValue::Object(&jname),
+                    JValue::Object(&jdir),
                 ],
             )?
             .l()?;
@@ -627,6 +632,35 @@ fn replay_export_start(
     } else {
         Ok(raw)
     }
+}
+
+/// Opens a rendered `.mp4` replay stored inside `<game_dir>/replays/rendered`
+/// via its `HorizonDocumentsProvider` URI.
+pub fn play_rendered_replay(profile: u32, file_name: &str) -> String {
+    if file_name.is_empty() {
+        return "nothing to play".to_owned();
+    }
+    let folder = crate::document_store::folder_id(profile, "rendered_replays");
+    let doc_id = format!("{folder}/{file_name}");
+    let result = crate::platform::with_context(|env, activity| {
+        let class = replay_encoder_class(env, activity)?;
+        let jdoc = JObject::from(env.new_string(&doc_id)?);
+        let value = env
+            .call_static_method(
+                class,
+                "playDocument",
+                "(Landroid/app/Activity;Ljava/lang/String;)Ljava/lang/String;",
+                &[JValue::Object(activity), JValue::Object(&jdoc)],
+            )?
+            .l()?;
+        text(env, value)
+    });
+    let Some(raw) = result else {
+        return "the player could not be opened".to_owned();
+    };
+    raw.split_once(';')
+        .map(|(_, note)| note.to_owned())
+        .unwrap_or(raw)
 }
 
 fn replay_export_push_frame(

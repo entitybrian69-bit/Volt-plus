@@ -587,7 +587,7 @@ pub struct Settings {
     pub overlay_scale: f32,
     #[serde(default = "default_one")]
     pub overlay_opacity: f32,
-    #[serde(default)]
+    #[serde(skip)]
     pub overlay_hidden: bool,
     #[serde(default)]
     pub overlay_hide_in_menus: bool,

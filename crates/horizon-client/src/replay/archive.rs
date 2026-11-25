@@ -27,6 +27,8 @@ use std::{
 };
 
 pub const REPLAYS_DIR: &str = "replays";
+pub const RAW_REPLAYS_SUBDIR: &str = "raw";
+pub const RENDERED_REPLAYS_SUBDIR: &str = "rendered";
 pub const MCPR_EXT: &str = "mcpr";
 pub const FILE_FORMAT: &str = "MCPR";
 pub const FILE_FORMAT_VERSION: u32 = 14;
@@ -95,8 +97,25 @@ pub struct PacketIndexEntry {
     pub state: PacketState,
 }
 
+#[derive(Clone, Debug)]
+pub struct RenderedReplaySummary {
+    pub path: PathBuf,
+    pub file_name: String,
+    pub display_name: String,
+    pub size_bytes: u64,
+    pub modified_secs: u64,
+}
+
 pub fn replays_dir(game_dir: &Path) -> PathBuf {
     game_dir.join(REPLAYS_DIR)
+}
+
+pub fn raw_replays_dir(game_dir: &Path) -> PathBuf {
+    replays_dir(game_dir).join(RAW_REPLAYS_SUBDIR)
+}
+
+pub fn rendered_replays_dir(game_dir: &Path) -> PathBuf {
+    replays_dir(game_dir).join(RENDERED_REPLAYS_SUBDIR)
 }
 
 pub fn sanitize_replay_stem(raw: &str) -> String {
@@ -297,22 +316,82 @@ pub fn read_mcpr_summary(path: &Path) -> Result<ReplaySummary> {
 }
 
 pub fn list_replays(game_dir: &Path) -> Vec<ReplaySummary> {
-    let dir = replays_dir(game_dir);
+    let raw_dir = raw_replays_dir(game_dir);
+    let legacy_dir = replays_dir(game_dir);
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for dir in [raw_dir, legacy_dir] {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some(MCPR_EXT) {
+                continue;
+            }
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+            if let Ok(summary) = read_mcpr_summary(&path) {
+                out.push(summary);
+            }
+        }
+    }
+    out.sort_by(|a, b| b.meta.date.cmp(&a.meta.date));
+    out
+}
+
+pub fn list_rendered_replays(game_dir: &Path) -> Vec<RenderedReplaySummary> {
+    let dir = rendered_replays_dir(game_dir);
     let Ok(entries) = fs::read_dir(&dir) else {
         return Vec::new();
     };
     let mut out = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some(MCPR_EXT) {
+        if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_none_or(|e| !e.eq_ignore_ascii_case("mp4"))
+        {
             continue;
         }
-        if let Ok(summary) = read_mcpr_summary(&path) {
-            out.push(summary);
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
         }
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let display_name = path
+            .file_stem()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| file_name.clone());
+        let modified_secs = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_secs());
+        out.push(RenderedReplaySummary {
+            path,
+            file_name,
+            display_name,
+            size_bytes: meta.len(),
+            modified_secs,
+        });
     }
-    out.sort_by(|a, b| b.meta.date.cmp(&a.meta.date));
+    out.sort_by(|a, b| b.modified_secs.cmp(&a.modified_secs));
     out
+}
+
+pub fn delete_rendered_replay(path: &Path) -> Result<()> {
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    Ok(())
 }
 
 pub fn rename_replay(path: &Path, new_name: &str) -> Result<PathBuf> {

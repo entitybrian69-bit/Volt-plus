@@ -4680,7 +4680,7 @@ impl TouchUi {
                     &mut ui,
                     body_y + 134.0,
                     "Hide V+ Button Completely",
-                    "Hide the V+ trigger everywhere (re-enable in Launcher Settings > Controls)",
+                    "Hide the V+ trigger for this session (restores automatically on relaunch)",
                     Some(settings.overlay_hidden),
                     None,
                 );
@@ -5718,6 +5718,9 @@ pub fn draw_hud_editor(
                 "HIDDEN",
             );
         }
+        if ed.apply_all && !is_sel && vis {
+            ui.stroke_rounded(rx - 1.5, ry - 1.5, rw + 3.0, rh + 3.0, 5.0, 1.2, color::with_alpha(accent, 0.72));
+        }
         if is_sel {
             selected_rect_and_title = Some(([rx, ry, rw, rh], tc.settings.control_label(c).to_owned()));
         }
@@ -5772,6 +5775,9 @@ pub fn draw_hud_editor(
             );
         }
 
+        if ed.apply_all && !is_sel {
+            ui.stroke_rounded(rx - 1.5, ry - 1.5, rw + 3.0, rh + 3.0, 5.0, 1.2, color::with_alpha(accent, 0.72));
+        }
         if is_sel {
             selected_rect_and_title = Some(([rx, ry, rw, rh], format!("Button: {label}")));
         }
@@ -5824,8 +5830,8 @@ pub fn draw_hud_editor(
         );
     }
 
-    // 6. Material 3 Moveable Floating Menu Pod with Direct Grid Snap Toggle (`492x48dp`)
-    let pod_w = if ed.pod_expanded { 492.0 } else { 52.0 };
+    // 6. Material 3 Moveable Floating Menu Pod with Select All & Direct Grid Snap Toggle
+    let pod_w = if ed.pod_expanded { 568.0 } else { 52.0 };
     let pod_h = 48.0;
     let pod_x = (tc.settings.floating_menu_pos[0] * w).clamp(8.0, (w - pod_w - 8.0).max(8.0));
     let pod_y = (tc.settings.floating_menu_pos[1] * h).clamp(6.0, (h - pod_h - 6.0).max(6.0));
@@ -5870,14 +5876,20 @@ pub fn draw_hud_editor(
         } else {
             "Grid"
         };
-        let items: [(Option<Icon>, &str, f32, bool, bool); 7] = [
+        let all_lbl = if ed.apply_all {
+            "All: ON"
+        } else {
+            "Select All"
+        };
+        let items: [(Option<Icon>, &str, f32, bool, bool); 8] = [
             (Some(Icon::Undo), "", 38.0, !ed.undo_stack.is_empty(), false),
             (Some(Icon::Redo), "", 38.0, !ed.redo_stack.is_empty(), false),
-            (Some(Icon::Gear), "Props", 68.0, true, ed.props_open),
-            (Some(Icon::Crosshair), grid_lbl, 74.0, true, tc.settings.snap_to_grid),
-            (Some(Icon::Plus), "Add", 58.0, true, false),
-            (Some(Icon::Plus), "Copy", 60.0, can_copy, false),
-            (Some(Icon::Check), "Save", 64.0, true, true),
+            (Some(Icon::Gear), "Props", 64.0, true, ed.props_open),
+            (Some(Icon::Check), all_lbl, 80.0, true, ed.apply_all),
+            (Some(Icon::Crosshair), grid_lbl, 72.0, true, tc.settings.snap_to_grid),
+            (Some(Icon::Plus), "Add", 56.0, true, false),
+            (Some(Icon::Plus), "Copy", 58.0, can_copy, false),
+            (Some(Icon::Check), "Save", 62.0, true, true),
         ];
         let mut ix = pod_x + 50.0;
         for (ic, lbl, iw, enabled, hi) in items {
@@ -6028,9 +6040,14 @@ pub fn draw_hud_editor(
         ui.rounded(dx, dy, dw, dh, 12.0, st_outer);
         ui.border(dx, dy, dw, dh, 12.0, st_border);
 
-        let is_joystick = ed.selected == Some(Control::Move) && ed.selected_custom.is_none();
+        let is_joystick = !ed.apply_all && ed.selected == Some(Control::Move) && ed.selected_custom.is_none();
         let is_mcpe_mode = tc.settings.control_style == ControlStyle::Mcpe;
-        let (header_txt, sub_txt) = if is_joystick {
+        let (header_txt, sub_txt) = if ed.apply_all {
+            (
+                "ALL CONTROLS — Select All ON".to_owned(),
+                "Every color, opacity, shape, stroke, icon & size edit applies to all controls",
+            )
+        } else if is_joystick {
             (
                 "Joystick & Analog Base Inspector".to_owned(),
                 "Customize stick knob, analog base ring, active zone & visibility",
@@ -7912,7 +7929,32 @@ fn apply_props_slider(
         (1, 5) => pl.height_ratio = (0.50 + t * 1.50).clamp(0.50, 2.00),
         _ => {}
     };
-    if let Some(idx) = ed.selected_custom {
+    if ed.apply_all {
+        for slot_pl in &mut tc.settings.layouts[mode_idx] {
+            apply_pl(slot_pl);
+        }
+        for btn in &mut tc.settings.custom_buttons {
+            for m in 0..3 {
+                apply_pl(&mut btn.layouts[m]);
+            }
+        }
+        match (tab, index) {
+            (0, 0) => {
+                let op = ((t * 100.0).round() / 100.0).clamp(0.0, 1.0);
+                tc.settings.joystick_style.base_opacity = op;
+                tc.settings.joystick_style.stick_opacity = op;
+            }
+            (1, 0) => {
+                let st = ((t * 16.0).round() * 0.5).clamp(0.0, 8.0);
+                tc.settings.joystick_style.base_stroke = st;
+                tc.settings.joystick_style.stick_stroke = st;
+            }
+            (1, 1) => {
+                tc.settings.joystick_style.base_roundness = (t * 50.0).round().clamp(0.0, 50.0);
+            }
+            _ => {}
+        }
+    } else if let Some(idx) = ed.selected_custom {
         if let Some(btn) = tc.settings.custom_buttons.get_mut(idx) {
             for m in 0..3 {
                 apply_pl(&mut btn.layouts[m]);
@@ -7952,7 +7994,7 @@ pub fn touch_hud_editor(
                 if drag_id == id {
                     match kind {
                         EditorDragKind::FloatingPod { offset, mut moved } => {
-                            let pod_w = if ed.pod_expanded { 492.0 } else { 52.0 };
+                            let pod_w = if ed.pod_expanded { 568.0 } else { 52.0 };
                             let cur_x = (tc.settings.floating_menu_pos[0] * w)
                                 .clamp(8.0, (w - pod_w - 8.0).max(8.0));
                             let cur_y = (tc.settings.floating_menu_pos[1] * h)
@@ -8827,7 +8869,16 @@ pub fn touch_hud_editor(
                 |tc: &mut crate::touch::TouchControls,
                  ed: &crate::touch::Editor,
                  f: &dyn Fn(&mut crate::touch::Placement)| {
-                    if let Some(idx) = ed.selected_custom {
+                    if ed.apply_all {
+                        for slot_pl in &mut tc.settings.layouts[mode_idx] {
+                            f(slot_pl);
+                        }
+                        for btn in &mut tc.settings.custom_buttons {
+                            for m in 0..3 {
+                                f(&mut btn.layouts[m]);
+                            }
+                        }
+                    } else if let Some(idx) = ed.selected_custom {
                         if let Some(btn) = tc.settings.custom_buttons.get_mut(idx) {
                             for m in 0..3 {
                                 f(&mut btn.layouts[m]);
@@ -9353,8 +9404,8 @@ pub fn touch_hud_editor(
             return false;
         }
 
-        // 5. Check Material 3 Moveable Floating Menu Pod with Direct Grid Snap Toggle (492x48dp)
-        let pod_w = if ed.pod_expanded { 492.0 } else { 52.0 };
+        // 5. Check Material 3 Moveable Floating Menu Pod with Select All & Direct Grid Snap Toggle
+        let pod_w = if ed.pod_expanded { 568.0 } else { 52.0 };
         let pod_h = 48.0;
         let pod_x = (tc.settings.floating_menu_pos[0] * w).clamp(8.0, (w - pod_w - 8.0).max(8.0));
         let pod_y = (tc.settings.floating_menu_pos[1] * h).clamp(6.0, (h - pod_h - 6.0).max(6.0));
@@ -9370,7 +9421,7 @@ pub fn touch_hud_editor(
             return false;
         }
         if ed.pod_expanded && inside([pod_x, pod_y, pod_w, pod_h]) {
-            let widths = [38.0, 38.0, 68.0, 74.0, 58.0, 60.0, 64.0];
+            let widths = [38.0, 38.0, 64.0, 80.0, 72.0, 56.0, 58.0, 62.0];
             let mut ix = pod_x + 50.0;
             for (btn_i, iw) in widths.into_iter().enumerate() {
                 if inside([ix, pod_y + 5.0, iw, 38.0]) {
@@ -9401,6 +9452,22 @@ pub fn touch_hud_editor(
                             ed.menu_open = false;
                         }
                         3 => {
+                            // Toggle Select All (bulk-edit every control's Props & style together)
+                            ed.apply_all = !ed.apply_all;
+                            if ed.apply_all && ed.selected.is_none() && ed.selected_custom.is_none() {
+                                if !tc.settings.custom_buttons.is_empty() {
+                                    ed.selected_custom = Some(0);
+                                } else {
+                                    ed.selected = Some(Control::Jump);
+                                }
+                            }
+                            ed.status_msg = Some(if ed.apply_all {
+                                "Select All: ON — Props changes apply to every control.".into()
+                            } else {
+                                "Select All: OFF — Editing selected control only.".into()
+                            });
+                        }
+                        4 => {
                             // Toggle Snap to Grid & Neighbor Edge-Sticking
                             push_undo_snapshot(&mut ed, &tc.settings);
                             tc.settings.snap_to_grid = !tc.settings.snap_to_grid;
@@ -9411,7 +9478,7 @@ pub fn touch_hud_editor(
                                 "Snap to Grid & Neighbor Buttons: OFF".into()
                             });
                         }
-                        4 => {
+                        5 => {
                             // + Add Button (supported in BOTH MCPE and GoyControl modes!)
                             if tc.settings.custom_buttons.len() < 32 {
                                 push_undo_snapshot(&mut ed, &tc.settings);
@@ -9433,7 +9500,7 @@ pub fn touch_hud_editor(
                                 let _ = tc.settings.save();
                             }
                         }
-                        5 => {
+                        6 => {
                             // Copy Selected Button
                             duplicate_selected_editor_button(&mut ed, tc);
                         }

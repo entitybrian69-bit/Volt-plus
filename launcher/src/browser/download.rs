@@ -9,10 +9,11 @@ use std::path::{Path, PathBuf};
 /// Hosts a file may come from: Modrinth's and CurseForge's file servers, and the release assets
 /// of Horizon's registry (and, see [`github_release_asset`], of the repository a registry entry
 /// names).
-const HOSTS: [&str; 5] = [
+const HOSTS: [&str; 6] = [
     "https://cdn.modrinth.com/",
     "https://edge.forgecdn.net/",
     "https://mediafilez.forgecdn.net/",
+    "https://media.forgecdn.net/",
     horizon_mods::index::FILE_HOST,
     // The registry's files at their address before the move to horizon-rust (GitHub redirects it).
     "https://github.com/ludovic111/horizon-mods/releases/download/",

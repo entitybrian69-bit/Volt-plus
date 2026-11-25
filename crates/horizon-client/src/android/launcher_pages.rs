@@ -378,14 +378,19 @@ pub(super) enum Action {
     // Video settings actions (options.txt)
     RenderScaleDelta(i32),
     // Replay Mod browser & settings
+    SetReplaysSubTab(crate::catalog::ReplaysSubTab),
     PlayReplay(usize),
     DeleteReplay(usize),
+    PlayRenderedReplay(usize),
+    DeleteRenderedReplay(usize),
+    OpenRawReplaysFolder,
+    OpenRenderedReplaysFolder,
     RefreshReplays,
     ReplayToggleAutoSp,
     ReplayToggleAutoMp,
     ReplayToggleRecordSelf,
-    // Worlds, Servers & World Analysis tab
-    SetWorldsSubTab(crate::catalog::WorldsSubTab),
+    // Inventory (World / Server / Screenshot) & CurseForge Worlds
+    SetInventorySubTab(crate::catalog::InventorySubTab),
     RefreshWorlds,
     PlayWorld(usize),
     InspectWorld(usize),
@@ -396,6 +401,10 @@ pub(super) enum Action {
     JoinServer(usize),
     DeleteServer(usize),
     AddServer,
+    RefreshScreenshots,
+    ExportScreenshot(usize),
+    DeleteScreenshot(usize),
+    OpenScreenshotsFolder,
     SearchDiscoverWorlds,
     InstallDiscoverWorld(usize),
     RenderDistDelta(i32),
@@ -853,7 +862,7 @@ enum SettingControl<'a> {
 fn page_icon(page: Page) -> Icon {
     match page {
         Page::Play => Icon::Play,
-        Page::Worlds => Icon::Folder,
+        Page::Worlds | Page::Inventory => Icon::Folder,
         Page::Mods => Icon::Mods,
         Page::Packs => Icon::Packs,
         Page::ControlsStudio => Icon::Gamepad,
@@ -1324,7 +1333,7 @@ impl Launcher {
         let label = ui.fit_text(Face::Medium, 11.0, &account_name, 45.0);
         ui.text(Face::Medium, 11.0, 49.0, 63.0, my3_text(), &label);
         self.targets.push((account_rect, Action::Account));
-        let discord_space = w - 174.0 - 8.0 - 218.0;
+        let discord_space = w - 282.0 - 8.0 - 218.0;
         let discord_rect = if discord_space >= 104.0 {
             [218.0, 11.0, discord_space.min(148.0), 34.0]
         } else {
@@ -1332,6 +1341,8 @@ impl Launcher {
         };
         button(&mut ui, &mut self.targets, discord_rect,
             "Join our Discord", Action::Discord, false);
+        button(&mut ui, &mut self.targets, [w - 282.0, 12.0, 100.0, 34.0],
+            "Inventory", Action::Page(Page::Inventory), self.catalog.page == Page::Inventory);
         button(&mut ui, &mut self.targets, [w - 174.0, 12.0, 162.0, 34.0],
             "Background images", Action::OpenWallpapers, false);
 
@@ -2061,6 +2072,8 @@ impl Launcher {
             );
         } else if page == Page::Worlds {
             self.draw_worlds_page(&mut ui, content_x, content_w, h, compact, slide_y);
+        } else if page == Page::Inventory {
+            self.draw_inventory_page(&mut ui, content_x, content_w, h, compact, slide_y);
         } else if page == Page::ControlsStudio {
             self.draw_controls_studio_page(&mut ui, content_x, content_w, h, compact, slide_y);
         } else if page == Page::Compiler {
@@ -2673,6 +2686,8 @@ impl Launcher {
         compact: bool,
         slide_y: f32,
     ) {
+        use crate::catalog::ReplaysSubTab;
+
         let header_y = 60.0 + slide_y;
         ui.text(
             Face::SemiBold,
@@ -2680,9 +2695,15 @@ impl Launcher {
             content_x,
             header_y + 2.0,
             my3_text(),
-            "Replay Mod (.mcpr)",
+            "Replays",
         );
-        let refresh_w = 94.0;
+
+        let seg_w = if compact { 92.0 } else { 112.0 };
+        let tabs = [
+            (ReplaysSubTab::Raw, "Raw Replay"),
+            (ReplaysSubTab::Rendered, "Rendered Replay"),
+        ];
+        let refresh_w = 82.0;
         let refresh_r = [
             content_x + content_w - refresh_w,
             header_y,
@@ -2697,220 +2718,368 @@ impl Launcher {
             Action::RefreshReplays,
             false,
         );
-
-        let rs = horizon_client::replay::settings();
-        let chip_y = 98.0 + slide_y;
-        let chip_gap = 6.0;
-        let cw = ((content_w - chip_gap * 2.0) / 3.0).min(165.0);
-        let chips = [
-            (
-                if rs.auto_record_sp {
-                    "Auto SP: ON"
-                } else {
-                    "Auto SP: OFF"
-                },
-                rs.auto_record_sp,
-                Action::ReplayToggleAutoSp,
-            ),
-            (
-                if rs.auto_record_mp {
-                    "Auto MP: ON"
-                } else {
-                    "Auto MP: OFF"
-                },
-                rs.auto_record_mp,
-                Action::ReplayToggleAutoMp,
-            ),
-            (
-                if rs.record_self {
-                    "Self Player: ON"
-                } else {
-                    "Self Player: OFF"
-                },
-                rs.record_self,
-                Action::ReplayToggleRecordSelf,
-            ),
-        ];
-        for (i, (label, on, act)) in chips.into_iter().enumerate() {
-            let r = [content_x + i as f32 * (cw + chip_gap), chip_y, cw, 28.0];
-            ui.m3_filter_chip(r, label, on, None);
-            self.targets.push((r, act));
+        let seg_start = refresh_r[0] - seg_w * 2.0 - 10.0;
+        for (i, (tab, lbl)) in tabs.into_iter().enumerate() {
+            let r = [seg_start + i as f32 * (seg_w + 3.0), header_y, seg_w, 30.0];
+            ui.m3_connected_segment(
+                r,
+                i,
+                2,
+                lbl,
+                self.catalog.replays_sub_tab == tab,
+                None,
+            );
+            self.targets.push((r, Action::SetReplaysSubTab(tab)));
         }
 
-        let info_y = chip_y + 34.0;
-        let info_txt = ui.fit_text(
-            Face::Regular,
-            10.2,
-            &format!(
-                "{} replay(s)  •  Exported MP4 clips save to Movies/VoltPlus Replays",
-                self.catalog.replays.len()
-            ),
-            content_w,
-        );
-        ui.text(
-            Face::Regular,
-            10.2,
-            content_x,
-            info_y,
-            my3_muted(),
-            &info_txt,
-        );
-
-        let list_top = info_y + 20.0;
-        let list_bottom = (h - 46.0).max(list_top + 60.0);
-        let row_h = if compact { 82.0 } else { 72.0 };
-        let row_gap = 8.0;
-        let total_h = self.catalog.replays.len() as f32 * (row_h + row_gap);
-        let max_scroll = (total_h - (list_bottom - list_top)).max(0.0);
-        self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
-        self.list_view = Some([list_top, list_bottom, max_scroll]);
-
-        let replays = self.catalog.replays.clone();
-        let delete_confirm = self.catalog.replay_delete_confirm;
-        let list_targets = &mut self.list_targets;
-        ui.clipped([content_x - 2.0, list_top, content_w + 4.0, list_bottom - list_top], |ui| {
-            if replays.is_empty() {
-                ui.rounded(content_x, list_top + 6.0, content_w, 84.0, 14.0, my3_card_bg());
-                ui.border(content_x, list_top + 6.0, content_w, 84.0, 14.0, my3_card_border());
-                ui.text(
-                    Face::SemiBold,
-                    13.0,
-                    content_x + 14.0,
-                    list_top + 20.0,
-                    my3_text(),
-                    "No .mcpr replays recorded yet",
-                );
-                let hint = ui.fit_text(
-                    Face::Regular,
-                    10.8,
-                    "Enable Auto SP/MP above or start recording from the Control Hub -> Replay tab in-game.",
-                    content_w - 28.0,
-                );
-                ui.text(
-                    Face::Regular,
-                    10.8,
-                    content_x + 14.0,
-                    list_top + 44.0,
-                    my3_muted(),
-                    &hint,
-                );
-                return;
-            }
-            for (i, item) in replays.iter().enumerate() {
-                let ry = list_top + i as f32 * (row_h + row_gap) - self.catalog.scroll;
-                if ry + row_h < list_top || ry > list_bottom {
-                    continue;
+        match self.catalog.replays_sub_tab {
+            ReplaysSubTab::Raw => {
+                let rs = horizon_client::replay::settings();
+                let chip_y = 98.0 + slide_y;
+                let chip_gap = 6.0;
+                let open_dir_w = 96.0;
+                let cw = ((content_w - open_dir_w - chip_gap * 3.0) / 3.0).min(148.0);
+                let chips = [
+                    (
+                        if rs.auto_record_sp {
+                            "Auto SP: ON"
+                        } else {
+                            "Auto SP: OFF"
+                        },
+                        rs.auto_record_sp,
+                        Action::ReplayToggleAutoSp,
+                    ),
+                    (
+                        if rs.auto_record_mp {
+                            "Auto MP: ON"
+                        } else {
+                            "Auto MP: OFF"
+                        },
+                        rs.auto_record_mp,
+                        Action::ReplayToggleAutoMp,
+                    ),
+                    (
+                        if rs.record_self {
+                            "Self Player: ON"
+                        } else {
+                            "Self Player: OFF"
+                        },
+                        rs.record_self,
+                        Action::ReplayToggleRecordSelf,
+                    ),
+                ];
+                for (i, (label, on, act)) in chips.into_iter().enumerate() {
+                    let r = [content_x + i as f32 * (cw + chip_gap), chip_y, cw, 28.0];
+                    ui.m3_filter_chip(r, label, on, None);
+                    self.targets.push((r, act));
                 }
-                ui.rounded(content_x, ry, content_w, row_h, 13.0, my3_card_bg());
-                ui.border(content_x, ry, content_w, row_h, 13.0, my3_card_border());
-                let badge = if item.meta.singleplayer {
-                    "Singleplayer"
-                } else {
-                    "Multiplayer"
-                };
-                let title = ui.fit_text(Face::SemiBold, 13.0, &item.display_name, content_w - 230.0);
-                ui.text(
-                    Face::SemiBold,
-                    13.0,
-                    content_x + 14.0,
-                    ry + 11.0,
-                    my3_text(),
-                    &title,
+                button(
+                    ui,
+                    &mut self.targets,
+                    [content_x + content_w - open_dir_w, chip_y, open_dir_w, 28.0],
+                    "Open Folder",
+                    Action::OpenRawReplaysFolder,
+                    false,
                 );
-                let size_mb = item.size_bytes as f64 / 1_048_576.0;
-                let dur = horizon_client::replay::format_duration_ms(item.meta.duration);
-                let meta = ui.fit_text(
+
+                let info_y = chip_y + 34.0;
+                let info_txt = ui.fit_text(
+                    Face::Regular,
+                    10.2,
+                    &format!(
+                        "{} raw .mcpr replay(s)  •  Stored in replays/raw/",
+                        self.catalog.replays.len()
+                    ),
+                    content_w,
+                );
+                ui.text(
+                    Face::Regular,
+                    10.2,
+                    content_x,
+                    info_y,
+                    my3_muted(),
+                    &info_txt,
+                );
+
+                let list_top = info_y + 20.0;
+                let list_bottom = (h - 46.0).max(list_top + 60.0);
+                let row_h = if compact { 82.0 } else { 72.0 };
+                let row_gap = 8.0;
+                let total_h = self.catalog.replays.len() as f32 * (row_h + row_gap);
+                let max_scroll = (total_h - (list_bottom - list_top)).max(0.0);
+                self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
+                self.list_view = Some([list_top, list_bottom, max_scroll]);
+
+                let replays = self.catalog.replays.clone();
+                let delete_confirm = self.catalog.replay_delete_confirm;
+                let list_targets = &mut self.list_targets;
+                ui.clipped([content_x - 2.0, list_top, content_w + 4.0, list_bottom - list_top], |ui| {
+                    if replays.is_empty() {
+                        ui.rounded(content_x, list_top + 6.0, content_w, 84.0, 14.0, my3_card_bg());
+                        ui.border(content_x, list_top + 6.0, content_w, 84.0, 14.0, my3_card_border());
+                        ui.text(
+                            Face::SemiBold,
+                            13.0,
+                            content_x + 14.0,
+                            list_top + 20.0,
+                            my3_text(),
+                            "No .mcpr raw replays recorded yet",
+                        );
+                        let hint = ui.fit_text(
+                            Face::Regular,
+                            10.8,
+                            "Enable Auto SP/MP above or start recording from Control Hub -> Replay in-game.",
+                            content_w - 28.0,
+                        );
+                        ui.text(
+                            Face::Regular,
+                            10.8,
+                            content_x + 14.0,
+                            list_top + 44.0,
+                            my3_muted(),
+                            &hint,
+                        );
+                        return;
+                    }
+                    for (i, item) in replays.iter().enumerate() {
+                        let ry = list_top + i as f32 * (row_h + row_gap) - self.catalog.scroll;
+                        if ry + row_h < list_top || ry > list_bottom {
+                            continue;
+                        }
+                        ui.rounded(content_x, ry, content_w, row_h, 13.0, my3_card_bg());
+                        ui.border(content_x, ry, content_w, row_h, 13.0, my3_card_border());
+                        let badge = if item.meta.singleplayer {
+                            "Singleplayer"
+                        } else {
+                            "Multiplayer"
+                        };
+                        let title = ui.fit_text(Face::SemiBold, 13.0, &item.display_name, content_w - 230.0);
+                        ui.text(
+                            Face::SemiBold,
+                            13.0,
+                            content_x + 14.0,
+                            ry + 11.0,
+                            my3_text(),
+                            &title,
+                        );
+                        let size_mb = item.size_bytes as f64 / 1_048_576.0;
+                        let dur = horizon_client::replay::format_duration_ms(item.meta.duration);
+                        let meta = ui.fit_text(
+                            Face::Regular,
+                            10.4,
+                            &format!(
+                                "{badge}  •  {dur}  •  {size_mb:.2} MB  •  {} KF  •  {} Mrk",
+                                item.keyframes_count, item.markers_count
+                            ),
+                            content_w - 210.0,
+                        );
+                        ui.text(
+                            Face::Regular,
+                            10.4,
+                            content_x + 14.0,
+                            ry + 33.0,
+                            my3_muted(),
+                            &meta,
+                        );
+                        let recorded_str = chrono::DateTime::from_timestamp_millis(item.meta.date as i64)
+                            .map(|dt| {
+                                dt.with_timezone(&chrono::Local)
+                                    .format("%Y-%m-%d %H:%M")
+                                    .to_string()
+                            })
+                            .unwrap_or_else(|| format!("MC {}", item.meta.mcversion));
+                        let date_line = ui.fit_text(
+                            Face::Regular,
+                            9.6,
+                            &recorded_str,
+                            content_w - 210.0,
+                        );
+                        ui.text(
+                            Face::Regular,
+                            9.6,
+                            content_x + 14.0,
+                            ry + 50.0,
+                            my3_muted(),
+                            &date_line,
+                        );
+
+                        let open_w = 104.0;
+                        let del_w = 72.0;
+                        let open_r = [
+                            content_x + content_w - open_w - del_w - 18.0,
+                            ry + (row_h - 32.0) * 0.5,
+                            open_w,
+                            32.0,
+                        ];
+                        let del_r = [
+                            content_x + content_w - del_w - 12.0,
+                            ry + (row_h - 32.0) * 0.5,
+                            del_w,
+                            32.0,
+                        ];
+                        ui.rounded(open_r[0], open_r[1], open_r[2], open_r[3], 9.0, my3_accent());
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            11.0,
+                            open_r,
+                            horizon_client::ui_theme::active_theme().on_accent,
+                            "Open Viewer",
+                        );
+                        if let Some(c) = ui.clip_rect(open_r) {
+                            self.targets.push((c, Action::PlayReplay(i)));
+                            list_targets.push((c, Action::PlayReplay(i)));
+                        }
+                        let confirming = delete_confirm == Some(i);
+                        ui.rounded(
+                            del_r[0],
+                            del_r[1],
+                            del_r[2],
+                            del_r[3],
+                            9.0,
+                            if confirming {
+                                horizon_client::hud::rgba(220, 38, 38, 220)
+                            } else {
+                                my3_surface()
+                            },
+                        );
+                        ui.border(del_r[0], del_r[1], del_r[2], del_r[3], 9.0, my3_card_border());
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            10.6,
+                            del_r,
+                            my3_text(),
+                            if confirming { "Confirm" } else { "Delete" },
+                        );
+                        if let Some(c) = ui.clip_rect(del_r) {
+                            self.targets.push((c, Action::DeleteReplay(i)));
+                            list_targets.push((c, Action::DeleteReplay(i)));
+                        }
+                    }
+                });
+            }
+            ReplaysSubTab::Rendered => {
+                let bar_y = 98.0 + slide_y;
+                let info_txt = ui.fit_text(
                     Face::Regular,
                     10.4,
                     &format!(
-                        "{badge}  •  {dur}  •  {size_mb:.2} MB  •  {} KF  •  {} Mrk",
-                        item.keyframes_count, item.markers_count
+                        "{} rendered MP4(s)  •  replays/rendered/ & Movies/VoltPlus Replays",
+                        self.catalog.rendered_replays.len()
                     ),
-                    content_w - 210.0,
+                    content_w - 116.0,
                 );
-                ui.text(
-                    Face::Regular,
-                    10.4,
-                    content_x + 14.0,
-                    ry + 33.0,
-                    my3_muted(),
-                    &meta,
-                );
-                let recorded_str = chrono::DateTime::from_timestamp_millis(item.meta.date as i64)
-                    .map(|dt| {
-                        dt.with_timezone(&chrono::Local)
-                            .format("%Y-%m-%d %H:%M")
-                            .to_string()
-                    })
-                    .unwrap_or_else(|| format!("MC {}", item.meta.mcversion));
-                let date_line = ui.fit_text(
-                    Face::Regular,
-                    9.6,
-                    &recorded_str,
-                    content_w - 210.0,
-                );
-                ui.text(
-                    Face::Regular,
-                    9.6,
-                    content_x + 14.0,
-                    ry + 50.0,
-                    my3_muted(),
-                    &date_line,
+                ui.text(Face::Regular, 10.4, content_x, bar_y + 7.0, my3_muted(), &info_txt);
+                button(
+                    ui,
+                    &mut self.targets,
+                    [content_x + content_w - 106.0, bar_y, 106.0, 28.0],
+                    "Open Folder",
+                    Action::OpenRenderedReplaysFolder,
+                    false,
                 );
 
-                let open_w = 104.0;
-                let del_w = 72.0;
-                let open_r = [
-                    content_x + content_w - open_w - del_w - 18.0,
-                    ry + (row_h - 32.0) * 0.5,
-                    open_w,
-                    32.0,
-                ];
-                let del_r = [
-                    content_x + content_w - del_w - 12.0,
-                    ry + (row_h - 32.0) * 0.5,
-                    del_w,
-                    32.0,
-                ];
-                ui.rounded(open_r[0], open_r[1], open_r[2], open_r[3], 9.0, my3_accent());
-                ui.centered_fit(
-                    Face::SemiBold,
-                    11.0,
-                    open_r,
-                    horizon_client::ui_theme::active_theme().on_accent,
-                    "Open Viewer",
-                );
-                if let Some(c) = ui.clip_rect(open_r) {
-                    self.targets.push((c, Action::PlayReplay(i)));
-                    list_targets.push((c, Action::PlayReplay(i)));
-                }
-                let confirming = delete_confirm == Some(i);
-                ui.rounded(
-                    del_r[0],
-                    del_r[1],
-                    del_r[2],
-                    del_r[3],
-                    9.0,
-                    if confirming {
-                        horizon_client::hud::rgba(220, 38, 38, 220)
-                    } else {
-                        my3_surface()
-                    },
-                );
-                ui.border(del_r[0], del_r[1], del_r[2], del_r[3], 9.0, my3_card_border());
-                ui.centered_fit(
-                    Face::SemiBold,
-                    10.6,
-                    del_r,
-                    my3_text(),
-                    if confirming { "Confirm" } else { "Delete" },
-                );
-                if let Some(c) = ui.clip_rect(del_r) {
-                    self.targets.push((c, Action::DeleteReplay(i)));
-                    list_targets.push((c, Action::DeleteReplay(i)));
-                }
+                let list_top = bar_y + 38.0;
+                let list_bottom = (h - 46.0).max(list_top + 60.0);
+                let row_h = 68.0;
+                let row_gap = 8.0;
+                let total_h = self.catalog.rendered_replays.len() as f32 * (row_h + row_gap);
+                let max_scroll = (total_h - (list_bottom - list_top)).max(0.0);
+                self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
+                self.list_view = Some([list_top, list_bottom, max_scroll]);
+
+                let rendered = self.catalog.rendered_replays.clone();
+                let del_confirm = self.catalog.rendered_replay_delete_confirm;
+                let list_targets = &mut self.list_targets;
+                ui.clipped([content_x - 2.0, list_top, content_w + 4.0, list_bottom - list_top], |ui| {
+                    if rendered.is_empty() {
+                        ui.rounded(content_x, list_top + 6.0, content_w, 84.0, 14.0, my3_card_bg());
+                        ui.border(content_x, list_top + 6.0, content_w, 84.0, 14.0, my3_card_border());
+                        ui.text(
+                            Face::SemiBold,
+                            13.0,
+                            content_x + 14.0,
+                            list_top + 20.0,
+                            my3_text(),
+                            "No rendered MP4 replays yet",
+                        );
+                        let hint = ui.fit_text(
+                            Face::Regular,
+                            10.6,
+                            "Open a Raw Replay, add 2+ Pos Keyframes, and tap Export to render an MP4.",
+                            content_w - 28.0,
+                        );
+                        ui.text(Face::Regular, 10.6, content_x + 14.0, list_top + 44.0, my3_muted(), &hint);
+                        return;
+                    }
+                    for (i, item) in rendered.iter().enumerate() {
+                        let ry = list_top + i as f32 * (row_h + row_gap) - self.catalog.scroll;
+                        if ry + row_h < list_top || ry > list_bottom {
+                            continue;
+                        }
+                        ui.rounded(content_x, ry, content_w, row_h, 13.0, my3_card_bg());
+                        ui.border(content_x, ry, content_w, row_h, 13.0, my3_card_border());
+                        let title = ui.fit_text(Face::SemiBold, 13.0, &item.display_name, content_w - 186.0);
+                        ui.text(Face::SemiBold, 13.0, content_x + 14.0, ry + 12.0, my3_text(), &title);
+                        let size_str = horizon_client::replay::format_size_bytes(item.size_bytes);
+                        let date_str = chrono::DateTime::from_timestamp(item.modified_secs as i64, 0)
+                            .map(|dt| {
+                                dt.with_timezone(&chrono::Local)
+                                    .format("%Y-%m-%d %H:%M")
+                                    .to_string()
+                            })
+                            .unwrap_or_else(|| "MP4 Video".to_owned());
+                        let meta = ui.fit_text(
+                            Face::Regular,
+                            10.4,
+                            &format!("MP4  •  {size_str}  •  {date_str}"),
+                            content_w - 186.0,
+                        );
+                        ui.text(Face::Regular, 10.4, content_x + 14.0, ry + 36.0, my3_muted(), &meta);
+
+                        let by = ry + (row_h - 32.0) * 0.5;
+                        let play_r = [content_x + content_w - 166.0, by, 80.0, 32.0];
+                        let del_r = [content_x + content_w - 80.0, by, 72.0, 32.0];
+                        ui.rounded(play_r[0], play_r[1], play_r[2], play_r[3], 9.0, my3_accent());
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            11.0,
+                            play_r,
+                            horizon_client::ui_theme::active_theme().on_accent,
+                            "Play MP4",
+                        );
+                        if let Some(c) = ui.clip_rect(play_r) {
+                            self.targets.push((c, Action::PlayRenderedReplay(i)));
+                            list_targets.push((c, Action::PlayRenderedReplay(i)));
+                        }
+                        let confirming = del_confirm == Some(i);
+                        ui.rounded(
+                            del_r[0],
+                            del_r[1],
+                            del_r[2],
+                            del_r[3],
+                            9.0,
+                            if confirming {
+                                horizon_client::hud::rgba(220, 38, 38, 220)
+                            } else {
+                                my3_surface()
+                            },
+                        );
+                        ui.border(del_r[0], del_r[1], del_r[2], del_r[3], 9.0, my3_card_border());
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            10.6,
+                            del_r,
+                            my3_text(),
+                            if confirming { "Confirm" } else { "Delete" },
+                        );
+                        if let Some(c) = ui.clip_rect(del_r) {
+                            self.targets.push((c, Action::DeleteRenderedReplay(i)));
+                            list_targets.push((c, Action::DeleteRenderedReplay(i)));
+                        }
+                    }
+                });
             }
-        });
+        }
     }
 
     fn draw_worlds_page(
@@ -2922,7 +3091,118 @@ impl Launcher {
         compact: bool,
         slide_y: f32,
     ) {
-        use crate::catalog::{WorldsSubTab, format_play_time, game_mode_label};
+        let header_y = 60.0 + slide_y;
+        ui.text(
+            Face::SemiBold,
+            19.0,
+            content_x,
+            header_y + 2.0,
+            my3_text(),
+            "CurseForge Worlds",
+        );
+        let badge_w = if compact { 120.0 } else { 142.0 };
+        let badge_r = [content_x + content_w - badge_w, header_y + 2.0, badge_w, 26.0];
+        ui.rounded(badge_r[0], badge_r[1], badge_r[2], badge_r[3], 8.0, my3_surface_high());
+        ui.border(badge_r[0], badge_r[1], badge_r[2], badge_r[3], 8.0, my3_card_border());
+        ui.centered_fit(Face::SemiBold, 10.0, badge_r, my3_accent(), "CurseForge API");
+
+        let row1_y = 98.0 + slide_y;
+        let search_w = (content_w - 104.0).max(120.0);
+        let search_r = ui.text_field(
+            content_x,
+            row1_y,
+            search_w,
+            32.0,
+            "",
+            &self.catalog.world_search_query,
+            "Search CurseForge worlds & maps...",
+            self.catalog.editing == Some("world_search_query"),
+        );
+        self.targets.push((search_r, Action::Field("world_search_query")));
+        button(
+            ui,
+            &mut self.targets,
+            [content_x + search_w + 8.0, row1_y, 96.0, 32.0],
+            if self.catalog.world_discover_busy { "Loading..." } else { "Search" },
+            Action::SearchDiscoverWorlds,
+            true,
+        );
+
+        let list_top = row1_y + 42.0;
+        let list_bottom = (h - 46.0).max(list_top + 60.0);
+        let row_h = 72.0;
+        let row_gap = 8.0;
+        let total_h = self.catalog.world_discover_results.len() as f32 * (row_h + row_gap);
+        let max_scroll = (total_h - (list_bottom - list_top)).max(0.0);
+        self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
+        self.list_view = Some([list_top, list_bottom, max_scroll]);
+
+        let hits = self.catalog.world_discover_results.clone();
+        let busy = self.catalog.world_discover_busy;
+        let list_targets = &mut self.list_targets;
+        ui.clipped([content_x - 2.0, list_top, content_w + 4.0, list_bottom - list_top], |ui| {
+            if hits.is_empty() {
+                ui.rounded(content_x, list_top + 6.0, content_w, 82.0, 14.0, my3_card_bg());
+                ui.border(content_x, list_top + 6.0, content_w, 82.0, 14.0, my3_card_border());
+                ui.text(Face::SemiBold, 13.0, content_x + 14.0, list_top + 20.0, my3_text(), "Browse CurseForge Worlds");
+                let hint = ui.fit_text(
+                    Face::Regular,
+                    10.5,
+                    if busy {
+                        "Loading CurseForge worlds..."
+                    } else {
+                        "Tap Search to browse & install Minecraft worlds from CurseForge into Inventory -> World."
+                    },
+                    content_w - 28.0,
+                );
+                ui.text(Face::Regular, 10.5, content_x + 14.0, list_top + 43.0, my3_muted(), &hint);
+                return;
+            }
+            for (i, proj) in hits.iter().enumerate() {
+                let ry = list_top + i as f32 * (row_h + row_gap) - self.catalog.scroll;
+                if ry + row_h < list_top || ry > list_bottom {
+                    continue;
+                }
+                ui.rounded(content_x, ry, content_w, row_h, 13.0, my3_card_bg());
+                ui.border(content_x, ry, content_w, row_h, 13.0, my3_card_border());
+                let title = ui.fit_text(Face::SemiBold, 13.0, &proj.title, content_w - 116.0);
+                ui.text(Face::SemiBold, 13.0, content_x + 14.0, ry + 11.0, my3_text(), &title);
+                let meta_txt = if proj.author.is_empty() {
+                    proj.summary.clone()
+                } else {
+                    format!("by {}  •  {} downloads  •  {}", proj.author, proj.downloads, proj.summary)
+                };
+                let summary = ui.fit_text(Face::Regular, 10.4, &meta_txt, content_w - 116.0);
+                ui.text(Face::Regular, 10.4, content_x + 14.0, ry + 34.0, my3_muted(), &summary);
+
+                let by = ry + (row_h - 30.0) * 0.5;
+                let ins_r = [content_x + content_w - 92.0, by, 84.0, 30.0];
+                ui.rounded(ins_r[0], ins_r[1], ins_r[2], ins_r[3], 9.0, my3_accent());
+                ui.centered_fit(
+                    Face::SemiBold,
+                    10.6,
+                    ins_r,
+                    color::hex(0x0c0e14, 255),
+                    if busy { "Wait..." } else { "Install" },
+                );
+                if !busy && let Some(c) = ui.clip_rect(ins_r) {
+                    self.targets.push((c, Action::InstallDiscoverWorld(i)));
+                    list_targets.push((c, Action::InstallDiscoverWorld(i)));
+                }
+            }
+        });
+    }
+
+    fn draw_inventory_page(
+        &mut self,
+        ui: &mut Ui,
+        content_x: f32,
+        content_w: f32,
+        h: f32,
+        compact: bool,
+        slide_y: f32,
+    ) {
+        use crate::catalog::{InventorySubTab, format_play_time, game_mode_label};
 
         let header_y = 60.0 + slide_y;
         if let Some(info) = self.catalog.world_inspection.clone() {
@@ -3150,13 +3430,13 @@ impl Launcher {
             content_x,
             header_y + 2.0,
             my3_text(),
-            "Worlds & Servers",
+            "Inventory",
         );
-        let seg_w = if compact { 72.0 } else { 90.0 };
+        let seg_w = if compact { 76.0 } else { 92.0 };
         let tabs = [
-            (WorldsSubTab::Worlds, "Worlds"),
-            (WorldsSubTab::Servers, "Servers"),
-            (WorldsSubTab::Discover, "Discover"),
+            (InventorySubTab::World, "World"),
+            (InventorySubTab::Server, "Server"),
+            (InventorySubTab::Screenshot, "Screenshot"),
         ];
         let seg_start = content_x + content_w - seg_w * 3.0 - 6.0;
         for (i, (tab, lbl)) in tabs.into_iter().enumerate() {
@@ -3166,14 +3446,14 @@ impl Launcher {
                 i,
                 3,
                 lbl,
-                self.catalog.worlds_sub_tab == tab,
+                self.catalog.inventory_sub_tab == tab,
                 None,
             );
-            self.targets.push((r, Action::SetWorldsSubTab(tab)));
+            self.targets.push((r, Action::SetInventorySubTab(tab)));
         }
 
-        match self.catalog.worlds_sub_tab {
-            WorldsSubTab::Worlds => {
+        match self.catalog.inventory_sub_tab {
+            InventorySubTab::World => {
                 let bar_y = 98.0 + slide_y;
                 let btn_w = ((content_w - 16.0) / 3.0).min(138.0);
                 button(ui, &mut self.targets, [content_x, bar_y, btn_w, 30.0], "Refresh", Action::RefreshWorlds, false);
@@ -3200,7 +3480,7 @@ impl Launcher {
                         let hint = ui.fit_text(
                             Face::Regular,
                             10.6,
-                            "Create a world in-game, import a .zip/.mcworld archive above, or switch to Discover.",
+                            "Create a world in-game, import a .zip/.mcworld archive above, or download one from Worlds.",
                             content_w - 28.0,
                         );
                         ui.text(Face::Regular, 10.6, content_x + 14.0, list_top + 44.0, my3_muted(), &hint);
@@ -3282,7 +3562,7 @@ impl Launcher {
                     }
                 });
             }
-            WorldsSubTab::Servers => {
+            InventorySubTab::Server => {
                 let row1_y = 98.0 + slide_y;
                 let add_btn_w = 78.0;
                 let fields_w = (content_w - add_btn_w - 14.0).max(160.0);
@@ -3388,74 +3668,104 @@ impl Launcher {
                     }
                 });
             }
-            WorldsSubTab::Discover => {
-                let row1_y = 98.0 + slide_y;
-                let search_w = (content_w - 104.0).max(120.0);
-                let search_r = ui.text_field(
-                    content_x,
-                    row1_y,
-                    search_w,
-                    32.0,
-                    "",
-                    &self.catalog.world_search_query,
-                    "Search Modrinth worlds & data packs...",
-                    self.catalog.editing == Some("world_search_query"),
-                );
-                self.targets.push((search_r, Action::Field("world_search_query")));
+            InventorySubTab::Screenshot => {
+                let bar_y = 98.0 + slide_y;
+                let btn_w = ((content_w - 8.0) / 2.0).min(156.0);
                 button(
                     ui,
                     &mut self.targets,
-                    [content_x + search_w + 8.0, row1_y, 96.0, 32.0],
-                    if self.catalog.world_discover_busy { "Loading..." } else { "Search" },
-                    Action::SearchDiscoverWorlds,
-                    true,
+                    [content_x, bar_y, btn_w, 30.0],
+                    "Refresh",
+                    Action::RefreshScreenshots,
+                    false,
+                );
+                button(
+                    ui,
+                    &mut self.targets,
+                    [content_x + btn_w + 8.0, bar_y, btn_w, 30.0],
+                    "Open Folder",
+                    Action::OpenScreenshotsFolder,
+                    false,
                 );
 
-                let list_top = row1_y + 42.0;
+                let list_top = bar_y + 40.0;
                 let list_bottom = (h - 46.0).max(list_top + 60.0);
-                let row_h = 70.0;
+                let row_h = 68.0;
                 let row_gap = 8.0;
-                let total_h = self.catalog.world_discover_results.len() as f32 * (row_h + row_gap);
+                let total_h = self.catalog.screenshots.len() as f32 * (row_h + row_gap);
                 let max_scroll = (total_h - (list_bottom - list_top)).max(0.0);
                 self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
                 self.list_view = Some([list_top, list_bottom, max_scroll]);
 
-                let hits = self.catalog.world_discover_results.clone();
-                let busy = self.catalog.world_discover_busy;
+                let shots = self.catalog.screenshots.clone();
+                let del_confirm = self.catalog.screenshot_delete_confirm;
                 let list_targets = &mut self.list_targets;
                 ui.clipped([content_x - 2.0, list_top, content_w + 4.0, list_bottom - list_top], |ui| {
-                    if hits.is_empty() {
-                        ui.rounded(content_x, list_top + 6.0, content_w, 78.0, 14.0, my3_card_bg());
-                        ui.border(content_x, list_top + 6.0, content_w, 78.0, 14.0, my3_card_border());
-                        ui.text(Face::SemiBold, 13.0, content_x + 14.0, list_top + 20.0, my3_text(), "Discover Community Maps & Data Packs");
-                        ui.text(Face::Regular, 10.5, content_x + 14.0, list_top + 43.0, my3_muted(), "Tap Search to browse Modrinth, or import a .zip/.mcworld in the Worlds tab.");
+                    if shots.is_empty() {
+                        ui.rounded(content_x, list_top + 6.0, content_w, 80.0, 14.0, my3_card_bg());
+                        ui.border(content_x, list_top + 6.0, content_w, 80.0, 14.0, my3_card_border());
+                        ui.text(Face::SemiBold, 13.0, content_x + 14.0, list_top + 20.0, my3_text(), "No screenshots captured yet");
+                        ui.text(Face::Regular, 10.5, content_x + 14.0, list_top + 43.0, my3_muted(), "In-game screenshots from screenshots/ will appear here.");
                         return;
                     }
-                    for (i, proj) in hits.iter().enumerate() {
+                    for (i, shot) in shots.iter().enumerate() {
                         let ry = list_top + i as f32 * (row_h + row_gap) - self.catalog.scroll;
                         if ry + row_h < list_top || ry > list_bottom {
                             continue;
                         }
                         ui.rounded(content_x, ry, content_w, row_h, 13.0, my3_card_bg());
                         ui.border(content_x, ry, content_w, row_h, 13.0, my3_card_border());
-                        let title = ui.fit_text(Face::SemiBold, 13.0, &proj.title, content_w - 116.0);
+                        let title = ui.fit_text(Face::SemiBold, 13.0, &shot.file_name, content_w - 178.0);
                         ui.text(Face::SemiBold, 13.0, content_x + 14.0, ry + 11.0, my3_text(), &title);
-                        let summary = ui.fit_text(Face::Regular, 10.4, &proj.summary, content_w - 116.0);
-                        ui.text(Face::Regular, 10.4, content_x + 14.0, ry + 34.0, my3_muted(), &summary);
+                        let size_str = horizon_client::replay::format_size_bytes(shot.size_bytes);
+                        let date_str = chrono::DateTime::from_timestamp(shot.modified_secs as i64, 0)
+                            .map(|dt| {
+                                dt.with_timezone(&chrono::Local)
+                                    .format("%Y-%m-%d %H:%M")
+                                    .to_string()
+                            })
+                            .unwrap_or_else(|| "Screenshot".to_owned());
+                        let meta = ui.fit_text(
+                            Face::Regular,
+                            10.4,
+                            &format!("{size_str}  •  {date_str}"),
+                            content_w - 178.0,
+                        );
+                        ui.text(Face::Regular, 10.4, content_x + 14.0, ry + 34.0, my3_muted(), &meta);
 
                         let by = ry + (row_h - 30.0) * 0.5;
-                        let ins_r = [content_x + content_w - 92.0, by, 84.0, 30.0];
-                        ui.rounded(ins_r[0], ins_r[1], ins_r[2], ins_r[3], 9.0, my3_accent());
+                        let exp_r = [content_x + content_w - 156.0, by, 76.0, 30.0];
+                        let del_r = [content_x + content_w - 74.0, by, 66.0, 30.0];
+                        ui.rounded(exp_r[0], exp_r[1], exp_r[2], exp_r[3], 9.0, my3_accent());
+                        ui.centered_fit(Face::SemiBold, 10.6, exp_r, color::hex(0x0c0e14, 255), "Export");
+                        if let Some(c) = ui.clip_rect(exp_r) {
+                            self.targets.push((c, Action::ExportScreenshot(i)));
+                            list_targets.push((c, Action::ExportScreenshot(i)));
+                        }
+                        let confirming = del_confirm == Some(i);
+                        ui.rounded(
+                            del_r[0],
+                            del_r[1],
+                            del_r[2],
+                            del_r[3],
+                            9.0,
+                            if confirming {
+                                horizon_client::hud::rgba(220, 38, 38, 220)
+                            } else {
+                                my3_surface()
+                            },
+                        );
+                        ui.border(del_r[0], del_r[1], del_r[2], del_r[3], 9.0, my3_card_border());
                         ui.centered_fit(
                             Face::SemiBold,
-                            10.6,
-                            ins_r,
-                            color::hex(0x0c0e14, 255),
-                            if busy { "Wait..." } else { "Install" },
+                            10.2,
+                            del_r,
+                            my3_text(),
+                            if confirming { "Confirm" } else { "Delete" },
                         );
-                        if !busy && let Some(c) = ui.clip_rect(ins_r) {
-                            self.targets.push((c, Action::InstallDiscoverWorld(i)));
-                            list_targets.push((c, Action::InstallDiscoverWorld(i)));
+                        if let Some(c) = ui.clip_rect(del_r) {
+                            self.targets.push((c, Action::DeleteScreenshot(i)));
+                            list_targets.push((c, Action::DeleteScreenshot(i)));
                         }
                     }
                 });
@@ -8590,28 +8900,61 @@ impl Launcher {
                 self.error = None;
                 self.catalog.offset = 0;
                 if page == Page::Worlds {
-                    self.catalog.refresh_worlds(&self.home);
-                    if self.catalog.worlds_sub_tab == crate::catalog::WorldsSubTab::Discover
-                        && self.catalog.world_discover_results.is_empty()
+                    if self.catalog.world_discover_results.is_empty()
                         && !self.catalog.world_discover_busy
                     {
                         self.catalog.search_discover_worlds();
                     }
+                } else if page == Page::Inventory {
+                    self.catalog.refresh_worlds(&self.home);
+                    self.catalog.refresh_screenshots(&self.home);
+                } else if page == Page::Replays {
+                    self.catalog.refresh_replays(&self.home);
                 }
                 self.catalog.browse(&self.home);
                 self.sync_discord_presence();
             }
-            Some(Action::SetWorldsSubTab(tab)) => {
-                self.catalog.worlds_sub_tab = tab;
+            Some(Action::SetInventorySubTab(tab)) => {
+                self.catalog.inventory_sub_tab = tab;
                 self.catalog.scroll = 0.0;
                 self.catalog.world_inspection = None;
                 self.catalog.world_delete_confirm = None;
                 self.catalog.server_delete_confirm = None;
-                if tab == crate::catalog::WorldsSubTab::Discover
-                    && self.catalog.world_discover_results.is_empty()
-                    && !self.catalog.world_discover_busy
-                {
-                    self.catalog.search_discover_worlds();
+                self.catalog.screenshot_delete_confirm = None;
+                if tab == crate::catalog::InventorySubTab::World {
+                    self.catalog.refresh_worlds(&self.home);
+                } else if tab == crate::catalog::InventorySubTab::Screenshot {
+                    self.catalog.refresh_screenshots(&self.home);
+                }
+            }
+            Some(Action::RefreshScreenshots) => {
+                self.catalog.refresh_screenshots(&self.home);
+                self.catalog.status = format!(
+                    "Found {} screenshot(s).",
+                    self.catalog.screenshots.len()
+                );
+            }
+            Some(Action::ExportScreenshot(idx)) => {
+                self.catalog.export_screenshot(idx);
+            }
+            Some(Action::DeleteScreenshot(idx)) => {
+                if self.catalog.screenshot_delete_confirm == Some(idx) {
+                    self.catalog.delete_screenshot(&self.home, idx);
+                } else {
+                    self.catalog.screenshot_delete_confirm = Some(idx);
+                    self.catalog.status = "Tap Delete again to remove this screenshot.".into();
+                }
+            }
+            Some(Action::OpenScreenshotsFolder) => {
+                let doc = crate::document_store::folder_id(
+                    self.catalog.config.profile,
+                    "screenshots",
+                );
+                if !crate::platform::open_documents(&doc) {
+                    self.catalog.page = Page::Installed;
+                    self.catalog.installed_sub_tab =
+                        crate::catalog::InstalledSubTab::FileManager;
+                    self.catalog.fm_navigate(&self.home, "screenshots".into());
                 }
             }
             Some(Action::RefreshWorlds) => {
@@ -8691,9 +9034,75 @@ impl Launcher {
                 }
             }
             Some(Action::Play) => self.action(events)?,
+            Some(Action::SetReplaysSubTab(tab)) => {
+                self.catalog.replays_sub_tab = tab;
+                self.catalog.scroll = 0.0;
+                self.catalog.replay_delete_confirm = None;
+                self.catalog.rendered_replay_delete_confirm = None;
+                self.catalog.refresh_replays(&self.home);
+            }
             Some(Action::RefreshReplays) => {
                 self.catalog.refresh_replays(&self.home);
-                self.catalog.status = format!("Found {} replay(s).", self.catalog.replays.len());
+                self.catalog.status = format!(
+                    "Found {} raw replay(s) and {} rendered MP4(s).",
+                    self.catalog.replays.len(),
+                    self.catalog.rendered_replays.len()
+                );
+            }
+            Some(Action::OpenRawReplaysFolder) => {
+                let doc = crate::document_store::folder_id(
+                    self.catalog.config.profile,
+                    "raw_replays",
+                );
+                if !crate::platform::open_documents(&doc) {
+                    self.catalog.page = Page::Installed;
+                    self.catalog.installed_sub_tab =
+                        crate::catalog::InstalledSubTab::FileManager;
+                    self.catalog.fm_navigate(&self.home, "replays/raw".into());
+                }
+            }
+            Some(Action::OpenRenderedReplaysFolder) => {
+                let doc = crate::document_store::folder_id(
+                    self.catalog.config.profile,
+                    "rendered_replays",
+                );
+                if !crate::platform::open_documents(&doc) {
+                    self.catalog.page = Page::Installed;
+                    self.catalog.installed_sub_tab =
+                        crate::catalog::InstalledSubTab::FileManager;
+                    self.catalog
+                        .fm_navigate(&self.home, "replays/rendered".into());
+                }
+            }
+            Some(Action::PlayRenderedReplay(idx)) => {
+                if let Some(item) = self.catalog.rendered_replays.get(idx) {
+                    let profile = self.catalog.config.profile;
+                    let note = crate::screen_record::play_rendered_replay(profile, &item.file_name);
+                    if !note.is_empty() {
+                        self.catalog.status = note;
+                    }
+                }
+            }
+            Some(Action::DeleteRenderedReplay(idx)) => {
+                if self.catalog.rendered_replay_delete_confirm == Some(idx) {
+                    if let Some(item) = self.catalog.rendered_replays.get(idx) {
+                        let name = item.display_name.clone();
+                        match horizon_client::replay::delete_rendered_replay(&item.path) {
+                            Ok(()) => {
+                                self.catalog.refresh_replays(&self.home);
+                                self.catalog.status = format!("Deleted rendered replay: {name}");
+                            }
+                            Err(err) => {
+                                self.error = Some(format!("Delete failed: {err}"));
+                            }
+                        }
+                    }
+                    self.catalog.rendered_replay_delete_confirm = None;
+                } else {
+                    self.catalog.rendered_replay_delete_confirm = Some(idx);
+                    self.catalog.status =
+                        "Tap Delete again to confirm removing this rendered MP4.".into();
+                }
             }
             Some(Action::PlayReplay(idx)) => {
                 if let Some(item) = self.catalog.replays.get(idx) {

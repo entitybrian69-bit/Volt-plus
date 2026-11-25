@@ -98,6 +98,8 @@ fn resolve(home: &Path, id: &str) -> io::Result<Document> {
             Some("shaders") => ("shaderpacks", "Shader Packs"),
             Some("controls") => ("controls", "Controls"),
             Some("screenshots") => ("screenshots", "Screenshots"),
+            Some("raw_replays") => ("replays/raw", "Raw Replays"),
+            Some("rendered_replays") => ("replays/rendered", "Rendered Replays"),
             Some("worlds") => ("saves", "Worlds"),
             Some("configuration") => ("", "Configuration"),
             _ => return Err(invalid()),
@@ -207,6 +209,8 @@ pub fn children(home: &Path, id: &str) -> io::Result<Vec<Value>> {
             "shaders",
             "controls",
             "screenshots",
+            "raw_replays",
+            "rendered_replays",
             "recordings",
             "worlds",
             "configuration",
@@ -615,6 +619,8 @@ pub const FM_ROOT_DIRS: &[(&str, &str)] = &[
     ("resourcepacks", "Packs"),
     ("shaderpacks", "Shaders"),
     ("controls", "Controls"),
+    ("replays/raw", "Raw"),
+    ("replays/rendered", "Rendered"),
     ("recordings", "Recordings"),
     ("screenshots", "Shots"),
     ("performance", "Reports"),
@@ -659,6 +665,9 @@ pub fn is_protected_root_folder(rel_path: &str) -> bool {
                 | "resourcepacks"
                 | "shaderpacks"
                 | "controls"
+                | "replays"
+                | "replays/raw"
+                | "replays/rendered"
                 | "recordings"
                 | "screenshots"
                 | "performance"
@@ -881,6 +890,7 @@ pub fn classify_entry_kind(path: &Path, is_dir: bool) -> String {
         Some("hshader") => "Horizon Shader (.hshader)".into(),
         Some("zip") => "Archive / Pack (.zip)".into(),
         Some("png") => "PNG Image (.png)".into(),
+        Some("mcpr") => "Raw Replay (.mcpr)".into(),
         Some("mp4") => "MP4 Video (.mp4)".into(),
         Some("json") => "JSON Config (.json)".into(),
         Some("jsonl") => "Telemetry Log (.jsonl)".into(),

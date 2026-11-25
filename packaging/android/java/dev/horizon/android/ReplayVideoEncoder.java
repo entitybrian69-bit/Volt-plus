@@ -48,6 +48,17 @@ public final class ReplayVideoEncoder {
             int wantedFps,
             int bitrateMbps,
             String baseName) {
+        return start(context, wantedWidth, wantedHeight, wantedFps, bitrateMbps, baseName, "");
+    }
+
+    public static synchronized String start(
+            Context context,
+            int wantedWidth,
+            int wantedHeight,
+            int wantedFps,
+            int bitrateMbps,
+            String baseName,
+            String renderedDir) {
         if (running) {
             return "error;Replay video export already in progress";
         }
@@ -71,7 +82,7 @@ public final class ReplayVideoEncoder {
         outputLabel = sanitizeName(baseName) + ".mp4";
 
         try {
-            openOutput(appContext, outputLabel);
+            openOutput(appContext, outputLabel, renderedDir);
             if (pfd == null) {
                 return "error;Could not open output MP4 destination";
             }
@@ -337,7 +348,42 @@ public final class ReplayVideoEncoder {
         return new int[] {w, h, fps};
     }
 
-    private static void openOutput(Context context, String fileName) throws Exception {
+    private static File uniqueLocalFile(File dir, String fileName) {
+        String stem = fileName.endsWith(".mp4")
+                ? fileName.substring(0, fileName.length() - 4)
+                : fileName;
+        File candidate = new File(dir, stem + ".mp4");
+        if (!candidate.exists()) {
+            return candidate;
+        }
+        for (int i = 2; i < 10_000; i++) {
+            File next = new File(dir, stem + "_" + i + ".mp4");
+            if (!next.exists()) {
+                return next;
+            }
+        }
+        return new File(dir, stem + "_" + System.currentTimeMillis() + ".mp4");
+    }
+
+    private static void openOutput(Context context, String fileName, String renderedDir)
+            throws Exception {
+        if (renderedDir != null && !renderedDir.isEmpty()) {
+            File dir = new File(renderedDir);
+            if (!dir.exists()) {
+                dir.mkdirs();
+            }
+            if (dir.isDirectory()) {
+                fallbackFile = uniqueLocalFile(dir, fileName);
+                outputLabel = fallbackFile.getName();
+                pfd =
+                        ParcelFileDescriptor.open(
+                                fallbackFile,
+                                ParcelFileDescriptor.MODE_CREATE
+                                        | ParcelFileDescriptor.MODE_READ_WRITE
+                                        | ParcelFileDescriptor.MODE_TRUNCATE);
+                return;
+            }
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ContentValues values = new ContentValues();
             values.put(MediaStore.Video.Media.DISPLAY_NAME, fileName);
@@ -363,7 +409,8 @@ public final class ReplayVideoEncoder {
         if (!dir.exists()) {
             dir.mkdirs();
         }
-        fallbackFile = new File(dir, fileName);
+        fallbackFile = uniqueLocalFile(dir, fileName);
+        outputLabel = fallbackFile.getName();
         pfd =
                 ParcelFileDescriptor.open(
                         fallbackFile,
@@ -380,6 +427,37 @@ public final class ReplayVideoEncoder {
         } catch (Throwable ignored) {
         }
         pfd = null;
+        if (fallbackFile != null && fallbackFile.exists() && appContext != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Video.Media.DISPLAY_NAME, fallbackFile.getName());
+                values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
+                values.put(
+                        MediaStore.Video.Media.RELATIVE_PATH,
+                        Environment.DIRECTORY_MOVIES + "/VoltPlus Replays");
+                values.put(MediaStore.Video.Media.IS_PENDING, 1);
+                Uri exported =
+                        appContext.getContentResolver()
+                                .insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+                if (exported != null) {
+                    try (java.io.InputStream in = new java.io.FileInputStream(fallbackFile);
+                            java.io.OutputStream out = appContext.getContentResolver().openOutputStream(exported)) {
+                        if (out != null) {
+                            byte[] buf = new byte[65536];
+                            int n;
+                            while ((n = in.read(buf)) >= 0) {
+                                out.write(buf, 0, n);
+                            }
+                        }
+                    }
+                    ContentValues done = new ContentValues();
+                    done.put(MediaStore.Video.Media.IS_PENDING, 0);
+                    appContext.getContentResolver().update(exported, done, null, null);
+                }
+            } catch (Throwable ignored) {
+            }
+            return "replays/rendered/" + fallbackFile.getName() + " & Movies/VoltPlus Replays";
+        }
         if (mediaUri != null && appContext != null) {
             try {
                 ContentValues values = new ContentValues();
@@ -390,6 +468,30 @@ public final class ReplayVideoEncoder {
             return "Movies/VoltPlus Replays/" + outputLabel;
         }
         return fallbackFile != null ? fallbackFile.getAbsolutePath() : outputLabel;
+    }
+
+    public static String playDocument(android.app.Activity activity, String docId) {
+        if (activity == null || docId == null || docId.isEmpty()) {
+            return "error;nothing to play";
+        }
+        try {
+            Uri uri =
+                    android.provider.DocumentsContract.buildDocumentUri(
+                            activity.getPackageName() + ".documents", docId);
+            final android.content.Intent view =
+                    new android.content.Intent(android.content.Intent.ACTION_VIEW);
+            view.setDataAndType(uri, "video/mp4");
+            view.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            activity.runOnUiThread(() -> {
+                try {
+                    activity.startActivity(view);
+                } catch (Throwable ignored) {
+                }
+            });
+            return "ok;Opening rendered replay...";
+        } catch (Throwable error) {
+            return "error;" + shortMsg(error);
+        }
     }
 
     private static void deletePartial() {

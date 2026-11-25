@@ -45,6 +45,9 @@ pub(super) fn key(runtime: Option<String>, built: Option<&str>) -> Option<String
         .filter(|k| !k.is_empty())
 }
 
+/// CurseForge's class id for Worlds / Maps.
+pub const WORLDS_CLASS: u64 = 17;
+
 impl CurseForge {
     /// The source, when a key exists; else None and CurseForge isn't offered.
     pub fn from_env() -> Option<Self> {
@@ -53,6 +56,33 @@ impl CurseForge {
             option_env!("HORIZON_CURSEFORGE_API_KEY"),
         )
         .map(|key| Self { key })
+    }
+
+    /// Creates a CurseForge API client using an explicit API key.
+    pub fn with_key(key: impl Into<String>) -> Self {
+        Self {
+            key: key.into().trim().to_owned(),
+        }
+    }
+
+    /// Searches CurseForge Minecraft Worlds (`classId = 17`).
+    pub fn search_worlds(&self, query: &str, limit: usize) -> Result<Vec<Project>, String> {
+        let mut url = format!(
+            "{API}/mods/search?gameId={MINECRAFT}&classId={WORLDS_CLASS}&sortField=2&sortOrder=desc&index=0&pageSize={}",
+            limit.clamp(1, 50),
+        );
+        let q = query.trim();
+        if !q.is_empty() {
+            url.push_str("&searchFilter=");
+            url.push_str(&encode(q));
+        }
+        let found = self.get(&url)?;
+        Ok(found["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(parse_world_mod)
+            .collect())
     }
 
     fn get(&self, url: &str) -> Result<Value, String> {
@@ -116,8 +146,7 @@ fn split_versions(list: &Value) -> (Vec<String>, Vec<String>) {
     (versions, loaders)
 }
 
-pub(super) fn parse_mod(m: &Value) -> Option<Project> {
-    let kind = kind_of(m["classId"].as_u64()?)?;
+pub(super) fn parse_mod_with_kind(m: &Value, kind: Kind) -> Option<Project> {
     let latest = Value::Array(
         m["latestFilesIndexes"]
             .as_array()
@@ -150,6 +179,18 @@ pub(super) fn parse_mod(m: &Value) -> Option<Project> {
         game_versions,
         loaders,
     })
+}
+
+pub(super) fn parse_mod(m: &Value) -> Option<Project> {
+    let kind = kind_of(m["classId"].as_u64()?)?;
+    parse_mod_with_kind(m, kind)
+}
+
+pub(super) fn parse_world_mod(m: &Value) -> Option<Project> {
+    if m["classId"].as_u64() != Some(WORLDS_CLASS) {
+        return None;
+    }
+    parse_mod_with_kind(m, Kind::DataPack)
 }
 
 pub(super) fn parse_file(f: &Value) -> Option<Version> {

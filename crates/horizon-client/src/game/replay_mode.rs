@@ -73,9 +73,7 @@ impl Game<'_> {
         replay::publish_hud_snapshot(ReplayHudSnapshot::default());
         self.leave_server(None)?;
         #[cfg(target_os = "android")]
-        if self.options.replay.is_some() {
-            horizon_client::android_runtime::return_to_launcher();
-        }
+        horizon_client::android_runtime::return_to_launcher();
         Ok(())
     }
 
@@ -89,7 +87,7 @@ impl Game<'_> {
         let dt = elapsed.as_secs_f32().clamp(0.0, 0.1);
         let next_ms = replay.advance(dt);
         if let Some(target_ms) = next_ms {
-            self.seek_replay_to(target_ms)?;
+            self.poll_replay_packets(target_ms)?;
         }
         Ok(())
     }
@@ -518,10 +516,15 @@ impl Game<'_> {
             .and_then(|s| r.builtin.get("minecraft:item")?.id(&s.item));
         let swing_main = std::mem::take(&mut self.replay_swing_main);
         let swing_off = std::mem::take(&mut self.replay_swing_off);
+        let self_props = self.own_textures_property();
+        let Some(r) = self.remote.as_ref() else {
+            return;
+        };
         replay::global_recorder().sync_local_player(
             r.entity_id,
             r.profile(),
             &r.profile_name,
+            self_props,
             [p.position.x, p.position.y, p.position.z],
             self.yaw,
             self.pitch,
@@ -838,6 +841,9 @@ impl Game<'_> {
                     Some((start_ms, end_ms, total_frames, stem))
                 });
                 if let Some((start_ms, end_ms, total_frames, stem)) = setup {
+                    let rendered_dir = replay::rendered_replays_dir(&Self::game_dir());
+                    let _ = std::fs::create_dir_all(&rendered_dir);
+                    replay::set_rendered_output_dir(Some(rendered_dir));
                     match replay::video_export_start(width, height, fps, bitrate_mbps, &stem) {
                         Ok(_) => {
                             if let Some(r) = self.replay.as_mut() {

@@ -5167,11 +5167,65 @@ impl Game<'_> {
             OwnProfile::Done(_) => {}
         }
     }
+    /// Encodes the local player's active skin/cape textures into a Mojang
+    /// `textures` `PlayerInfo` property so Replay Mod archives preserve the
+    /// recording player's appearance.
+    pub(super) fn own_textures_property(&self) -> Vec<horizon_protocol::packets::login::Property> {
+        let Some(r) = self.remote.as_ref() else {
+            return Vec::new();
+        };
+        let tex = r.skin_textures.get(&r.profile).cloned().or_else(|| {
+            match &r.own_profile {
+                OwnProfile::Done(Some(t)) => Some(t.clone()),
+                _ => None,
+            }
+        });
+        let Some(t) = tex else {
+            return Vec::new();
+        };
+        if t.skin.is_none() && t.cape.is_none() {
+            return Vec::new();
+        }
+        let mut textures_obj = serde_json::Map::new();
+        if let Some(url) = &t.skin {
+            let mut skin_obj = serde_json::Map::new();
+            skin_obj.insert("url".into(), serde_json::Value::String(url.clone()));
+            if t.slim {
+                skin_obj.insert(
+                    "metadata".into(),
+                    serde_json::json!({ "model": "slim" }),
+                );
+            }
+            textures_obj.insert("SKIN".into(), serde_json::Value::Object(skin_obj));
+        }
+        if let Some(url) = &t.cape {
+            textures_obj.insert("CAPE".into(), serde_json::json!({ "url": url }));
+        }
+        let payload = serde_json::json!({ "textures": textures_obj }).to_string();
+        let encoded = horizon_client::lan::base64(payload.as_bytes());
+        vec![horizon_protocol::packets::login::Property {
+            name: "textures".into(),
+            value: encoded,
+            signature: None,
+        }]
+    }
+
     /// `PlayerInfo.getSkin` for every player entity, including NPCs that are
     /// never in the tab list: resolve each profile's textures and give the
     /// level's player models their skin.
     pub(super) fn update_remote_skins(&mut self) {
-        let local = self.remote.as_ref().map(|r| r.profile);
+        let recorded_self = self.replay.as_ref().and_then(|rp| {
+            let self_id = rp.meta.self_id;
+            self.remote.as_ref().and_then(|r| {
+                r.level_players.get(&self_id).copied().or_else(|| {
+                    rp.meta
+                        .players
+                        .first()
+                        .and_then(|s| u128::from_str_radix(&s.replace('-', ""), 16).ok())
+                })
+            })
+        });
+        let local = recorded_self.or_else(|| self.remote.as_ref().map(|r| r.profile));
         self.poll_own_profile();
         let Some(r) = self.remote.as_mut() else {
             return;
