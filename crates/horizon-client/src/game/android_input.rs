@@ -245,8 +245,9 @@ impl Game<'_> {
             self.mod_screen_scroll(d);
             return;
         }
+        let scale = self.gui_scale();
         if let Some(title) = &mut self.title {
-            if let Some(b) = self.gui_scale() {
+            if let Some(b) = scale {
                 title.scroll_worlds(d, self.cursor, (b.width, b.height));
             }
             return;

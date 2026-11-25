@@ -73,7 +73,7 @@ impl Game<'_> {
         replay::publish_hud_snapshot(ReplayHudSnapshot::default());
         self.leave_server(None)?;
         #[cfg(target_os = "android")]
-        if self.options.replay_path.is_some() {
+        if self.options.replay.is_some() {
             horizon_client::android_runtime::return_to_launcher();
         }
         Ok(())

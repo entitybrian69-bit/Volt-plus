@@ -19,9 +19,9 @@ impl Game<'_> {
         if !self.settings.extras.discord_presence {
             return (Status::Off, PresenceDetails::default());
         }
-        let shaders_active =
-            self.settings.horizon.volt_shaders.enabled || !self.settings.shader_pack.is_empty();
-        let screen_recording = horizon_client::recorder::state().phase.active();
+        let shaders_active = self.settings.horizon.volt_shaders.enabled
+            || !self.settings.horizon.shader_packs.is_empty();
+        let screen_recording = horizon_client::recorder::status().phase.active();
         if let Some(replay) = &self.replay {
             let view = match replay.camera_mode {
                 horizon_client::replay::CameraMode::FreeCam => ReplayView::FreeCam,
@@ -32,7 +32,7 @@ impl Game<'_> {
             return (
                 Status::Replay {
                     view,
-                    paused: replay.paused,
+                    paused: !replay.playing,
                 },
                 PresenceDetails {
                     replay_name: Some(replay.meta.server_name.clone()),
@@ -72,7 +72,7 @@ impl Game<'_> {
             .as_ref()
             .filter(|p| !p.health.dead_or_dying())
             .map(|p| ((p.health.health() / 2.0).ceil().clamp(0.0, 20.0)) as u8);
-        let recording_replay = self.replay_recorder.is_some();
+        let recording_replay = horizon_client::replay::global_recorder().status().active;
         (
             Status::World {
                 play,

@@ -1094,7 +1094,7 @@ impl Catalog {
                     .ok_or_else(|| format!("No files in latest version of '{}'", project.title))?;
                 let staging_dir = game_home.join(".cache").join("world-discover");
                 let _ = std::fs::create_dir_all(&staging_dir);
-                let staged = browser::Modrinth.fetch(file, &staging_dir, &|_| {})?;
+                let staged = browser::modrinth::Modrinth.fetch(file, &staging_dir, &|_| {})?;
                 let saves_dir = game_home.join("saves");
                 let _ = std::fs::create_dir_all(&saves_dir);
                 let out = match crate::document_store::extract_world_zip_if_valid(
