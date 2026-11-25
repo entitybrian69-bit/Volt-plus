@@ -419,8 +419,6 @@ pub struct Graphics {
     /// not `shaderPack`, which versions before the clean-room rewrite saved and which stays
     /// ignored.
     pub shader_pack: String,
-    /// Built-in Volt+ Shader Suite configuration (`Volt + settings`).
-    pub volt_shaders: horizon_shader_api::volt_shaders::VoltShaderConfig,
 }
 impl Default for Graphics {
     fn default() -> Self {
@@ -457,7 +455,6 @@ impl Default for Graphics {
             shadow_cache: false,
             api: GraphicsApi::Auto,
             shader_pack: String::new(),
-            volt_shaders: horizon_shader_api::volt_shaders::VoltShaderConfig::default(),
         }
     }
 }
@@ -561,11 +558,6 @@ impl Graphics {
                 "shadowCache" => g.shadow_cache = flag(g.shadow_cache),
                 "graphicsApi" => g.api = GraphicsApi::from_name(value).unwrap_or_default(),
                 "pickedShaderPack" => g.shader_pack = value.to_owned(),
-                "voltShaders" => {
-                    if let Ok(cfg) = serde_json::from_str(value) {
-                        g.volt_shaders = cfg;
-                    }
-                }
                 "overlay" => {
                     g.overlay = match value {
                         "fps" => Overlay::Fps,
@@ -579,9 +571,8 @@ impl Graphics {
         g
     }
     pub fn serialize(&self) -> String {
-        let volt_shaders_json = serde_json::to_string(&self.volt_shaders).unwrap_or_default();
         format!(
-            "preset:{}\nlodDistance:{}\nfarDetail:{}\ncaveCulling:{}\nentityCulling:{}\nchunkUpdates:{}\nuploadBudgetKiB:{}\ntextureBudgetMiB:{}\nsky:{}\nfog:{}\nweather:{}\nanimatedTextures:{}\nditherCutoutMips:{}\npresentMode:{}\nframePacing:{}\nworkers:{}\noverlay:{}\nresolutionScale:{}\nfxaa:{}\ntaa:{}\nupscaling:{}\nscreenshotQuality:{}\nhdr:{}\nhdrPaperWhite:{}\nhdrPeak:{}\nhdrBlackLevel:{}\nhdrUiBrightness:{}\nhdrKey:{}\nbatteryMode:{}\nshadowCache:{}\ngraphicsApi:{}\npickedShaderPack:{}\nvoltShaders:{}\n",
+            "preset:{}\nlodDistance:{}\nfarDetail:{}\ncaveCulling:{}\nentityCulling:{}\nchunkUpdates:{}\nuploadBudgetKiB:{}\ntextureBudgetMiB:{}\nsky:{}\nfog:{}\nweather:{}\nanimatedTextures:{}\nditherCutoutMips:{}\npresentMode:{}\nframePacing:{}\nworkers:{}\noverlay:{}\nresolutionScale:{}\nfxaa:{}\ntaa:{}\nupscaling:{}\nscreenshotQuality:{}\nhdr:{}\nhdrPaperWhite:{}\nhdrPeak:{}\nhdrBlackLevel:{}\nhdrUiBrightness:{}\nhdrKey:{}\nbatteryMode:{}\nshadowCache:{}\ngraphicsApi:{}\npickedShaderPack:{}\n",
             self.preset.name(),
             self.lod_distance,
             self.far_detail.name(),
@@ -621,7 +612,6 @@ impl Graphics {
             bool_text(self.shadow_cache),
             self.api.name(),
             self.shader_pack,
-            volt_shaders_json,
         )
     }
     /// Binds Horizon's graphics key `name` (`HDR_KEY`); false for another name.
@@ -781,15 +771,6 @@ mod tests {
             shadow_cache: true,
             api: GraphicsApi::Dx12,
             shader_pack: "Golden Hour".into(),
-            volt_shaders: {
-                let mut vs = horizon_shader_api::volt_shaders::VoltShaderConfig::default();
-                vs.enabled = true;
-                vs.apply_style_and_quality(
-                    horizon_shader_api::volt_shaders::VoltQualityPreset::Medium,
-                    horizon_shader_api::volt_shaders::VoltStylePreset::SolasAurora,
-                );
-                vs
-            },
         };
         assert_eq!(Graphics::parse(&g.serialize()), g);
         assert_eq!(Graphics::parse(""), Graphics::default());

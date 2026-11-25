@@ -9,7 +9,6 @@ pub mod manifest;
 pub mod package;
 pub mod reference;
 pub mod stages;
-pub mod volt_shaders;
 
 pub use check::{Problem, Report, check};
 pub use inputs::Frame;

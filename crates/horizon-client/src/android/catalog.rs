@@ -1907,6 +1907,7 @@ impl Catalog {
                     self.world_discover_results = hits;
                     self.world_discover_busy = false;
                     self.world_discover_worker = None;
+                    self.fetch_icons(home);
                 }
                 Ok(Err(err)) => {
                     self.status = format!("World search failed: {err}");
@@ -2086,6 +2087,7 @@ impl Catalog {
             .iter()
             .chain(self.results[..start].iter())
             .chain(self.results[end..].iter())
+            .chain(self.world_discover_results.iter())
         {
             if self.icons.contains_key(&p.id) {
                 continue;
@@ -2181,7 +2183,7 @@ impl Catalog {
                     scope.spawn(move || {
                         loop {
                             let i = next_idx.fetch_add(1, Ordering::Relaxed);
-                            let Some((id, title, direct_url, kind, _)) = tasks.get(i) else {
+                            let Some((id, title, direct_url, kind, source)) = tasks.get(i) else {
                                 break;
                             };
                             let mut icon_url = direct_url
@@ -2189,7 +2191,7 @@ impl Catalog {
                                 .or_else(|| batch_urls.get(id).cloned());
                             let mut found_summary = None;
 
-                            // Try direct URL first (e.g.Modrinth CDN or Horizon Registry GitHub Pages)
+                            // Try direct URL first (e.g. Modrinth CDN, CurseForge CDN, or Horizon Registry)
                             if let Some(url) = &icon_url {
                                 if let Ok((w, h, rgba)) = browser::images::fetch_rgba_fast(
                                     home,
@@ -2203,8 +2205,11 @@ impl Catalog {
                                 }
                             }
 
-                            // Fallback to Modrinth search by title for PFP & rich summary
-                            if let Some(hit) = lookup_modrinth_by_name(title, *kind) {
+                            // Fallback to Modrinth search by title for PFP & rich summary (not CurseForge Worlds)
+                            if *source != browser::SourceId::CurseForge
+                                && *kind != Kind::World
+                                && let Some(hit) = lookup_modrinth_by_name(title, *kind)
+                            {
                                 icon_url = hit.icon;
                                 if !hit.summary.trim().is_empty() {
                                     found_summary = Some(hit.summary);

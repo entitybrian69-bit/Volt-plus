@@ -10,13 +10,14 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Hosts images may come from.
-const HOSTS: [&str; 7] = [
+const HOSTS: [&str; 8] = [
     "https://cdn.modrinth.com/",
     // Fabric's and Forge's own icons, for instances that play them (no published logo licence:
     // drawn from their sites, never shipped).
     "https://raw.githubusercontent.com/FabricMC/fabric-loader/",
     "https://files.minecraftforge.net/static/images/",
     "https://media.forgecdn.net/",
+    "https://mediafilez.forgecdn.net/",
     "https://edge.forgecdn.net/",
     // Horizon's registry's icons (its GitHub Pages), and the mirror kept at the address it had
     // before the repositories moved to the horizon-rust organization.

@@ -104,6 +104,7 @@ impl StartupMenu {
         };
         #[cfg(target_os = "android")]
         {
+            horizon_client::replay::init_settings(&Game::game_dir());
             menu.controls.settings = horizon_client::touch::Settings::load();
             horizon_client::ui_theme::motion::set_game_animations_disabled(
                 menu.controls.settings.disable_game_animations,
@@ -1995,7 +1996,7 @@ impl Loading {
                         self.settings.touch = self.menu.controls.settings.clone();
                     }
                     InGameMenuAction::SetOverlayOpacity(opacity) => {
-                        self.menu.controls.settings.overlay_opacity = opacity.clamp(0.05, 1.0);
+                        self.menu.controls.settings.overlay_opacity = opacity.clamp(0.20, 1.0);
                         let _ = self.menu.controls.settings.save();
                         self.settings.touch = self.menu.controls.settings.clone();
                     }
@@ -2009,14 +2010,20 @@ impl Loading {
                         self.settings.touch = self.menu.controls.settings.clone();
                     }
                     InGameMenuAction::ToggleOverlayHideInMenus => {
-                        self.menu.controls.settings.overlay_hide_in_menus =
-                            !self.menu.controls.settings.overlay_hide_in_menus;
+                        let next = !self.menu.controls.settings.overlay_hide_in_menus;
+                        self.menu.controls.settings.overlay_hide_in_menus = next;
+                        if next {
+                            self.menu.controls.settings.overlay_show_in_gameplay = true;
+                        }
                         let _ = self.menu.controls.settings.save();
                         self.settings.touch = self.menu.controls.settings.clone();
                     }
                     InGameMenuAction::ToggleOverlayShowInGameplay => {
-                        self.menu.controls.settings.overlay_show_in_gameplay =
-                            !self.menu.controls.settings.overlay_show_in_gameplay;
+                        let next = !self.menu.controls.settings.overlay_show_in_gameplay;
+                        self.menu.controls.settings.overlay_show_in_gameplay = next;
+                        if !next {
+                            self.menu.controls.settings.overlay_hide_in_menus = false;
+                        }
                         let _ = self.menu.controls.settings.save();
                         self.settings.touch = self.menu.controls.settings.clone();
                     }
@@ -2072,6 +2079,33 @@ impl Loading {
                             && token != "mouse.scroll.down"
                         {
                             self.startup_dispatch_custom_token(event_loop, &token, false);
+                        }
+                    }
+                    InGameMenuAction::Replay(act) => {
+                        use horizon_client::replay_hud::ReplayAction;
+                        let dir = Game::game_dir();
+                        match act {
+                            ReplayAction::LiveToggleAutoSp => {
+                                horizon_client::replay::update_settings(&dir, |s| {
+                                    s.auto_record_sp = !s.auto_record_sp;
+                                });
+                            }
+                            ReplayAction::LiveToggleAutoMp => {
+                                horizon_client::replay::update_settings(&dir, |s| {
+                                    s.auto_record_mp = !s.auto_record_mp;
+                                });
+                            }
+                            ReplayAction::LiveToggleRecordSelf => {
+                                horizon_client::replay::update_settings(&dir, |s| {
+                                    s.record_self = !s.record_self;
+                                });
+                            }
+                            ReplayAction::LiveToggleBadge => {
+                                horizon_client::replay::update_settings(&dir, |s| {
+                                    s.show_recording_badge = !s.show_recording_badge;
+                                });
+                            }
+                            _ => {}
                         }
                     }
                     _ => {}

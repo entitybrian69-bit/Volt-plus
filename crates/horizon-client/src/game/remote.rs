@@ -1181,8 +1181,11 @@ impl Game<'_> {
         if single_player && reason.is_none() {
             self.title = Some(title);
             self.capture(false);
+            #[cfg(target_os = "android")]
+            horizon_client::android_runtime::return_to_launcher();
             return Ok(());
         }
+        let explicit_disconnect = reason.is_none();
         title.mode = horizon_client::title::Mode::Multiplayer(match reason {
             Some(reason) => horizon_client::multiplayer::Screen::Disconnected {
                 reason,
@@ -1192,6 +1195,10 @@ impl Game<'_> {
         });
         self.title = Some(title);
         self.capture(false);
+        #[cfg(target_os = "android")]
+        if explicit_disconnect {
+            horizon_client::android_runtime::return_to_launcher();
+        }
         Ok(())
     }
     /// `Hud.onDisconnected`, from `Minecraft.disconnect` and `clearClientLevel`
@@ -1898,22 +1905,16 @@ impl Game<'_> {
     }
 
     pub(super) fn reset_remote_for_replay_rewind(&mut self) {
-        let mut streaming = Streaming::new(
-            Arc::new(NoTerrain),
-            self.pack.context.clone(),
-            if cfg!(target_os = "android") {
-                self.res.threads().min(4)
-            } else {
-                self.res.threads()
-            },
-        );
-        streaming.remote = true;
-        streaming.radius = self.settings.render_distance;
-        self.streaming = streaming;
+        self.streaming.reset_remote_state();
+        self.streaming.remote = true;
+        self.streaming.radius = self.settings.render_distance;
+        self.streaming.paused = false;
         let old = std::mem::take(&mut self.world.chunks);
         let count = old.len();
         horizon_client::chunk::free_columns(old, count);
         self.world = World::new(self.res.facts().air, 0);
+        self.clock = Default::default();
+        self.replay_last_step = None;
         self.mobs.clear();
         self.clear_remote_objects();
         self.clear_remote_projectiles();

@@ -3165,15 +3165,50 @@ impl Launcher {
                 }
                 ui.rounded(content_x, ry, content_w, row_h, 13.0, my3_card_bg());
                 ui.border(content_x, ry, content_w, row_h, 13.0, my3_card_border());
-                let title = ui.fit_text(Face::SemiBold, 13.0, &proj.title, content_w - 116.0);
-                ui.text(Face::SemiBold, 13.0, content_x + 14.0, ry + 11.0, my3_text(), &title);
+
+                let drawn_icon = if let Some((iw, ih, rgba)) = self.catalog.icons.get(&proj.id) {
+                    ui.image(
+                        &proj.id,
+                        *iw,
+                        *ih,
+                        rgba,
+                        content_x + 12.0,
+                        ry + 12.0,
+                        48.0,
+                        48.0,
+                    )
+                } else {
+                    false
+                };
+                if !drawn_icon {
+                    ui.rounded(
+                        content_x + 12.0,
+                        ry + 12.0,
+                        48.0,
+                        48.0,
+                        12.0,
+                        my3_accent_soft(),
+                    );
+                    ui.icon(
+                        Icon::World,
+                        content_x + 24.0,
+                        ry + 24.0,
+                        24.0,
+                        my3_accent(),
+                    );
+                }
+
+                let text_x = content_x + 70.0;
+                let text_max_w = (content_w - 172.0).max(80.0);
+                let title = ui.fit_text(Face::SemiBold, 13.0, &proj.title, text_max_w);
+                ui.text(Face::SemiBold, 13.0, text_x, ry + 11.0, my3_text(), &title);
                 let meta_txt = if proj.author.is_empty() {
                     proj.summary.clone()
                 } else {
                     format!("by {}  •  {} downloads  •  {}", proj.author, proj.downloads, proj.summary)
                 };
-                let summary = ui.fit_text(Face::Regular, 10.4, &meta_txt, content_w - 116.0);
-                ui.text(Face::Regular, 10.4, content_x + 14.0, ry + 34.0, my3_muted(), &summary);
+                let summary = ui.fit_text(Face::Regular, 10.4, &meta_txt, text_max_w);
+                ui.text(Face::Regular, 10.4, text_x, ry + 35.0, my3_muted(), &summary);
 
                 let by = ry + (row_h - 30.0) * 0.5;
                 let ins_r = [content_x + content_w - 92.0, by, 84.0, 30.0];
@@ -7235,7 +7270,9 @@ impl Launcher {
                         "Show V+ Overlay Button",
                         "Display the floating V+ Control Hub button (can also be customized in-game)",
                         SettingControl::Toggle(
-                            !touch_cfg.overlay_hidden,
+                            !touch_cfg.overlay_hidden
+                                && !(touch_cfg.overlay_hide_in_menus
+                                    && !touch_cfg.overlay_show_in_gameplay),
                             Action::ToggleOverlayButton,
                         ),
                     ),
@@ -8554,7 +8591,26 @@ impl Launcher {
             }
             Some(Action::ToggleOverlayButton) => {
                 self.modify_touch_settings(|t| {
-                    t.overlay_hidden = !t.overlay_hidden;
+                    let currently_visible = !t.overlay_hidden
+                        && !(t.overlay_hide_in_menus && !t.overlay_show_in_gameplay);
+                    if currently_visible {
+                        t.overlay_hidden = true;
+                    } else {
+                        t.overlay_hidden = false;
+                        t.overlay_hide_in_menus = false;
+                        if t.overlay_opacity < 0.25 || !t.overlay_opacity.is_finite() {
+                            t.overlay_opacity = 1.0;
+                        }
+                        if !t.floating_menu_pos[0].is_finite()
+                            || !t.floating_menu_pos[1].is_finite()
+                            || t.floating_menu_pos[0] < 0.0
+                            || t.floating_menu_pos[0] > 0.95
+                            || t.floating_menu_pos[1] < 0.0
+                            || t.floating_menu_pos[1] > 0.95
+                        {
+                            t.floating_menu_pos = [0.02, 0.03];
+                        }
+                    }
                 });
             }
             Some(Action::PointerSizeDelta(delta)) => {

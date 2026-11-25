@@ -973,6 +973,30 @@ impl Streaming {
         world.dirty_sections.take_column(x, z);
         world.chunks.remove(&(x, z))
     }
+    /// Clears queued/in-flight chunk lighting and meshing state when rewinding a replay
+    /// without tearing down or respawning the streaming worker thread pool.
+    pub fn reset_remote_state(&mut self) {
+        if let Ok(mut queue) = self.shared.queue.lock() {
+            queue.clear();
+        }
+        self.sequence = self.sequence.wrapping_add(1);
+        self.lighting.clear();
+        self.meshing.clear();
+        self.compile_started.clear();
+        self.lit.clear();
+        self.meshed.clear();
+        self.waiting.clear();
+        self.light_log.clear();
+        self.light_snapshots.clear();
+        self.deferred.clear();
+        self.generating.clear();
+        self.protos.clear();
+        self.light_views.clear();
+        self.decorated.clear();
+        self.decorating_finals.clear();
+        self.viewing.clear();
+        self.finishing.clear();
+    }
     /// Queue a job for the column `at`, nearest first: its distance (`distance`)
     /// times four plus `bias`, which orders a column's jobs. A job without a
     /// column (a save, meshes to free) goes ahead of every other.

@@ -88,76 +88,78 @@ struct ReplayHudLayout {
 
 fn replay_layout(w: f32, h: f32) -> ReplayHudLayout {
     let top_y = 8.0;
-    let btn_h = 24.0;
-    let show_hud_pill = [w - 86.0, 8.0, 78.0, 24.0];
+    let btn_h = 32.0;
+    let show_hud_pill = [w - 96.0, 8.0, 88.0, 32.0];
 
-    let exit_btn = [8.0, top_y, 40.0, btn_h];
-    let options_btn = [52.0, top_y, 50.0, btn_h];
-    let speed_down = [106.0, top_y, 20.0, btn_h];
-    let speed_up = [166.0, top_y, 20.0, btn_h];
-    let loop_btn = [190.0, top_y, 38.0, btn_h];
+    let exit_btn = [8.0, top_y, 48.0, btn_h];
+    let options_btn = [60.0, top_y, 60.0, btn_h];
+    let speed_down = [124.0, top_y, 28.0, btn_h];
+    let speed_up = [194.0, top_y, 28.0, btn_h];
+    let loop_btn = [226.0, top_y, 46.0, btn_h];
 
     let right_margin = 8.0;
-    let hide_hud_btn = [w - right_margin - 40.0, top_y, 40.0, btn_h];
-    let export_btn = [hide_hud_btn[0] - 54.0, top_y, 50.0, btn_h];
-    let save_btn = [export_btn[0] - 42.0, top_y, 38.0, btn_h];
+    let hide_hud_btn = [w - right_margin - 46.0, top_y, 46.0, btn_h];
+    let export_btn = [hide_hud_btn[0] - 62.0, top_y, 58.0, btn_h];
+    let save_btn = [export_btn[0] - 50.0, top_y, 46.0, btn_h];
     let single_row_left_limit = loop_btn[0] + loop_btn[2] + 6.0;
     // Secondary toggles (Ply, Mrk, Path, Tags, HideP, Night, Time, Wthr) fit on row 1 on wide
-    // displays, and wrap cleanly onto a compact row 2 on narrow phones so nothing ever hides.
-    let secondary_total = 48.0 + 48.0 + 38.0 + 38.0 + 42.0 + 42.0 + 46.0 + 46.0 + 7.0 * 3.0;
+    // displays, and wrap cleanly onto row 2 on narrow phones so touch targets stay large.
+    let secondary_total = 56.0 + 56.0 + 44.0 + 44.0 + 48.0 + 48.0 + 52.0 + 50.0 + 7.0 * 4.0;
     let two_rows = save_btn[0] - single_row_left_limit < secondary_total + 4.0;
-    let sec_y = if two_rows { top_y + btn_h + 4.0 } else { top_y };
+    let sec_y = if two_rows { top_y + btn_h + 6.0 } else { top_y };
     let sec_right = if two_rows { w - right_margin } else { save_btn[0] - 4.0 };
 
-    let weather_btn = [sec_right - 46.0, sec_y, 46.0, btn_h];
-    let time_btn = [weather_btn[0] - 50.0, sec_y, 46.0, btn_h];
-    let night_btn = [time_btn[0] - 46.0, sec_y, 42.0, btn_h];
-    let hide_players_btn = [night_btn[0] - 46.0, sec_y, 42.0, btn_h];
-    let nametag_btn = [hide_players_btn[0] - 42.0, sec_y, 38.0, btn_h];
-    let gizmo_btn = [nametag_btn[0] - 42.0, sec_y, 38.0, btn_h];
-    let markers_btn = [gizmo_btn[0] - 52.0, sec_y, 48.0, btn_h];
-    let players_btn = [markers_btn[0] - 52.0, sec_y, 48.0, btn_h];
+    let weather_btn = [sec_right - 50.0, sec_y, 50.0, btn_h];
+    let time_btn = [weather_btn[0] - 56.0, sec_y, 52.0, btn_h];
+    let night_btn = [time_btn[0] - 52.0, sec_y, 48.0, btn_h];
+    let hide_players_btn = [night_btn[0] - 52.0, sec_y, 48.0, btn_h];
+    let nametag_btn = [hide_players_btn[0] - 48.0, sec_y, 44.0, btn_h];
+    let gizmo_btn = [nametag_btn[0] - 48.0, sec_y, 44.0, btn_h];
+    let markers_btn = [gizmo_btn[0] - 60.0, sec_y, 56.0, btn_h];
+    let players_btn = [markers_btn[0] - 60.0, sec_y, 56.0, btn_h];
 
-    // Bottom timeline + keyframe strip
-    let bot_h = 34.0;
+    // Bottom timeline + keyframe strip (larger mobile touch targets)
+    let bot_h = 44.0;
     let bot_y = h - bot_h - 8.0;
-    let kf_h = 22.0;
-    let kf_y = bot_y - kf_h - 6.0;
+    let kf_h = 32.0;
+    let kf_y = bot_y - kf_h - 7.0;
 
-    let play_btn = [10.0, bot_y + 4.0, 28.0, 26.0];
-    let back5_btn = [42.0, bot_y + 4.0, 26.0, 26.0];
-    let fwd5_btn = [72.0, bot_y + 4.0, 26.0, 26.0];
-    let scrub_x = 104.0;
-    let scrub_w = (w - scrub_x - 88.0).max(80.0);
-    let scrubber_hit = [scrub_x, bot_y, scrub_w, bot_h];
-    let scrubber_track = [scrub_x + 6.0, bot_y + 13.0, (scrub_w - 12.0).max(40.0), 8.0];
+    let play_btn = [10.0, bot_y + 5.0, 36.0, 34.0];
+    let back5_btn = [50.0, bot_y + 5.0, 34.0, 34.0];
+    let fwd5_btn = [88.0, bot_y + 5.0, 34.0, 34.0];
+    let scrub_x = 128.0;
+    let scrub_w = (w - scrub_x - 94.0).max(80.0);
+    let scrubber_hit = [scrub_x - 4.0, bot_y - 2.0, scrub_w + 8.0, bot_h + 6.0];
+    let scrubber_track = [scrub_x + 8.0, bot_y + 17.0, (scrub_w - 16.0).max(40.0), 10.0];
 
     // 9 keyframe toolbar buttons centered above the timeline
-    let kf_gap = 4.0;
-    let kf_bw = ((w - 20.0 - kf_gap * 8.0) / 9.0).clamp(44.0, 82.0);
+    let kf_gap = 5.0;
+    let kf_bw = ((w - 16.0 - kf_gap * 8.0) / 9.0).clamp(48.0, 92.0);
     let kf_total = kf_bw * 9.0 + kf_gap * 8.0;
     let kf_start_x = ((w - kf_total) * 0.5).max(8.0);
     let kf = |i: usize| [kf_start_x + i as f32 * (kf_bw + kf_gap), kf_y, kf_bw, kf_h];
 
     // Left free-cam fly pad (generous thumbstick size for touch control)
-    let fly_pad_radius = 52.0;
-    let fly_pad_center = [66.0, kf_y - 66.0];
-    let ascend_btn = [128.0, kf_y - 98.0, 42.0, 30.0];
-    let descend_btn = [128.0, kf_y - 60.0, 42.0, 30.0];
+    let fly_pad_radius = 54.0;
+    let fly_pad_center = [70.0, kf_y - 66.0];
+    let ascend_btn = [134.0, kf_y - 104.0, 48.0, 36.0];
+    let descend_btn = [134.0, kf_y - 62.0, 48.0, 36.0];
 
-    let chip_y = if two_rows { sec_y + btn_h + 6.0 } else { 40.0 };
-    let roll_minus = [8.0, chip_y, 22.0, 20.0];
-    let roll_reset = [32.0, chip_y, 44.0, 20.0];
-    let roll_plus = [78.0, chip_y, 22.0, 20.0];
-    let fov_minus = [8.0, chip_y + 24.0, 22.0, 20.0];
-    let fov_plus = [78.0, chip_y + 24.0, 22.0, 20.0];
-    let fly_minus = [8.0, chip_y + 48.0, 22.0, 20.0];
-    let fly_plus = [78.0, chip_y + 48.0, 22.0, 20.0];
+    let chip_y = if two_rows { sec_y + btn_h + 6.0 } else { 46.0 };
+    let chip_h = 26.0;
+    let chip_step = 30.0;
+    let roll_minus = [8.0, chip_y, 28.0, chip_h];
+    let roll_reset = [38.0, chip_y, 48.0, chip_h];
+    let roll_plus = [88.0, chip_y, 28.0, chip_h];
+    let fov_minus = [8.0, chip_y + chip_step, 28.0, chip_h];
+    let fov_plus = [88.0, chip_y + chip_step, 28.0, chip_h];
+    let fly_minus = [8.0, chip_y + chip_step * 2.0, 28.0, chip_h];
+    let fly_plus = [88.0, chip_y + chip_step * 2.0, 28.0, chip_h];
 
-    let cancel_render_btn = [(w - 120.0) * 0.5, h * 0.5 + 32.0, 120.0, 30.0];
+    let cancel_render_btn = [(w - 136.0) * 0.5, h * 0.5 + 32.0, 136.0, 36.0];
 
     let drawer_w = (w * 0.36).clamp(210.0, 300.0);
-    let drawer_y = if two_rows { sec_y + btn_h + 6.0 } else { 40.0 };
+    let drawer_y = if two_rows { sec_y + btn_h + 6.0 } else { 46.0 };
     let drawer_rect = [w - drawer_w - 10.0, drawer_y, drawer_w, (kf_y - drawer_y - 8.0).max(120.0)];
 
     let modal_w = (w * 0.56).clamp(280.0, 400.0);
@@ -511,14 +513,14 @@ impl TouchUi {
         );
         pill(&mut ui, lay.roll_plus, false, false, "R+");
         pill(&mut ui, lay.fov_minus, false, false, "F-");
-        let fov_r = [32.0, lay.fov_minus[1], 44.0, 20.0];
+        let fov_r = [38.0, lay.fov_minus[1], 48.0, lay.fov_minus[3]];
         ui.rounded(fov_r[0], fov_r[1], fov_r[2], fov_r[3], 6.0, rgba(16, 18, 28, 195));
-        ui.centered_fit(Face::Medium, 8.2, fov_r, REPLAY_TEXT, &format!("FOV {:.0}", snap.cam_fov));
+        ui.centered_fit(Face::Medium, 8.6, fov_r, REPLAY_TEXT, &format!("FOV {:.0}", snap.cam_fov));
         pill(&mut ui, lay.fov_plus, false, false, "F+");
         pill(&mut ui, lay.fly_minus, false, false, "V-");
-        let fly_r = [32.0, lay.fly_minus[1], 44.0, 20.0];
+        let fly_r = [38.0, lay.fly_minus[1], 48.0, lay.fly_minus[3]];
         ui.rounded(fly_r[0], fly_r[1], fly_r[2], fly_r[3], 6.0, rgba(16, 18, 28, 195));
-        ui.centered_fit(Face::Medium, 8.2, fly_r, REPLAY_TEXT, &format!("Spd {:.0}", snap.fly_speed));
+        ui.centered_fit(Face::Medium, 8.6, fly_r, REPLAY_TEXT, &format!("Spd {:.0}", snap.fly_speed));
         pill(&mut ui, lay.fly_plus, false, false, "V+");
 
         // Virtual Free-Cam Fly Thumbstick + Ascend/Descend
@@ -564,8 +566,10 @@ impl TouchUi {
         pill(&mut ui, lay.kf_clear, false, false, "Clear");
 
         // Bottom Timeline Bar
-        ui.rounded(8.0, lay.scrubber_hit[1], ui.w - 16.0, 34.0, 10.0, rgba(16, 18, 28, 210));
-        ui.border(8.0, lay.scrubber_hit[1], ui.w - 16.0, 34.0, 10.0, rgba(255, 255, 255, 36));
+        let dock_y = lay.scrubber_track[1] - 17.0;
+        let dock_h = 44.0;
+        ui.rounded(8.0, dock_y, ui.w - 16.0, dock_h, 11.0, rgba(16, 18, 28, 215));
+        ui.border(8.0, dock_y, ui.w - 16.0, dock_h, 11.0, rgba(255, 255, 255, 36));
         pill(
             &mut ui,
             lay.play_btn,
@@ -577,10 +581,11 @@ impl TouchUi {
         pill(&mut ui, lay.fwd5_btn, false, false, "+5s");
 
         let tr = lay.scrubber_track;
-        ui.rounded(tr[0], tr[1], tr[2], tr[3], 4.0, rgba(255, 255, 255, 32));
+        ui.rounded(tr[0], tr[1], tr[2], tr[3], 5.0, rgba(255, 255, 255, 36));
         let dur = snap.duration_ms.max(1) as f32;
-        let prog = (snap.current_ms as f32 / dur).clamp(0.0, 1.0);
-        ui.rounded(tr[0], tr[1], (tr[2] * prog).max(4.0), tr[3], 4.0, REPLAY_ACCENT);
+        let display_ms = self.replay_scrub_preview_ms.unwrap_or(snap.current_ms);
+        let prog = (display_ms as f32 / dur).clamp(0.0, 1.0);
+        ui.rounded(tr[0], tr[1], (tr[2] * prog).max(5.0), tr[3], 5.0, REPLAY_ACCENT);
 
         // Draw Markers, Time Keyframes, and Position Keyframes on the track
         for m in &snap.markers {
@@ -599,19 +604,22 @@ impl TouchUi {
             ui.rounded(px - 4.0, tr[1] + tr[3] - 2.0, 8.0, 8.0, 2.0, rgba(56, 189, 248, 250));
         }
 
-        // Playhead thumb
+        // Playhead thumb (prominent draggable handle)
         let head_x = tr[0] + tr[2] * prog;
-        ui.rounded(head_x - 5.0, tr[1] - 3.0, 10.0, tr[3] + 6.0, 5.0, REPLAY_TEXT);
+        let knob_d = if self.replay_timeline_drag.is_some() { 20.0 } else { 16.0 };
+        let knob_y = tr[1] + tr[3] * 0.5 - knob_d * 0.5;
+        ui.rounded(head_x - knob_d * 0.5, knob_y, knob_d, knob_d, knob_d * 0.5, REPLAY_TEXT);
+        ui.border(head_x - knob_d * 0.5, knob_y, knob_d, knob_d, knob_d * 0.5, REPLAY_ACCENT);
 
         let time_txt = format!(
             "{}/{}",
-            format_duration_ms(snap.current_ms),
+            format_duration_ms(display_ms),
             format_duration_ms(snap.duration_ms)
         );
         ui.centered_fit(
             Face::Medium,
-            8.4,
-            [tr[0] + tr[2] + 6.0, lay.scrubber_hit[1], 74.0, 34.0],
+            9.0,
+            [tr[0] + tr[2] + 8.0, dock_y, 76.0, dock_h],
             REPLAY_TEXT,
             &time_txt,
         );
@@ -729,14 +737,27 @@ impl TouchUi {
         let p = [ui.cursor.0, ui.cursor.1];
         let lay = replay_layout(w, h);
 
-        // Handle active timeline scrubber drag
+        // Handle active timeline scrubber drag smoothly (instant visual scrub, throttled live seek,
+        // exact commit on finger lift so rapid dragging never stalls or crashes the thread pool).
         if self.replay_timeline_drag == Some(id) {
-            if matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled) {
-                self.replay_timeline_drag = None;
-            }
             let frac = ((p[0] - lay.scrubber_track[0]) / lay.scrubber_track[2]).clamp(0.0, 1.0);
             let target = (frac as f64 * snap.duration_ms as f64).round() as u64;
-            return Some(Some(ReplayAction::SeekMs(target)));
+            if matches!(phase, TouchPhase::Ended | TouchPhase::Cancelled) {
+                self.replay_timeline_drag = None;
+                self.replay_scrub_preview_ms = None;
+                self.replay_last_seek_at = None;
+                return Some(Some(ReplayAction::SeekMs(target)));
+            }
+            self.replay_scrub_preview_ms = Some(target);
+            let now = std::time::Instant::now();
+            let elapsed_ok = self
+                .replay_last_seek_at
+                .is_none_or(|prev| now.duration_since(prev).as_millis() >= 220);
+            if elapsed_ok && target.abs_diff(snap.current_ms) >= 350 {
+                self.replay_last_seek_at = Some(now);
+                return Some(Some(ReplayAction::SeekMs(target)));
+            }
+            return Some(None);
         }
 
         // Handle active virtual fly pad drag
@@ -872,6 +893,8 @@ impl TouchUi {
             self.replay_timeline_drag = Some(id);
             let frac = ((p[0] - lay.scrubber_track[0]) / lay.scrubber_track[2]).clamp(0.0, 1.0);
             let target = (frac as f64 * snap.duration_ms as f64).round() as u64;
+            self.replay_scrub_preview_ms = Some(target);
+            self.replay_last_seek_at = Some(std::time::Instant::now());
             return Some(Some(ReplayAction::SeekMs(target)));
         }
 
@@ -929,14 +952,19 @@ pub(super) fn draw_control_hub_replay_tab(
     cw: f32,
     body_y: f32,
 ) {
-    let theme = active_theme();
     let st = replay::global_recorder().status();
     let rs: ReplaySettings = replay::settings();
+    let card_bg = rgba(54, 51, 78, 224);
+    let border_c = rgba(255, 255, 255, 62);
+    let text_c = rgba(248, 247, 255, 255);
+    let muted_c = rgba(188, 186, 206, 255);
+    let accent = rgba(116, 92, 235, 255);
+    let on_accent = rgba(255, 255, 255, 255);
 
     // Status Card
     let card_h = 62.0;
-    ui.rounded(cx, body_y, cw, card_h, 11.0, theme.surface);
-    ui.border(cx, body_y, cw, card_h, 11.0, theme.border);
+    ui.rounded(cx, body_y, cw, card_h, 11.0, card_bg);
+    ui.border(cx, body_y, cw, card_h, 11.0, border_c);
     let title = if st.active {
         if st.paused {
             format!("Replay Paused  •  {}", format_duration_ms(st.elapsed_ms))
@@ -953,45 +981,45 @@ pub(super) fn draw_control_hub_replay_tab(
             .clone()
             .unwrap_or_else(|| "Captures SP & MP packets for free-cam & camera path editing".to_owned())
     };
-    ui.text(Face::SemiBold, 10.6, cx + 12.0, body_y + 10.0, theme.text_primary, &title);
-    ui.text(Face::Regular, 8.6, cx + 12.0, body_y + 29.0, theme.text_muted, &sub);
+    ui.text(Face::SemiBold, 10.6, cx + 12.0, body_y + 10.0, text_c, &title);
+    ui.text(Face::Regular, 8.6, cx + 12.0, body_y + 29.0, muted_c, &sub);
 
     // Action Buttons
     let btn_y = body_y + 72.0;
     let bw = (cw - 16.0) / 3.0;
     let draw_btn = |ui: &mut Ui<'_>, r: [f32; 4], fill: u32, fg: u32, lbl: &str| {
         ui.rounded(r[0], r[1], r[2], r[3], 9.0, fill);
-        ui.border(r[0], r[1], r[2], r[3], 9.0, theme.border);
+        ui.border(r[0], r[1], r[2], r[3], 9.0, border_c);
         ui.centered_fit(Face::SemiBold, 9.6, r, fg, lbl);
     };
     if st.active {
         draw_btn(
             ui,
             [cx, btn_y, bw, 32.0],
-            theme.accent,
-            theme.on_accent,
+            accent,
+            on_accent,
             "Save & Stop",
         );
         draw_btn(
             ui,
             [cx + bw + 8.0, btn_y, bw, 32.0],
-            theme.surface,
-            theme.text_primary,
+            card_bg,
+            text_c,
             if st.paused { "Resume" } else { "Pause" },
         );
         draw_btn(
             ui,
             [cx + (bw + 8.0) * 2.0, btn_y, bw, 32.0],
-            theme.surface,
-            theme.text_primary,
+            card_bg,
+            text_c,
             "+ Bookmark",
         );
     } else {
         draw_btn(
             ui,
             [cx, btn_y, cw, 32.0],
-            theme.accent,
-            theme.on_accent,
+            accent,
+            on_accent,
             "Start Recording Session",
         );
     }
@@ -1005,10 +1033,10 @@ pub(super) fn draw_control_hub_replay_tab(
     ];
     for (i, (t, s, on)) in rows.iter().enumerate() {
         let ry = body_y + 116.0 + i as f32 * 52.0;
-        ui.rounded(cx, ry, cw, 46.0, 11.0, theme.surface);
-        ui.border(cx, ry, cw, 46.0, 11.0, theme.border);
-        ui.text(Face::SemiBold, 10.4, cx + 14.0, ry + 7.0, theme.text_primary, t);
-        ui.text(Face::Regular, 8.6, cx + 14.0, ry + 24.0, theme.text_muted, s);
+        ui.rounded(cx, ry, cw, 46.0, 11.0, card_bg);
+        ui.border(cx, ry, cw, 46.0, 11.0, border_c);
+        ui.text(Face::SemiBold, 10.4, cx + 14.0, ry + 7.0, text_c, t);
+        ui.text(Face::Regular, 8.6, cx + 14.0, ry + 24.0, muted_c, s);
         ui.m3_switch(cx + cw - 54.0, ry + 12.0, *on);
     }
 }

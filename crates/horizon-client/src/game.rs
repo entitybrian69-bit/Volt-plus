@@ -12150,6 +12150,9 @@ impl Game<'_> {
         Ok(())
     }
     fn close_world(&mut self) -> Result<()> {
+        if self.replay.is_some() {
+            return self.exit_replay_to_title();
+        }
         self.clear_waypoints();
         self.post_effects.clear();
         self.spectated_post_effect = None;
@@ -12207,6 +12210,8 @@ impl Game<'_> {
             title.skip_multiplayer_warning = self.settings.file.bool("skipMultiplayerWarning");
         }
         self.capture(false);
+        #[cfg(target_os = "android")]
+        horizon_client::android_runtime::return_to_launcher();
         Ok(())
     }
     /// Let go of every entity of the level (saved first): the next world
@@ -16865,6 +16870,8 @@ impl Game<'_> {
                 self.pad.touch_ui.replay_fly_pad = None;
                 self.pad.touch_ui.replay_fly_vert = None;
                 self.pad.touch_ui.replay_timeline_drag = None;
+                self.pad.touch_ui.replay_scrub_preview_ms = None;
+                self.pad.touch_ui.replay_last_seek_at = None;
                 return;
             }
             let overlay_point = [

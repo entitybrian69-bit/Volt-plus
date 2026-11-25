@@ -983,6 +983,30 @@ impl Settings {
         } else {
             1.0
         };
+        self.overlay_scale = if self.overlay_scale.is_finite() {
+            self.overlay_scale.clamp(0.5, 2.0)
+        } else {
+            1.0
+        };
+        self.overlay_opacity = if self.overlay_opacity.is_finite() {
+            self.overlay_opacity.clamp(0.20, 1.0)
+        } else {
+            1.0
+        };
+        if !self.floating_menu_pos[0].is_finite()
+            || !self.floating_menu_pos[1].is_finite()
+            || self.floating_menu_pos[0] < 0.0
+            || self.floating_menu_pos[0] > 0.95
+            || self.floating_menu_pos[1] < 0.0
+            || self.floating_menu_pos[1] > 0.95
+        {
+            self.floating_menu_pos = default_floating_pos();
+        }
+        // Never allow both menu-hide and gameplay-hide simultaneously, otherwise the
+        // V+ overlay button becomes permanently unreachable across restarts.
+        if self.overlay_hide_in_menus && !self.overlay_show_in_gameplay {
+            self.overlay_show_in_gameplay = true;
+        }
         self.dynamic_area_x = if self.dynamic_area_x.is_finite() {
             self.dynamic_area_x.clamp(0.0, 1.0)
         } else {

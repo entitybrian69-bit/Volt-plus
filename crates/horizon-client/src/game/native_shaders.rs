@@ -58,65 +58,6 @@ pub(super) fn pack_reads_labpbr(pack: &Pack) -> bool {
 }
 
 impl Game<'_> {
-    /// Builds/reloads the in-memory Volt+ Built-in Shader Suite whenever its config changes.
-    pub(super) fn tick_volt_shader_pack(&mut self) {
-        let cfg = self.settings.horizon.volt_shaders.clone();
-        if !cfg.enabled {
-            return;
-        }
-        let stamp = Some(cfg.fingerprint());
-        if self.native_shaders.stamp == stamp {
-            return;
-        }
-        self.native_shaders.stamp = stamp;
-        let Some(renderer) = &mut self.renderer else {
-            return;
-        };
-        let (pack, constants) = cfg.build_pack();
-        let result = check(&pack)
-            .map_err(|p| p.iter().map(ToString::to_string).collect::<Vec<String>>())
-            .and_then(|report| {
-                let sprites = || {
-                    let layers = self.pack.render.sprite_layers.iter();
-                    layers.map(|(name, layer)| (name.as_str(), *layer))
-                };
-                let tags = pack.manifest.sprite_tags(sprites());
-                let materials = pack.manifest.sprite_materials(sprites());
-                let mut lights = horizon_client::gfx::block_light::LightTable::default();
-                if !pack.manifest.lights.is_empty() {
-                    for (id, state) in self.res.facts().states.iter().enumerate() {
-                        if state.emission == 0 {
-                            continue;
-                        }
-                        if let Some(color) = pack.manifest.light_of(&state.name) {
-                            lights.insert(id as u32, (color, state.emission));
-                        }
-                    }
-                }
-                let labels = renderer
-                    .set_native_shader_pack(Some((report, constants, tags, materials, lights)))
-                    .map_err(|e| vec![e])?;
-                Ok((pack.manifest, labels))
-            });
-        if cfg.labpbr && result.is_ok() && !horizon_client::sprites::labpbr_maps() {
-            horizon_client::sprites::set_labpbr_maps(true);
-            log::info!("Horizon: reloading resources for LabPBR maps");
-            self.reload_packs();
-        }
-        match result {
-            Ok((m, labels)) => {
-                log::info!("volt+ built-in shaders {} ({})", m.version, labels.join(", "));
-            }
-            Err(problems) => {
-                log::warn!("volt+ built-in shaders failed: {}", problems.join("; "));
-                self.system_message(Text::colored("Volt+ built-in shader error:", RED));
-                for p in problems {
-                    self.system_message(Text::colored(p, RED));
-                }
-            }
-        }
-    }
-
     /// Builds the pack at `path` when its files changed since it was last read.
     pub(super) fn tick_native_shader_pack(&mut self, path: &Path) {
         let now = Instant::now();

@@ -1159,7 +1159,7 @@ impl Game<'_> {
                     self.settings.touch = self.pad.touch.settings.clone();
                 }
                 InGameMenuAction::SetOverlayOpacity(opacity) => {
-                    self.pad.touch.settings.overlay_opacity = opacity.clamp(0.05, 1.0);
+                    self.pad.touch.settings.overlay_opacity = opacity.clamp(0.20, 1.0);
                     let _ = self.pad.touch.settings.save();
                     self.settings.touch = self.pad.touch.settings.clone();
                 }
@@ -1173,14 +1173,20 @@ impl Game<'_> {
                     self.settings.touch = self.pad.touch.settings.clone();
                 }
                 InGameMenuAction::ToggleOverlayHideInMenus => {
-                    self.pad.touch.settings.overlay_hide_in_menus =
-                        !self.pad.touch.settings.overlay_hide_in_menus;
+                    let next = !self.pad.touch.settings.overlay_hide_in_menus;
+                    self.pad.touch.settings.overlay_hide_in_menus = next;
+                    if next {
+                        self.pad.touch.settings.overlay_show_in_gameplay = true;
+                    }
                     let _ = self.pad.touch.settings.save();
                     self.settings.touch = self.pad.touch.settings.clone();
                 }
                 InGameMenuAction::ToggleOverlayShowInGameplay => {
-                    self.pad.touch.settings.overlay_show_in_gameplay =
-                        !self.pad.touch.settings.overlay_show_in_gameplay;
+                    let next = !self.pad.touch.settings.overlay_show_in_gameplay;
+                    self.pad.touch.settings.overlay_show_in_gameplay = next;
+                    if !next {
+                        self.pad.touch.settings.overlay_hide_in_menus = false;
+                    }
                     let _ = self.pad.touch.settings.save();
                     self.settings.touch = self.pad.touch.settings.clone();
                 }

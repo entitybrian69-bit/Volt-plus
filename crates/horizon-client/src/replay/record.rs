@@ -20,6 +20,7 @@ use std::{
 };
 
 pub const SETTINGS_FILE: &str = "replay-settings.json";
+const CURRENT_SETTINGS_VERSION: u32 = 2;
 pub const EXPORT_RESOLUTIONS: [(&str, u32, u32); 3] = [
     ("720p (1280x720)", 1280, 720),
     ("1080p (1920x1080)", 1920, 1080),
@@ -30,6 +31,7 @@ pub const EXPORT_FPS: [u32; 2] = [30, 60];
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ReplaySettings {
+    pub settings_version: u32,
     pub auto_record_sp: bool,
     pub auto_record_mp: bool,
     pub record_self: bool,
@@ -42,10 +44,11 @@ pub struct ReplaySettings {
 impl Default for ReplaySettings {
     fn default() -> Self {
         Self {
+            settings_version: CURRENT_SETTINGS_VERSION,
             auto_record_sp: false,
             auto_record_mp: false,
-            record_self: true,
-            show_recording_badge: true,
+            record_self: false,
+            show_recording_badge: false,
             export_resolution: 1, // 1080p
             export_fps: 1,        // 60 fps
             export_bitrate_mbps: 18,
@@ -56,10 +59,20 @@ impl Default for ReplaySettings {
 impl ReplaySettings {
     pub fn load(game_dir: &Path) -> Self {
         let path = game_dir.join(SETTINGS_FILE);
-        fs::read_to_string(path)
+        let mut s: Self = fs::read_to_string(&path)
             .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+            .and_then(|txt| serde_json::from_str(&txt).ok())
+            .unwrap_or_default();
+        if s.settings_version < CURRENT_SETTINGS_VERSION {
+            // Migrate legacy builds that defaulted the 4 replay toggles to ON.
+            s.auto_record_sp = false;
+            s.auto_record_mp = false;
+            s.record_self = false;
+            s.show_recording_badge = false;
+            s.settings_version = CURRENT_SETTINGS_VERSION;
+            s.save(game_dir);
+        }
+        s
     }
 
     pub fn save(&self, game_dir: &Path) {

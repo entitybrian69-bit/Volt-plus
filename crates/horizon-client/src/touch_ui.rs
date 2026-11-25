@@ -89,6 +89,8 @@ pub struct TouchUi {
     held_keys: BTreeMap<u64, KeyCode>,
     pub f3_latched: bool,
     pub replay_timeline_drag: Option<u64>,
+    pub replay_scrub_preview_ms: Option<u64>,
+    pub replay_last_seek_at: Option<std::time::Instant>,
     pub replay_fly_pad: Option<(u64, [f32; 2])>,
     pub replay_fly_vert: Option<(u64, f32)>,
     pub replay_look_finger: Option<(u64, [f32; 2])>,
@@ -144,6 +146,8 @@ impl Default for TouchUi {
             held_keys: BTreeMap::new(),
             f3_latched: false,
             replay_timeline_drag: None,
+            replay_scrub_preview_ms: None,
+            replay_last_seek_at: None,
             replay_fly_pad: None,
             replay_fly_vert: None,
             replay_look_finger: None,
@@ -1943,7 +1947,7 @@ impl TouchUi {
             return false;
         }
         if in_menu {
-            !settings.overlay_hide_in_menus
+            !settings.overlay_hide_in_menus || !settings.overlay_show_in_gameplay
         } else {
             settings.overlay_show_in_gameplay || hiding_controls
         }
@@ -3028,7 +3032,7 @@ impl TouchUi {
                     let sl_x = cx + 14.0;
                     let sl_w = (cw - 28.0).max(40.0);
                     let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
-                    return Some(InGameMenuAction::SetOverlayOpacity(0.05 + t * 0.95));
+                    return Some(InGameMenuAction::SetOverlayOpacity(0.20 + t * 0.80));
                 }
                 let row_h = 46.0;
                 let step = 54.0;
@@ -3061,8 +3065,7 @@ impl TouchUi {
     ) {
         use crate::touch::ControlStyle;
         use crate::ui_theme::{Face, Icon, Ui, color};
-        let hud_scale = crate::touch::current_hud_opacity_scale();
-        if !self.floating_menu && (settings.overlay_hidden || hud_scale <= 0.001) {
+        if !self.floating_menu && settings.overlay_hidden {
             return;
         }
         let mut ui = Ui::mobile(a, b, (0.0, 0.0));
@@ -3089,14 +3092,13 @@ impl TouchUi {
         let danger_c = rgba(242, 108, 120, 255);
         let _ = color::hex;
 
-        // A raw recording hides the HUD, but the floating button stays unless explicitly hidden.
-        let overlay_alpha = settings.overlay_opacity.clamp(0.05, 1.0);
-        let bubble_alpha = if settings.overlay_hidden {
+        // Keep the V+ overlay button visible regardless of touch/HUD fade state whenever
+        // `overlay_button_visible` allowed it to be drawn.
+        let overlay_alpha = settings.overlay_opacity.clamp(0.20, 1.0);
+        let bubble_alpha = if settings.overlay_hidden && !self.floating_menu {
             0.0
-        } else if self.floating_menu || recorder::hiding_controls() {
-            overlay_alpha
         } else {
-            (hud_scale.clamp(0.0, 1.0) * overlay_alpha).clamp(0.0, 1.0)
+            overlay_alpha
         };
 
         // Draw moveable Floating Menu Button (MCPE stone-bevel V+ button OR GoyControl V+ pill)
@@ -4668,7 +4670,7 @@ impl TouchUi {
                     &ov_op_pct,
                 );
                 let op_sl_y = op_y + 33.0;
-                let op_frac = ((settings.overlay_opacity - 0.05) / 0.95).clamp(0.0, 1.0);
+                let op_frac = ((settings.overlay_opacity - 0.20) / 0.80).clamp(0.0, 1.0);
                 ui.rounded(sl_x, op_sl_y, sl_w, 6.0, 3.0, sidebar_bg);
                 ui.rounded(sl_x, op_sl_y, (sl_w * op_frac).max(6.0), 6.0, 3.0, accent);
                 let op_thumb = sl_x + sl_w * op_frac;

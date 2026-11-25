@@ -215,7 +215,22 @@ impl ReplayPlayer {
     }
 
     pub fn add_position_keyframe_here(&mut self) {
-        let t = self.path_cursor_ms;
+        let mut t = if self.path_playing {
+            self.path_cursor_ms
+        } else {
+            self.current_ms
+        };
+        {
+            let tl = self.timelines.active();
+            while tl
+                .position_keyframes
+                .iter()
+                .any(|k| k.timeline_ms.abs_diff(t) <= 25)
+            {
+                t = t.saturating_add(2000);
+            }
+        }
+        self.path_cursor_ms = t;
         let kf = PositionKeyframe {
             timeline_ms: t,
             x: self.cam_pos[0],
@@ -230,28 +245,87 @@ impl ReplayPlayer {
         self.timelines.active_mut().add_position_keyframe(kf);
         self.dirty_edits = true;
         self.set_banner(format!(
-            "Added Pos Keyframe #{}",
-            self.timelines.active().position_keyframes.len()
+            "Added Pos KF #{} @ {}",
+            self.timelines.active().position_keyframes.len(),
+            super::archive::format_duration_ms(t)
         ));
     }
 
     pub fn add_time_keyframe_here(&mut self) {
+        let mut t = if self.path_playing {
+            self.path_cursor_ms
+        } else {
+            self.current_ms
+        };
+        {
+            let tl = self.timelines.active();
+            while tl
+                .time_keyframes
+                .iter()
+                .any(|k| k.timeline_ms.abs_diff(t) <= 25)
+            {
+                t = t.saturating_add(2000);
+            }
+        }
+        self.path_cursor_ms = t;
         let kf = TimeKeyframe {
-            timeline_ms: self.path_cursor_ms,
+            timeline_ms: t,
             replay_time_ms: self.current_ms,
         };
         self.timelines.active_mut().add_time_keyframe(kf);
         self.dirty_edits = true;
         self.set_banner(format!(
-            "Added Time Keyframe ({})",
+            "Added Time KF #{} ({})",
+            self.timelines.active().time_keyframes.len(),
             super::archive::format_duration_ms(self.current_ms)
         ));
     }
 
     pub fn add_synced_keyframes_here(&mut self) {
-        self.add_position_keyframe_here();
-        self.add_time_keyframe_here();
-        self.set_banner("Added synced Pos + Time keyframe");
+        let mut t = if self.path_playing {
+            self.path_cursor_ms
+        } else {
+            self.current_ms
+        };
+        {
+            let tl = self.timelines.active();
+            while tl
+                .position_keyframes
+                .iter()
+                .any(|k| k.timeline_ms.abs_diff(t) <= 25)
+                || tl
+                    .time_keyframes
+                    .iter()
+                    .any(|k| k.timeline_ms.abs_diff(t) <= 25)
+            {
+                t = t.saturating_add(2000);
+            }
+        }
+        self.path_cursor_ms = t;
+        let pos_kf = PositionKeyframe {
+            timeline_ms: t,
+            x: self.cam_pos[0],
+            y: self.cam_pos[1],
+            z: self.cam_pos[2],
+            yaw: wrap_degrees(self.cam_yaw),
+            pitch: self.cam_pitch.clamp(-90.0, 90.0),
+            roll: wrap_degrees(self.cam_roll),
+            fov: self.cam_fov.clamp(20.0, 140.0),
+            interp: self.timelines.active().interpolation,
+        };
+        let time_kf = TimeKeyframe {
+            timeline_ms: t,
+            replay_time_ms: self.current_ms,
+        };
+        let tl = self.timelines.active_mut();
+        tl.add_position_keyframe(pos_kf);
+        tl.add_time_keyframe(time_kf);
+        self.dirty_edits = true;
+        self.set_banner(format!(
+            "Added Sync KF #{} @ {}",
+            tl.position_keyframes.len(),
+            super::archive::format_duration_ms(t)
+        ));
     }
 
     pub fn add_marker_here(&mut self) {

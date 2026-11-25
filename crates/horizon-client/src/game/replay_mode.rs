@@ -69,6 +69,8 @@ impl Game<'_> {
             self.pad.touch_ui.replay_fly_pad = None;
             self.pad.touch_ui.replay_fly_vert = None;
             self.pad.touch_ui.replay_timeline_drag = None;
+            self.pad.touch_ui.replay_scrub_preview_ms = None;
+            self.pad.touch_ui.replay_last_seek_at = None;
         }
         replay::publish_hud_snapshot(ReplayHudSnapshot::default());
         self.leave_server(None)?;
@@ -96,7 +98,11 @@ impl Game<'_> {
         let Some(replay) = self.replay.as_mut() else {
             return Ok(());
         };
-        let needs_rewind = replay.prepare_seek(target_ms);
+        let clamped_target = target_ms.min(replay.duration_ms);
+        if clamped_target == replay.current_ms {
+            return Ok(());
+        }
+        let needs_rewind = replay.prepare_seek(clamped_target);
         if needs_rewind {
             self.reset_remote_for_replay_rewind();
         }
@@ -108,7 +114,7 @@ impl Game<'_> {
                 let Some(replay) = self.replay.as_mut() else {
                     break;
                 };
-                replay.drain_packets_up_to(target_ms, 512)
+                replay.drain_packets_up_to(clamped_target, 512)
             };
             if steps.is_empty() {
                 break;

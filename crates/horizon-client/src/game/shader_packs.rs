@@ -90,7 +90,7 @@ pub(super) fn picks_native_pack(settings: &horizon_client::settings::Settings) -
         &settings.mods,
     );
     if picked.is_empty() {
-        return settings.horizon.volt_shaders.enabled && settings.horizon.volt_shaders.labpbr;
+        return false;
     }
     let path = Game::shader_packs_dir().join(picked);
     horizon_shader_api::package::is_pack(&path)
@@ -328,24 +328,19 @@ impl Game<'_> {
             dev.as_deref().unwrap_or(&self.settings.horizon.shader_pack),
             &self.settings.mods,
         );
-        const VOLT_BUILTIN_PICK: &str = "__volt_builtin_shaders__";
-        let using_builtin = picked.is_empty() && self.settings.horizon.volt_shaders.enabled;
-        let effective_picked = if using_builtin { VOLT_BUILTIN_PICK } else { picked };
-        if self.native_shaders.picked != effective_picked {
+        if self.native_shaders.picked != picked {
             // Another pack, or none: drop what ran.
-            self.native_shaders = super::native_shaders::NativeShaders::picking(effective_picked);
+            self.native_shaders = super::native_shaders::NativeShaders::picking(picked);
             self.pack_ids = None;
             clear_pending_shader_job();
             if let Some(renderer) = &mut self.renderer {
                 renderer.drop_shader_packs();
             }
         }
-        if effective_picked.is_empty() {
+        if picked.is_empty() {
             return PackInputs::default();
         }
-        if using_builtin {
-            self.tick_volt_shader_pack();
-        } else {
+        {
             let name = picked.to_owned();
             let dimension = match self.dim {
                 Dim::Overworld => 0,

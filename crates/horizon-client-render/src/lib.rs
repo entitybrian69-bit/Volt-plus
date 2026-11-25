@@ -104,7 +104,6 @@ pub mod trims;
 pub mod ui;
 pub mod vault;
 pub mod volt_pages_ui;
-pub mod volt_shaders_ui;
 pub mod volt_video_ui;
 pub mod weather;
 pub mod widgets;
