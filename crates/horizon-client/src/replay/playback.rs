@@ -317,13 +317,16 @@ impl ReplayPlayer {
             timeline_ms: t,
             replay_time_ms: self.current_ms,
         };
-        let tl = self.timelines.active_mut();
-        tl.add_position_keyframe(pos_kf);
-        tl.add_time_keyframe(time_kf);
+        let count = {
+            let tl = self.timelines.active_mut();
+            tl.add_position_keyframe(pos_kf);
+            tl.add_time_keyframe(time_kf);
+            tl.position_keyframes.len()
+        };
         self.dirty_edits = true;
         self.set_banner(format!(
             "Added Sync KF #{} @ {}",
-            tl.position_keyframes.len(),
+            count,
             super::archive::format_duration_ms(t)
         ));
     }
