@@ -2363,8 +2363,12 @@ impl Game<'_> {
             self.loading_progress = 0.0;
         }
         // startWaitingForNewLevel: `LevelLoadTracker.startClientLoad` and the
-        // `LevelLoadingScreen`.
+        // `LevelLoadingScreen`. In replay mode, terrain loads straight from the
+        // recorded packets without ever replacing the world with the loading panorama.
         r.level_load.start_client_load(client_millis(), reason);
+        if self.replay.is_some() {
+            r.level_load.finish();
+        }
         // A replacement LocalPlayer has a fresh sendPosition baseline.
         r.position_sender = Default::default();
         r.predictions.clear();
@@ -2385,21 +2389,28 @@ impl Game<'_> {
         if !same {
             // A new ClientLevel: Minecraft.setLevel stops every sound.
             self.stop_sounds_for_new_level();
-            let streaming_threads = if cfg!(target_os = "android") && self.integrated.is_some() {
-                (self.res.threads() / 2).max(2)
-            } else if cfg!(target_os = "android") {
-                self.res.threads().min(4)
+            if self.replay.is_some() {
+                self.streaming.reset_remote_state();
+                self.streaming.remote = true;
+                self.streaming.radius = self.settings.render_distance;
+                self.streaming.paused = false;
             } else {
-                self.res.threads()
-            };
-            let mut streaming = Streaming::new(
-                Arc::new(NoTerrain),
-                self.pack.context.clone(),
-                streaming_threads,
-            );
-            streaming.remote = true;
-            streaming.radius = self.streaming.radius;
-            self.streaming = streaming;
+                let streaming_threads = if cfg!(target_os = "android") && self.integrated.is_some() {
+                    (self.res.threads() / 2).max(2)
+                } else if cfg!(target_os = "android") {
+                    self.res.threads().min(4)
+                } else {
+                    self.res.threads()
+                };
+                let mut streaming = Streaming::new(
+                    Arc::new(NoTerrain),
+                    self.pack.context.clone(),
+                    streaming_threads,
+                );
+                streaming.remote = true;
+                streaming.radius = self.streaming.radius;
+                self.streaming = streaming;
+            }
             let (time, day, weather) = (
                 self.world.game_time,
                 self.world.day_time,
@@ -9377,6 +9388,14 @@ impl Game<'_> {
     /// `LevelLoadingScreen`, over the panorama with its blur.
     pub(super) fn remote_loading(&self) -> bool {
         use horizon_client::level_loading::Reason;
+        if self
+            .replay
+            .as_ref()
+            .is_some_and(|rp| rp.render_job.is_some() || rp.cam_initialized)
+            || (self.replay.is_some() && self.remote.as_ref().is_some_and(|r| r.joined))
+        {
+            return false;
+        }
         self.remote.as_ref().is_some_and(|r| {
             if r.level_load.is_active() {
                 // The portal screens have no panorama, so no blur.

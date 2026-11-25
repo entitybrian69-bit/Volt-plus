@@ -1075,24 +1075,6 @@ impl Settings {
             self.preset_name = self.preset_id.clone();
         }
         self.joystick_style.sanitize();
-        self.overlay_scale = if self.overlay_scale.is_finite() {
-            self.overlay_scale.clamp(0.5, 2.0)
-        } else {
-            1.0
-        };
-        self.overlay_opacity = if self.overlay_opacity.is_finite() {
-            self.overlay_opacity.clamp(0.05, 1.0)
-        } else {
-            1.0
-        };
-        for (i, v) in self.floating_menu_pos.iter_mut().enumerate() {
-            let def = default_floating_pos()[i];
-            *v = if v.is_finite() {
-                v.clamp(0.005, 0.96)
-            } else {
-                def
-            };
-        }
         for p in self.layouts.iter_mut().flatten() {
             p.sanitize();
         }

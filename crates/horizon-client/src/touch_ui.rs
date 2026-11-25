@@ -2205,7 +2205,7 @@ impl TouchUi {
                     let sl_x = cx + 14.0;
                     let sl_w = (cw - 28.0).max(40.0);
                     let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
-                    return Some(InGameMenuAction::SetOverlayOpacity(0.05 + t * 0.95));
+                    return Some(InGameMenuAction::SetOverlayOpacity(0.20 + t * 0.80));
                 }
                 TouchPhase::Ended | TouchPhase::Cancelled => {
                     self.overlay_opacity_dragging = false;
@@ -2730,7 +2730,7 @@ impl TouchUi {
                     let sl_x = cx + 14.0;
                     let sl_w = (cw - 28.0).max(40.0);
                     let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
-                    return Some(InGameMenuAction::SetOverlayOpacity(0.05 + t * 0.95));
+                    return Some(InGameMenuAction::SetOverlayOpacity(0.20 + t * 0.80));
                 }
             }
 
@@ -4645,7 +4645,7 @@ impl TouchUi {
                     text_c,
                     "Overlay Button Opacity",
                 );
-                let ov_op_pct = format!("{:.0}%", settings.overlay_opacity.clamp(0.05, 1.0) * 100.0);
+                let ov_op_pct = format!("{:.0}%", settings.overlay_opacity.clamp(0.20, 1.0) * 100.0);
                 ui.rounded(
                     cx + cw - pill_w - 12.0,
                     op_y + 6.0,

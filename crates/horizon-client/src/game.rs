@@ -2716,6 +2716,7 @@ struct Game<'a> {
     replay: Option<horizon_client::replay::ReplayPlayer>,
     replay_seeking: bool,
     replay_last_step: Option<std::time::Instant>,
+    replay_render_wait_frames: u32,
     replay_swing_main: bool,
     replay_swing_off: bool,
     /// This world is open to the network (game/lan.rs).
@@ -7664,6 +7665,10 @@ impl Game<'_> {
             .is_some_and(|t| t.elapsed() > Duration::from_millis(500))
             && self.control.is_none()
             && self.screen == Screen::Playing
+            && !self
+                .replay
+                .as_ref()
+                .is_some_and(|r| r.render_job.is_some())
             && self.player.is_some()
             && !self.options.no_pause
             && self.settings.file.bool("pauseOnLostFocus")
@@ -8025,7 +8030,13 @@ impl Game<'_> {
         }
     }
     fn hud(&mut self, size: [u32; 2]) -> HudBatch {
-        if self.replay.is_some() && self.screen == Screen::Playing {
+        if self.replay.is_some()
+            && (self.screen == Screen::Playing
+                || self
+                    .replay
+                    .as_ref()
+                    .is_some_and(|r| r.render_job.is_some()))
+        {
             self.flush_skin_slots();
             self.update_remote_skins();
             return HudBatch::new(size);
@@ -14867,9 +14878,18 @@ impl Game<'_> {
         // Load the profile's scheme before drawing the first frame or outline.
         #[cfg(target_os = "android")]
         self.pad.touch.viewport(size[0], size[1]);
-        let raw_menu_blur = self.menu_blur();
+        let exporting_replay = self
+            .replay
+            .as_ref()
+            .is_some_and(|r| r.render_job.is_some());
+        let raw_menu_blur = if exporting_replay {
+            None
+        } else {
+            self.menu_blur()
+        };
         #[cfg(target_os = "android")]
-        let in_world_stationary_overlay = !self.shows_panorama()
+        let in_world_stationary_overlay = !exporting_replay
+            && !self.shows_panorama()
             && self.player.is_some()
             && !self.pad.touch_ui.floating_menu
             && (self.singleplayer_paused()
@@ -14885,10 +14905,11 @@ impl Game<'_> {
         } else {
             raw_menu_blur
         };
-        let menu_blur_cache = ((self.singleplayer_paused() || self.screen == Screen::Options)
-            && !self.shows_panorama()
-            && menu_blur.is_some())
-            || in_world_stationary_overlay;
+        let menu_blur_cache = !exporting_replay
+            && (((self.singleplayer_paused() || self.screen == Screen::Options)
+                && !self.shows_panorama()
+                && menu_blur.is_some())
+                || in_world_stationary_overlay);
         if !menu_blur_cache || !self.was_menu_blurred {
             if let Some(renderer) = self.renderer.as_mut() {
                 renderer.invalidate_menu_blur();
@@ -15214,7 +15235,9 @@ impl Game<'_> {
                 self.pad
                     .touch_ui
                     .draw(&mut hud, &self.gui.atlas, self.pad_in_menu());
-                if self.replay.is_some() && self.screen == Screen::Playing {
+                if self.replay.is_some()
+                    && (self.screen == Screen::Playing || exporting_replay)
+                {
                     self.pad.touch_ui.draw_replay_hud(&mut hud, &self.gui.atlas);
                 } else if self.replay.is_none() && self.screen == Screen::Playing && !self.ui.hide_gui {
                     horizon_client::touch_ui::draw_recording_badge(&mut hud, &self.gui.atlas);
@@ -16161,12 +16184,32 @@ impl Game<'_> {
             log::warn!("Horizon: failed to save unloaded chunks: {e}");
         }
         let (far_distance, far_reduced) = self.far_terrain_choice();
+        let exporting_replay = self
+            .replay
+            .as_ref()
+            .is_some_and(|r| r.render_job.is_some());
         if let Some(renderer) = self.renderer.as_mut() {
             let g = &self.settings.horizon;
             let mobile_uploads =
                 cfg!(target_os = "android") && self.options.execution_role.is_client();
-            let budgeted = g.chunk_updates > 0 || g.upload_budget_kib > 0 || mobile_uploads;
-            if !budgeted && self.pending_uploads.is_empty() && uploads.len() <= AUTO_UPLOADS_AT_ONCE
+            let budgeted =
+                !exporting_replay && (g.chunk_updates > 0 || g.upload_budget_kib > 0 || mobile_uploads);
+            if exporting_replay {
+                let pending = std::mem::take(&mut self.pending_uploads);
+                let chunks = &self.world.chunks;
+                horizon_client::spans::time("upload", || {
+                    for (key, mesh) in &pending {
+                        if chunks.contains_key(&(key.0, key.2)) {
+                            renderer.upload(*key, mesh);
+                        }
+                    }
+                    for (key, mesh) in &uploads {
+                        renderer.upload(*key, mesh);
+                    }
+                });
+                self.streaming.free(pending);
+                self.streaming.free(uploads);
+            } else if !budgeted && self.pending_uploads.is_empty() && uploads.len() <= AUTO_UPLOADS_AT_ONCE
             {
                 horizon_client::spans::time("upload", || {
                     for (key, mesh) in &uploads {
@@ -19082,6 +19125,7 @@ impl<'a> Game<'a> {
             replay: None,
             replay_seeking: false,
             replay_last_step: None,
+            replay_render_wait_frames: 0,
             replay_swing_main: false,
             replay_swing_off: false,
             lan: None,

@@ -63,6 +63,7 @@ impl Game<'_> {
         }
         self.replay_seeking = false;
         self.replay_last_step = None;
+        self.replay_render_wait_frames = 0;
         #[cfg(target_os = "android")]
         {
             self.pad.touch_ui.replay_look_finger = None;
@@ -381,7 +382,6 @@ impl Game<'_> {
                     .active()
                     .sample_replay_time_ms(timeline_ms, timeline_ms.min(replay.duration_ms));
                 replay.path_cursor_ms = timeline_ms;
-                job.awaiting_readback = true;
                 job.status_text = format!(
                     "Rendering frame {} / {}",
                     job.current_frame + 1,
@@ -393,6 +393,24 @@ impl Game<'_> {
 
         if let Some(target_ms) = seek_target {
             self.seek_replay_to(target_ms)?;
+            if let Some((cam_pos, _, _, _, _)) = self.replay_camera_override(1.0) {
+                self.streaming.center = (
+                    (cam_pos.x.floor() as i32) >> 4,
+                    (cam_pos.z.floor() as i32) >> 4,
+                );
+            }
+            if (self.streaming.busy() || !self.pending_uploads.is_empty())
+                && self.replay_render_wait_frames < 45
+            {
+                self.replay_render_wait_frames += 1;
+                return Ok(());
+            }
+            self.replay_render_wait_frames = 0;
+            if let Some(replay) = self.replay.as_mut()
+                && let Some(job) = replay.render_job.as_mut()
+            {
+                job.awaiting_readback = true;
+            }
             if let Some(renderer) = self.renderer.as_mut() {
                 renderer.request_replay_frame();
             }
@@ -403,18 +421,24 @@ impl Game<'_> {
             .is_some_and(|j| j.finishing)
         {
             let finish_res = replay::video_export_finish();
+            let mut exported_ok = false;
             if let Some(replay) = self.replay.as_mut() {
                 replay.camera_mode = CameraMode::FreeCam;
                 match finish_res {
                     Ok(saved) => {
                         replay.render_job = None;
                         replay.set_banner(format!("Exported MP4: {saved}"));
+                        exported_ok = true;
                     }
                     Err(err) => {
                         replay.render_job = None;
                         replay.set_banner(format!("Export failed: {err}"));
                     }
                 }
+            }
+            if exported_ok {
+                #[cfg(target_os = "android")]
+                self.exit_replay_to_title()?;
             }
         }
         Ok(())
@@ -852,6 +876,9 @@ impl Game<'_> {
                     replay::set_rendered_output_dir(Some(rendered_dir));
                     match replay::video_export_start(width, height, fps, bitrate_mbps, &stem) {
                         Ok(_) => {
+                            self.close_dialogs();
+                            self.screen = Screen::Playing;
+                            self.replay_render_wait_frames = 0;
                             if let Some(r) = self.replay.as_mut() {
                                 r.render_modal_open = false;
                                 r.playing = false;
@@ -883,6 +910,7 @@ impl Game<'_> {
                 }
             }
             ReplayAction::CancelRenderMp4 => {
+                self.replay_render_wait_frames = 0;
                 if let Some(r) = self.replay.as_mut()
                     && r.render_job.is_some()
                 {
