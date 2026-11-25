@@ -495,12 +495,12 @@ impl Game<'_> {
         let swing_off = std::mem::take(&mut self.replay_swing_off);
         replay::global_recorder().sync_local_player(
             r.entity_id,
-            r.profile,
+            r.profile(),
             &r.profile_name,
             [p.position.x, p.position.y, p.position.z],
             self.yaw,
             self.pitch,
-            p.on_ground,
+            p.ground.on_ground,
             self.keys.contains(&KeyCode::ShiftLeft),
             p.sprinting,
             main_item,

@@ -2780,12 +2780,12 @@ impl Launcher {
                 }
                 ui.rounded(content_x, ry, content_w, row_h, 13.0, my3_card_bg());
                 ui.border(content_x, ry, content_w, row_h, 13.0, my3_card_border());
-                let badge = if item.singleplayer {
+                let badge = if item.meta.singleplayer {
                     "Singleplayer"
                 } else {
                     "Multiplayer"
                 };
-                let title = ui.fit_text(Face::SemiBold, 13.0, &item.name, content_w - 230.0);
+                let title = ui.fit_text(Face::SemiBold, 13.0, &item.display_name, content_w - 230.0);
                 ui.text(
                     Face::SemiBold,
                     13.0,
@@ -2795,13 +2795,13 @@ impl Launcher {
                     &title,
                 );
                 let size_mb = item.size_bytes as f64 / 1_048_576.0;
-                let dur = horizon_client::replay::format_duration_ms(item.duration_ms);
+                let dur = horizon_client::replay::format_duration_ms(item.meta.duration);
                 let meta = ui.fit_text(
                     Face::Regular,
                     10.4,
                     &format!(
                         "{badge}  •  {dur}  •  {size_mb:.2} MB  •  {} KF  •  {} Mrk",
-                        item.keyframe_count, item.marker_count
+                        item.keyframes_count, item.markers_count
                     ),
                     content_w - 210.0,
                 );
@@ -2813,10 +2813,17 @@ impl Launcher {
                     my3_muted(),
                     &meta,
                 );
+                let recorded_str = chrono::DateTime::from_timestamp_millis(item.meta.date as i64)
+                    .map(|dt| {
+                        dt.with_timezone(&chrono::Local)
+                            .format("%Y-%m-%d %H:%M")
+                            .to_string()
+                    })
+                    .unwrap_or_else(|| format!("MC {}", item.meta.mcversion));
                 let date_line = ui.fit_text(
                     Face::Regular,
                     9.6,
-                    &item.recorded_at,
+                    &recorded_str,
                     content_w - 210.0,
                 );
                 ui.text(
@@ -7782,7 +7789,7 @@ impl Launcher {
             Some(Action::DeleteReplay(idx)) => {
                 if self.catalog.replay_delete_confirm == Some(idx) {
                     if let Some(item) = self.catalog.replays.get(idx) {
-                        let name = item.name.clone();
+                        let name = item.display_name.clone();
                         match horizon_client::replay::delete_replay(&item.path) {
                             Ok(()) => {
                                 self.catalog.refresh_replays(&self.home);
