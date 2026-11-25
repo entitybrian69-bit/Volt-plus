@@ -904,4 +904,36 @@ impl Game<'_> {
         self.replay_publish_hud_snapshot();
         Ok(())
     }
+
+    /// Keyboard shortcuts when Replay Viewer mode is active (`Screen::Playing`),
+    /// also blocking survival-only keys (`E`, `T`, `/`, `Q`) from reaching `remote_key`.
+    pub(super) fn replay_key(&mut self, key: KeyCode) -> Result<bool> {
+        if self.screen != Screen::Playing {
+            return Ok(false);
+        }
+        let action = match key {
+            KeyCode::KeyP => Some(ReplayAction::TogglePlay),
+            KeyCode::ArrowLeft => Some(ReplayAction::StepSeconds(-5)),
+            KeyCode::ArrowRight => Some(ReplayAction::StepSeconds(5)),
+            KeyCode::BracketLeft => Some(ReplayAction::CycleSpeed(-1)),
+            KeyCode::BracketRight => Some(ReplayAction::CycleSpeed(1)),
+            KeyCode::KeyK => Some(ReplayAction::AddSyncedKeyframe),
+            KeyCode::KeyI => Some(ReplayAction::AddPosKeyframe),
+            KeyCode::KeyO => Some(ReplayAction::AddTimeKeyframe),
+            KeyCode::KeyM => Some(ReplayAction::AddMarker),
+            KeyCode::KeyV => Some(ReplayAction::TogglePathPreview),
+            KeyCode::KeyH => Some(ReplayAction::ToggleHideHud),
+            KeyCode::KeyX | KeyCode::Delete => Some(ReplayAction::RemoveNearestKeyframe),
+            KeyCode::KeyZ => Some(ReplayAction::AdjustRoll(-5.0)),
+            KeyCode::KeyC => Some(ReplayAction::AdjustRoll(5.0)),
+            KeyCode::KeyR => Some(ReplayAction::ResetRoll),
+            KeyCode::KeyE | KeyCode::KeyT | KeyCode::Slash | KeyCode::KeyQ => return Ok(true),
+            _ => None,
+        };
+        if let Some(action) = action {
+            self.handle_replay_action(action)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
 }

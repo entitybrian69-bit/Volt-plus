@@ -164,7 +164,9 @@ jobs:
           python3 tools/check_public_tree.py
           python3 -m unittest discover -s tests -p 'test_android_release_audit.py'
       - name: Prepare private engine inputs from official downloads
-        run: python3 tools/android_prepare.py --java-home "$JAVA_HOME"
+        run: |
+          set -o pipefail
+          python3 tools/android_prepare.py --java-home "$JAVA_HOME" 2>&1 | tee "$RUNNER_TEMP/volt-build.log"
       - name: Build optimized public Volt Plus APK
         env:
           ABI: ${{ matrix.abi }}

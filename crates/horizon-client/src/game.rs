@@ -15717,6 +15717,9 @@ impl Game<'_> {
         if self.sort_key_press(key) || self.hdr_key_press(key) {
             return Ok(());
         }
+        if self.is_replay() && self.replay_key(key)? {
+            return Ok(());
+        }
         if self.remote.is_some() && self.remote_key(key)? {
             return Ok(());
         }
