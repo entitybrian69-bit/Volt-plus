@@ -80,15 +80,55 @@ pub enum Play {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LauncherSection {
+    Play,
+    Worlds,
+    Mods,
+    Shaders,
+    Resources,
+    Replays,
+    Account,
+    Performance,
+    Settings,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplayView {
+    FreeCam,
+    Spectating,
+    PathPreview,
+    Rendering,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Status {
     /// The player turned Rich Presence off: the activity is cleared.
     Off,
     Menus,
+    Launcher(LauncherSection),
+    Replay {
+        view: ReplayView,
+        paused: bool,
+    },
     World {
         play: Play,
         dimension: Dimension,
         mode: GameMode,
     },
+}
+
+/// Optional rich context shown alongside [`Status`] when available. Kept separate
+/// from [`Status`] so [`Status`] stays `Copy` and privacy-sensitive details can
+/// remain omitted in public multiplayer tests.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PresenceDetails {
+    pub world_name: Option<String>,
+    pub replay_name: Option<String>,
+    pub day: Option<u64>,
+    pub hearts: Option<u8>,
+    pub shaders_active: bool,
+    pub recording_replay: bool,
+    pub screen_recording: bool,
 }
 
 /// What the game wants shown, and since when it has been in a world.
@@ -104,10 +144,10 @@ impl Wanted {
         if self.status == status {
             return false;
         }
-        let in_world = |s: Status| matches!(s, Status::World { .. });
-        if !in_world(status) {
+        let in_session = |s: Status| matches!(s, Status::World { .. } | Status::Replay { .. });
+        if !in_session(status) {
             self.since = None;
-        } else if !in_world(self.status) {
+        } else if !in_session(self.status) {
             self.since = Some(now);
         }
         self.status = status;
@@ -117,6 +157,7 @@ impl Wanted {
 
 struct Shared {
     wanted: Wanted,
+    details: PresenceDetails,
     stop: bool,
     stopped: bool,
 }
@@ -124,6 +165,15 @@ static SHARED: Mutex<Shared> = Mutex::new(Shared {
     wanted: Wanted {
         status: Status::Menus,
         since: None,
+    },
+    details: PresenceDetails {
+        world_name: None,
+        replay_name: None,
+        day: None,
+        hearts: None,
+        shaders_active: false,
+        recording_replay: false,
+        screen_recording: false,
     },
     stop: false,
     stopped: false,
@@ -193,17 +243,26 @@ pub fn start(enabled: bool, automated: bool) {
 
 /// What the player does now; only a change is published. Free without [`start`] or a sink.
 pub fn set(status: Status) {
+    set_detailed(status, PresenceDetails::default());
+}
+
+/// Updates Rich Presence with rich world/replay/launcher context. Only emits an
+/// IPC or platform update when either `status` or `details` changes.
+pub fn set_detailed(status: Status, details: PresenceDetails) {
     if let Some(sink) = SINK.get() {
         // The platform publishes a whole card per change; the desktop thread wakes instead.
-        let wanted = {
+        let (wanted, details) = {
             let mut shared = lock();
-            if !shared.wanted.update(status, unix_now()) {
+            let status_changed = shared.wanted.update(status, unix_now());
+            let details_changed = shared.details != details;
+            if !status_changed && !details_changed {
                 return;
             }
-            shared.wanted
+            shared.details = details;
+            (shared.wanted, shared.details.clone())
         };
         let session = SESSION.get().copied().unwrap_or(0);
-        match platform_activity(wanted.status, wanted.since, session) {
+        match platform_activity_with_details(wanted.status, wanted.since, session, &details) {
             Some(card) => (sink.publish)(&card.to_string()),
             None => (sink.clear)(),
         }
@@ -212,7 +271,12 @@ pub fn set(status: Status) {
     let Some(thread) = THREAD.get() else {
         return;
     };
-    if lock().wanted.update(status, unix_now()) {
+    let mut shared = lock();
+    let status_changed = shared.wanted.update(status, unix_now());
+    let details_changed = shared.details != details;
+    if status_changed || details_changed {
+        shared.details = details;
+        drop(shared);
         thread.unpark();
     }
 }
@@ -245,13 +309,13 @@ fn unix_now() -> u64 {
 
 fn run() {
     let mut client: Option<Client> = None;
-    let mut sent: Option<(Wanted, Instant)> = None;
+    let mut sent: Option<(Wanted, PresenceDetails, Instant)> = None;
     let mut last_try: Option<Instant> = None;
     let mut limit = RateLimit::default();
     loop {
-        let (wanted, stop) = {
+        let (wanted, details, stop) = {
             let s = lock();
-            (s.wanted, s.stop)
+            (s.wanted, s.details.clone(), s.stop)
         };
         if stop || wanted.status == Status::Off {
             if let Some(mut c) = client.take() {
@@ -279,10 +343,12 @@ fn run() {
                 continue;
             }
         }
-        let due = sent.is_none_or(|(w, at)| w != wanted || now - at >= REFRESH);
+        let due = sent
+            .as_ref()
+            .is_none_or(|(w, d, at)| *w != wanted || *d != details || now - *at >= REFRESH);
         if !due {
-            let (_, at) = sent.expect("sent");
-            std::thread::park_timeout(REFRESH - (now - at));
+            let (_, _, at) = sent.as_ref().expect("sent");
+            std::thread::park_timeout(REFRESH - (now - *at));
             continue;
         }
         let wait = limit.wait(now);
@@ -292,12 +358,13 @@ fn run() {
         }
         limit.record(now);
         let c = client.as_mut().expect("connected");
-        match c.set_activity(activity(
+        match c.set_activity(activity_with_details(
             wanted.status,
             wanted.since,
             SESSION.get().copied().unwrap_or(0),
+            &details,
         )) {
-            Ok(()) => sent = Some((wanted, now)),
+            Ok(()) => sent = Some((wanted, details, now)),
             Err(e) => {
                 log::info!("Volt+: Discord presence disconnected ({e})");
                 client = None;
@@ -310,8 +377,19 @@ fn run() {
 /// The card Discord shows for `status`; `None` clears it. Discord gives a card two lines of
 /// text, two pictures with their own tooltip, a start time (so it counts up), a party size and
 /// two buttons: all of them are used, and every line stays under Discord's 128 characters.
+#[allow(dead_code)]
 fn activity(status: Status, since: Option<u64>, session: u64) -> Option<Value> {
-    let (details, state, place, start, party) = card_lines(status, since, session)?;
+    activity_with_details(status, since, session, &PresenceDetails::default())
+}
+
+fn activity_with_details(
+    status: Status,
+    since: Option<u64>,
+    session: u64,
+    extra: &PresenceDetails,
+) -> Option<Value> {
+    let (details, state, place, start, party) =
+        card_lines_with_details(status, since, session, extra)?;
     let mut assets = json!({
         "large_image": LOGO_ASSET,
         "large_text": format!("{PRODUCT} {VERSION}"),
@@ -344,8 +422,19 @@ fn activity(status: Status, since: Option<u64>, session: u64) -> Option<Value> {
 
 /// The card the phone's Discord app shows: the Social SDK's own shape, whose pictures and
 /// clickable lines take plain addresses, so a card is detailed without uploading any asset.
+#[allow(dead_code)]
 fn platform_activity(status: Status, since: Option<u64>, session: u64) -> Option<Value> {
-    let (details, state, _place, start, party) = card_lines(status, since, session)?;
+    platform_activity_with_details(status, since, session, &PresenceDetails::default())
+}
+
+fn platform_activity_with_details(
+    status: Status,
+    since: Option<u64>,
+    session: u64,
+    extra: &PresenceDetails,
+) -> Option<Value> {
+    let (details, state, _place, start, party) =
+        card_lines_with_details(status, since, session, extra)?;
     let mut a = json!({
         // "Playing Volt+": the card is the app's, so its name is the product's.
         "name": PRODUCT,
@@ -379,10 +468,20 @@ fn platform_activity(status: Status, since: Option<u64>, session: u64) -> Option
 
 /// The two lines, the dimension, the clock and the party a card is made of; `None` when the
 /// card must be cleared. Both transports share it, so they can never say different things.
+#[allow(dead_code)]
 fn card_lines(
     status: Status,
     since: Option<u64>,
     session: u64,
+) -> Option<(String, String, Option<Dimension>, u64, Option<usize>)> {
+    card_lines_with_details(status, since, session, &PresenceDetails::default())
+}
+
+fn card_lines_with_details(
+    status: Status,
+    since: Option<u64>,
+    session: u64,
+    extra: &PresenceDetails,
 ) -> Option<(String, String, Option<Dimension>, u64, Option<usize>)> {
     match status {
         Status::Off => None,
@@ -393,6 +492,51 @@ fn card_lines(
             session,
             None,
         )),
+        Status::Launcher(section) => {
+            let section_label = match section {
+                LauncherSection::Play => format!("In the {PRODUCT} Launcher"),
+                LauncherSection::Worlds => "Browsing Worlds & Servers".to_owned(),
+                LauncherSection::Mods => "Browsing Modrinth Mods".to_owned(),
+                LauncherSection::Shaders => "Configuring Volt+ Shaders".to_owned(),
+                LauncherSection::Resources => "Browsing Resource Packs".to_owned(),
+                LauncherSection::Replays => "Browsing Replay Archive".to_owned(),
+                LauncherSection::Account => "Managing Accounts".to_owned(),
+                LauncherSection::Performance => "Checking Performance Telemetry".to_owned(),
+                LauncherSection::Settings => "Configuring Volt+ Settings".to_owned(),
+            };
+            Some((
+                section_label,
+                format!("{PRODUCT} {VERSION} • {}", platform()),
+                None,
+                session,
+                None,
+            ))
+        }
+        Status::Replay { view, paused } => {
+            let title = extra
+                .replay_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let details = match title {
+                Some(name) => format!("Watching Replay • {name}"),
+                None => "Watching Replay".to_owned(),
+            };
+            let mode = match view {
+                ReplayView::FreeCam => "Free-Cam",
+                ReplayView::Spectating => "Spectating",
+                ReplayView::PathPreview => "Path Preview",
+                ReplayView::Rendering => "Exporting Video",
+            };
+            let mut state = mode.to_owned();
+            if paused {
+                state.push_str(" • Paused");
+            }
+            if extra.shaders_active {
+                state.push_str(" • Volt+ Shaders");
+            }
+            Some((details, state, None, since.unwrap_or(session), None))
+        }
         Status::World {
             play,
             dimension,
@@ -400,17 +544,40 @@ fn card_lines(
         } => {
             let place = place_name(dimension);
             let mode = mode_name(mode);
-            let details = match play {
-                Play::Singleplayer => format!("{mode} • Singleplayer"),
+            let world_label = extra
+                .world_name
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let mut details = match play {
+                Play::Singleplayer => match world_label {
+                    Some(name) => format!("{mode} • {name}"),
+                    None => format!("{mode} • Singleplayer"),
+                },
                 Play::Multiplayer { players: 0 } => format!("{mode} • Multiplayer"),
                 Play::Multiplayer { players } => format!("{mode} • Multiplayer, {players} online"),
-                Play::Hosting { .. } => format!("{mode} • LAN world"),
+                Play::Hosting { .. } => match world_label {
+                    Some(name) => format!("{mode} • LAN: {name}"),
+                    None => format!("{mode} • LAN world"),
+                },
             };
+            if extra.recording_replay || extra.screen_recording {
+                details.push_str(" • REC");
+            }
             let max = crate::lan::MAX_PLAYERS;
-            let state = match play {
+            let mut state = match play {
                 Play::Hosting { players } => format!("{place} • {players} of {max} players"),
                 _ => place.to_owned(),
             };
+            if let Some(day) = extra.day {
+                state.push_str(&format!(" • Day {day}"));
+            }
+            if let Some(hearts) = extra.hearts {
+                state.push_str(&format!(" • {hearts}♥"));
+            }
+            if extra.shaders_active {
+                state.push_str(" • Volt+ Shaders");
+            }
             let party = match play {
                 Play::Hosting { players } => Some(players.clamp(1, max)),
                 _ => None,
@@ -777,6 +944,43 @@ mod tests {
         .unwrap();
         assert_eq!(desktop["details"], card["details"]);
         assert_eq!(desktop["state"], card["state"]);
+
+        let launcher = activity(Status::Launcher(LauncherSection::Worlds), None, 900).unwrap();
+        assert_eq!(launcher["details"], "Browsing Worlds & Servers");
+
+        let replay = activity_with_details(
+            Status::Replay {
+                view: ReplayView::FreeCam,
+                paused: false,
+            },
+            Some(50),
+            900,
+            &PresenceDetails {
+                replay_name: Some("Boss Fight".into()),
+                shaders_active: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(replay["details"], "Watching Replay • Boss Fight");
+        assert_eq!(replay["state"], "Free-Cam • Volt+ Shaders");
+
+        let rich_world = activity_with_details(
+            world(Play::Singleplayer, Dimension::Overworld),
+            Some(100),
+            900,
+            &PresenceDetails {
+                world_name: Some("Survival Island".into()),
+                day: Some(12),
+                hearts: Some(10),
+                shaders_active: true,
+                recording_replay: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rich_world["details"], "Survival • Survival Island • REC");
+        assert_eq!(rich_world["state"], "In the Overworld • Day 12 • 10♥ • Volt+ Shaders");
     }
 
     #[test]

@@ -8,6 +8,7 @@ pub(crate) struct LaunchRequest {
     pub session_file: Option<PathBuf>,
     pub offline_name: String,
     pub server: String,
+    pub world: Option<String>,
     pub replay_path: Option<PathBuf>,
     pub control_socket: Option<PathBuf>,
     pub extra_arguments: Vec<String>,
@@ -41,6 +42,8 @@ impl LaunchRequest {
                 "--replay".into(),
                 replay.to_string_lossy().into_owned(),
             ]);
+        } else if let Some(world) = &self.world {
+            args.extend(["--world".into(), world.clone()]);
         } else if !self.server.is_empty() {
             args.extend(["--server".into(), self.server.clone()]);
         }
@@ -83,6 +86,7 @@ mod tests {
             session_file: None,
             offline_name: "Offline".into(),
             server: "example.test".into(),
+            world: None,
             replay_path: None,
             control_socket: None,
             extra_arguments: vec![],
@@ -114,5 +118,13 @@ mod tests {
                 .windows(2)
                 .any(|a| a == ["--server", "example.test"])
         );
+    }
+    #[test]
+    fn world_launch_wins_over_server() {
+        let mut r = request();
+        r.world = Some("My World".into());
+        let args = r.arguments();
+        assert!(args.windows(2).any(|a| a == ["--world", "My World"]));
+        assert!(!args.iter().any(|a| a == "--server"));
     }
 }

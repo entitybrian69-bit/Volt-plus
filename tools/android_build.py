@@ -140,11 +140,11 @@ def main():
         raise FileNotFoundError('Requested Android build-tools or NDK version is not installed')
     ndk = ndk_root / 'toolchains/llvm/prebuilt' / ('windows-x86_64' if os.name == 'nt' else 'linux-x86_64')
     target = TARGETS[args.abi]
-    # NDK spells the ARMv7 compiler triple differently from Rust. Android 8.1
-    # is the legacy build's floor; the modern builds keep their existing floor.
+    # NDK spells the ARMv7 compiler triple differently from Rust. Android 8.0
+    # (API 26) is the floor for AAudio (`cpal`) and pointer capture guards.
     compiler_target = 'armv7a-linux-androideabi' if args.abi == 'armeabi-v7a' else target
     legacy = args.abi in ('armeabi-v7a', 'x86')
-    min_sdk = 27 if legacy else 28
+    min_sdk = 26
     features = ['--no-default-features', '--features', 'audio'] if legacy else []
     manifests = [(['-p', 'horizon-android'], features)]
     environment = dict(os.environ)

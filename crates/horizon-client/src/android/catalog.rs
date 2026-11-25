@@ -427,6 +427,7 @@ impl CompilerMode {
 #[derive(Clone, Copy, PartialEq)]
 pub enum Page {
     Play,
+    Worlds,
     Mods,
     Packs,
     ControlsStudio,
@@ -438,8 +439,9 @@ pub enum Page {
     Skins,
 }
 impl Page {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Play,
+        Self::Worlds,
         Self::Mods,
         Self::Packs,
         Self::ControlsStudio,
@@ -452,6 +454,7 @@ impl Page {
     pub fn name(self) -> &'static str {
         match self {
             Page::Play => "Play",
+            Page::Worlds => "Worlds",
             Page::Mods => "Mods",
             Page::Packs => "Resource Pack",
             Page::ControlsStudio => "Controls Studio",
@@ -503,6 +506,67 @@ impl SettingsCategory {
             Self::Account => "Account",
         }
     }
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum WorldsSubTab {
+    #[default]
+    Worlds,
+    Servers,
+    Discover,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorldSummary {
+    pub folder: String,
+    pub name: String,
+    pub game_mode: i32,
+    pub hardcore: bool,
+    pub version: String,
+    pub commands: bool,
+    pub corrupted: bool,
+    pub locked: bool,
+    pub size_bytes: u64,
+    pub play_time_secs: u64,
+    pub day: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct WorldStatsSummary {
+    pub play_time_secs: u64,
+    pub deaths: u64,
+    pub mob_kills: u64,
+    pub player_kills: u64,
+    pub jumps: u64,
+    pub walked_meters: u64,
+    pub blocks_mined: u64,
+    pub items_crafted: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorldInspection {
+    pub folder: String,
+    pub name: String,
+    pub game_mode: i32,
+    pub hardcore: bool,
+    pub seed: i64,
+    pub dimension: String,
+    pub day: u64,
+    pub health: f32,
+    pub food: i32,
+    pub xp_level: i32,
+    pub difficulty: String,
+    pub allow_commands: bool,
+    pub size_bytes: u64,
+    pub stats: WorldStatsSummary,
+    pub armor: [Option<String>; 4],
+    pub offhand: Option<String>,
+    pub hotbar: Vec<(u8, String, u32)>,
+    pub inventory: Vec<(String, u32)>,
+    pub ender_chest: Vec<(String, u32)>,
+    pub occupied_slots: usize,
+    pub total_items: u64,
+    pub ender_stacks: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -761,6 +825,19 @@ pub struct Catalog {
     pub last_port_result: Option<horizon_port_pack::android_port::AndroidPortResult>,
     pub replays: Vec<horizon_client::replay::ReplaySummary>,
     pub replay_delete_confirm: Option<usize>,
+    pub worlds_sub_tab: WorldsSubTab,
+    pub worlds: Vec<WorldSummary>,
+    pub world_delete_confirm: Option<usize>,
+    pub world_inspection: Option<WorldInspection>,
+    pub servers: Vec<horizon_protocol::servers::ServerEntry>,
+    pub server_delete_confirm: Option<usize>,
+    pub add_server_name: String,
+    pub add_server_ip: String,
+    pub world_search_query: String,
+    pub world_discover_results: Vec<Project>,
+    pub world_discover_busy: bool,
+    world_discover_worker: Option<mpsc::Receiver<Result<Vec<Project>, String>>>,
+    world_discover_install_worker: Option<mpsc::Receiver<Result<String, String>>>,
     worker: Option<mpsc::Receiver<Result<Reply, String>>>,
     search_worker: Option<mpsc::Receiver<Result<Vec<Project>, String>>>,
     icon_worker: Option<mpsc::Receiver<IconData>>,
@@ -810,6 +887,19 @@ impl Catalog {
             results: vec![],
             replays: vec![],
             replay_delete_confirm: None,
+            worlds_sub_tab: WorldsSubTab::Worlds,
+            worlds: vec![],
+            world_delete_confirm: None,
+            world_inspection: None,
+            servers: vec![],
+            server_delete_confirm: None,
+            add_server_name: String::new(),
+            add_server_ip: String::new(),
+            world_search_query: String::new(),
+            world_discover_results: vec![],
+            world_discover_busy: false,
+            world_discover_worker: None,
+            world_discover_install_worker: None,
             icons: HashMap::new(),
             enriched_summaries: HashMap::new(),
             project_modal: None,
@@ -842,6 +932,7 @@ impl Catalog {
         crate::updater::check_in_background();
         result.refresh(home);
         result.refresh_replays(home);
+        result.refresh_worlds(home);
         result
     }
 
@@ -850,6 +941,186 @@ impl Catalog {
         horizon_client::replay::init_settings(&game_home);
         self.replays = horizon_client::replay::list_replays(&game_home);
         self.replay_delete_confirm = None;
+    }
+
+    pub fn refresh_worlds(&mut self, home: &Path) {
+        let game_home = self.config.game_home(home);
+        let saves_dir = game_home.join("saves");
+        let entries = horizon_client::title::list_worlds(&saves_dir);
+        self.worlds = entries
+            .into_iter()
+            .map(|w| {
+                let path = saves_dir.join(&w.folder);
+                let size_bytes = dir_size_bytes(&path, 0);
+                let stats = read_world_stats(&path);
+                let level = horizon_client::save::Level::read_summary(&path);
+                let day = level
+                    .as_ref()
+                    .map_or(1, |l| (l.day_time.max(0) as u64 / 24_000) + 1);
+                let fallback_play = level
+                    .as_ref()
+                    .map_or(0, |l| (l.time.max(0) as u64) / 20);
+                WorldSummary {
+                    folder: w.folder,
+                    name: w.name,
+                    game_mode: w.game_mode,
+                    hardcore: w.hardcore,
+                    version: w.version,
+                    commands: w.commands,
+                    corrupted: w.corrupted,
+                    locked: w.locked,
+                    size_bytes,
+                    play_time_secs: if stats.play_time_secs > 0 {
+                        stats.play_time_secs
+                    } else {
+                        fallback_play
+                    },
+                    day,
+                }
+            })
+            .collect();
+        self.world_delete_confirm = None;
+        self.servers = horizon_protocol::servers::load(&game_home.join("servers.dat"));
+        self.server_delete_confirm = None;
+    }
+
+    pub fn inspect_world(&mut self, home: &Path, idx: usize) {
+        let Some(summary) = self.worlds.get(idx).cloned() else {
+            return;
+        };
+        let world_dir = self.config.game_home(home).join("saves").join(&summary.folder);
+        match build_world_inspection(&world_dir, &summary) {
+            Ok(info) => self.world_inspection = Some(info),
+            Err(err) => self.status = format!("Could not inspect '{}': {err}", summary.name),
+        }
+    }
+
+    pub fn delete_world(&mut self, home: &Path, idx: usize) {
+        let Some(summary) = self.worlds.get(idx).cloned() else {
+            return;
+        };
+        if summary.locked {
+            self.status = format!("'{}' is currently locked by an active session.", summary.name);
+            return;
+        }
+        let world_dir = self.config.game_home(home).join("saves").join(&summary.folder);
+        match std::fs::remove_dir_all(&world_dir) {
+            Ok(()) => {
+                self.world_inspection = None;
+                self.refresh_worlds(home);
+                self.status = format!("Deleted world '{}'.", summary.name);
+            }
+            Err(err) => self.status = format!("Could not delete world: {err}"),
+        }
+    }
+
+    pub fn add_server(&mut self, home: &Path) {
+        let ip = self.add_server_ip.trim().to_owned();
+        if ip.is_empty() {
+            self.status = "Enter a server address first.".into();
+            return;
+        }
+        let name = if self.add_server_name.trim().is_empty() {
+            ip.clone()
+        } else {
+            self.add_server_name.trim().to_owned()
+        };
+        let game_home = self.config.game_home(home);
+        let path = game_home.join("servers.dat");
+        let mut servers = horizon_protocol::servers::load(&path);
+        servers.push(horizon_protocol::servers::ServerEntry::new(&name, &ip));
+        match horizon_protocol::servers::save(&path, &servers) {
+            Ok(()) => {
+                self.servers = servers;
+                self.add_server_name.clear();
+                self.add_server_ip.clear();
+                self.status = format!("Added server '{name}'.");
+            }
+            Err(err) => self.status = format!("Could not save servers.dat: {err}"),
+        }
+    }
+
+    pub fn delete_server(&mut self, home: &Path, idx: usize) {
+        if idx >= self.servers.len() {
+            return;
+        }
+        let removed = self.servers.remove(idx);
+        let path = self.config.game_home(home).join("servers.dat");
+        match horizon_protocol::servers::save(&path, &self.servers) {
+            Ok(()) => {
+                self.server_delete_confirm = None;
+                self.status = format!("Removed server '{}'.", removed.name);
+            }
+            Err(err) => {
+                self.servers.insert(idx, removed);
+                self.status = format!("Could not update servers.dat: {err}");
+            }
+        }
+    }
+
+    pub fn search_discover_worlds(&mut self) {
+        let mut q = Query::new(self.world_search_query.trim(), Kind::DataPack);
+        q.everything = true;
+        q.limit = 20;
+        self.world_discover_busy = true;
+        let (tx, rx) = mpsc::channel();
+        self.world_discover_worker = Some(rx);
+        std::thread::spawn(move || {
+            let res = browser::modrinth::Modrinth.search(&q);
+            let _ = tx.send(res);
+        });
+    }
+
+    pub fn install_discover_world(&mut self, home: &Path, idx: usize) {
+        let Some(project) = self.world_discover_results.get(idx).cloned() else {
+            return;
+        };
+        let game_home = self.config.game_home(home);
+        let (tx, rx) = mpsc::channel();
+        self.world_discover_busy = true;
+        self.world_discover_install_worker = Some(rx);
+        self.status = format!("Downloading '{}'...", project.title);
+        std::thread::spawn(move || {
+            let res = (|| -> Result<String, String> {
+                let versions = browser::modrinth::Modrinth.versions(&project)?;
+                let ver = versions
+                    .first()
+                    .ok_or_else(|| format!("No downloadable files for '{}'", project.title))?;
+                let file = ver
+                    .files
+                    .iter()
+                    .find(|f| f.primary)
+                    .or_else(|| ver.files.first())
+                    .ok_or_else(|| format!("No files in latest version of '{}'", project.title))?;
+                let staging_dir = game_home.join(".cache").join("world-discover");
+                let _ = std::fs::create_dir_all(&staging_dir);
+                let staged = browser::Modrinth.fetch(file, &staging_dir, &|_| {})?;
+                let saves_dir = game_home.join("saves");
+                let _ = std::fs::create_dir_all(&saves_dir);
+                let out = match crate::document_store::extract_world_zip_if_valid(
+                    &staged,
+                    &saves_dir,
+                    &project.slug,
+                )? {
+                    Some(world_folder) => {
+                        let _ = std::fs::remove_file(&staged);
+                        format!("Installed world '{world_folder}' into Worlds!")
+                    }
+                    None => {
+                        let dp_dir = game_home.join("datapacks");
+                        let _ = std::fs::create_dir_all(&dp_dir);
+                        let dest = dp_dir.join(&file.name);
+                        std::fs::rename(&staged, &dest).map_err(|e| e.to_string())?;
+                        format!(
+                            "Downloaded '{}' to datapacks/ (not a full world save .zip with level.dat).",
+                            file.name
+                        )
+                    }
+                };
+                Ok(out)
+            })();
+            let _ = tx.send(res);
+        });
     }
     pub fn show_installed(&mut self, kind: Option<horizon_client::content_files::Kind>) {
         self.searches.cancel_interest();
@@ -1520,6 +1791,45 @@ impl Catalog {
         });
     }
     pub fn poll(&mut self, home: &Path) {
+        if let Some(rx) = &self.world_discover_worker {
+            match rx.try_recv() {
+                Ok(Ok(hits)) => {
+                    self.world_discover_results = hits;
+                    self.world_discover_busy = false;
+                    self.world_discover_worker = None;
+                }
+                Ok(Err(err)) => {
+                    self.status = format!("World search failed: {err}");
+                    self.world_discover_busy = false;
+                    self.world_discover_worker = None;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.world_discover_busy = false;
+                    self.world_discover_worker = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if let Some(rx) = &self.world_discover_install_worker {
+            match rx.try_recv() {
+                Ok(Ok(msg)) => {
+                    self.status = msg;
+                    self.world_discover_busy = false;
+                    self.world_discover_install_worker = None;
+                    self.refresh_worlds(home);
+                }
+                Ok(Err(err)) => {
+                    self.status = format!("World download failed: {err}");
+                    self.world_discover_busy = false;
+                    self.world_discover_install_worker = None;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.world_discover_busy = false;
+                    self.world_discover_install_worker = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
         if let Some(rx) = &self.icon_worker {
             while let Ok((key, w, h, rgba, summary)) = rx.try_recv() {
                 self.icons.insert(key.clone(), (w, h, rgba));
@@ -2890,6 +3200,9 @@ impl Catalog {
             Some("installed_search") => &mut self.installed_query,
             Some("compiler_query") => &mut self.compiler_query,
             Some("fm_rename" | "fm_new_folder") => &mut self.fm_input_text,
+            Some("add_server_name") => &mut self.add_server_name,
+            Some("add_server_ip") => &mut self.add_server_ip,
+            Some("world_search_query") => &mut self.world_search_query,
             _ => &mut self.query,
         };
         match out {
@@ -2927,6 +3240,26 @@ impl Catalog {
                 } else if self.editing == Some("installed_search") {
                     self.editing = None;
                     self.scroll = 0.0;
+                    return;
+                } else if self.editing == Some("add_server_name") {
+                    if matches!(out, Output::Enter) {
+                        self.editing = Some("add_server_ip");
+                        crate::platform::show(&self.add_server_ip);
+                    } else {
+                        self.editing = None;
+                    }
+                    return;
+                } else if self.editing == Some("add_server_ip") {
+                    self.editing = None;
+                    if matches!(out, Output::Enter) && !self.add_server_ip.trim().is_empty() {
+                        self.add_server(home);
+                    }
+                    return;
+                } else if self.editing == Some("world_search_query") {
+                    self.editing = None;
+                    if matches!(out, Output::Enter) {
+                        self.search_discover_worlds();
+                    }
                     return;
                 } else if self.editing == Some("compiler_query") {
                     self.editing = None;
@@ -3366,4 +3699,265 @@ fn clean_markdown_body(raw: &str) -> String {
         }
     }
     out.join("\n")
+}
+
+pub fn format_play_time(secs: u64) -> String {
+    if secs == 0 {
+        return "0m".into();
+    }
+    let hours = secs / 3600;
+    let mins = (secs % 3600) / 60;
+    if hours > 0 {
+        format!("{hours}h {mins}m")
+    } else if mins > 0 {
+        format!("{mins}m")
+    } else {
+        format!("{secs}s")
+    }
+}
+
+pub fn game_mode_label(mode: i32, hardcore: bool) -> &'static str {
+    if hardcore {
+        return "Hardcore";
+    }
+    match mode {
+        1 => "Creative",
+        2 => "Adventure",
+        3 => "Spectator",
+        _ => "Survival",
+    }
+}
+
+pub fn format_item_name(id: &str) -> String {
+    let raw = id.strip_prefix("minecraft:").unwrap_or(id);
+    raw.split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => {
+                    let mut out = first.to_uppercase().to_string();
+                    out.push_str(chars.as_str());
+                    out
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn dir_size_bytes(path: &Path, depth: u8) -> u64 {
+    if depth > 4 {
+        return 0;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return 0;
+    };
+    let mut total = 0_u64;
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if meta.is_file() {
+            total = total.saturating_add(meta.len());
+        } else if meta.is_dir() {
+            total = total.saturating_add(dir_size_bytes(&entry.path(), depth + 1));
+        }
+    }
+    total
+}
+
+fn sum_stat_object(obj: Option<&serde_json::Value>) -> u64 {
+    obj.and_then(|v| v.as_object())
+        .into_iter()
+        .flatten()
+        .filter_map(|(_, val)| val.as_u64())
+        .sum()
+}
+
+pub fn read_world_stats(world_dir: &Path) -> WorldStatsSummary {
+    let stats_dir = world_dir.join("stats");
+    let Ok(entries) = std::fs::read_dir(&stats_dir) else {
+        return WorldStatsSummary::default();
+    };
+    let mut best = WorldStatsSummary::default();
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("json") {
+            continue;
+        }
+        let Ok(raw) = std::fs::read_to_string(&p) else {
+            continue;
+        };
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        let stats = &json["stats"];
+        let custom = &stats["minecraft:custom"];
+        let play_ticks = custom["minecraft:play_time"]
+            .as_u64()
+            .or_else(|| custom["minecraft:play_one_minute"].as_u64())
+            .unwrap_or(0);
+        let candidate = WorldStatsSummary {
+            play_time_secs: play_ticks / 20,
+            deaths: custom["minecraft:deaths"].as_u64().unwrap_or(0),
+            mob_kills: custom["minecraft:mob_kills"].as_u64().unwrap_or(0),
+            player_kills: custom["minecraft:player_kills"].as_u64().unwrap_or(0),
+            jumps: custom["minecraft:jump"].as_u64().unwrap_or(0),
+            walked_meters: custom["minecraft:walk_one_cm"].as_u64().unwrap_or(0) / 100,
+            blocks_mined: sum_stat_object(stats.get("minecraft:mined")),
+            items_crafted: sum_stat_object(stats.get("minecraft:crafted")),
+        };
+        if candidate.play_time_secs >= best.play_time_secs {
+            best = candidate;
+        }
+    }
+    best
+}
+
+pub fn build_world_inspection(
+    world_dir: &Path,
+    summary: &WorldSummary,
+) -> Result<WorldInspection, String> {
+    let level = horizon_client::save::Level::read(world_dir)
+        .ok_or_else(|| "Could not read level.dat".to_owned())?;
+    let mut stats = read_world_stats(world_dir);
+    if stats.play_time_secs == 0 && level.time > 0 {
+        stats.play_time_secs = (level.time as u64) / 20;
+    }
+
+    let mut armor: [Option<String>; 4] = [None, None, None, None];
+    let mut offhand: Option<String> = None;
+    let mut hotbar: Vec<(u8, String, u32)> = Vec::new();
+    let mut inv_counts: HashMap<String, u32> = HashMap::new();
+    let mut occupied_slots = 0usize;
+    let mut total_items = 0u64;
+
+    for (slot, id, count, _damage) in &level.inventory {
+        let pretty = format_item_name(id);
+        match *slot {
+            100..=103 => {
+                armor[usize::from(*slot - 100)] = Some(pretty);
+            }
+            150 => {
+                offhand = Some(if *count > 1 {
+                    format!("{pretty} x{count}")
+                } else {
+                    pretty
+                });
+            }
+            0..=35 => {
+                occupied_slots += 1;
+                total_items = total_items.saturating_add(u64::from(*count));
+                if *slot < 9 {
+                    hotbar.push((*slot, pretty.clone(), *count));
+                }
+                *inv_counts.entry(pretty).or_insert(0) += *count;
+            }
+            _ => {}
+        }
+    }
+    hotbar.sort_by_key(|(s, _, _)| *s);
+    let mut inventory: Vec<(String, u32)> = inv_counts.into_iter().collect();
+    inventory.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    inventory.truncate(16);
+
+    let mut ender_counts: HashMap<String, u32> = HashMap::new();
+    let mut ender_stacks = 0usize;
+    for stack in level.ender_items.iter().flatten() {
+        ender_stacks += 1;
+        let pretty = format_item_name(&stack.item.to_string());
+        *ender_counts.entry(pretty).or_insert(0) += stack.count;
+    }
+    let mut ender_chest: Vec<(String, u32)> = ender_counts.into_iter().collect();
+    ender_chest.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    ender_chest.truncate(12);
+
+    let dim = match level.dimension.as_str() {
+        "minecraft:the_nether" => "Nether".to_owned(),
+        "minecraft:the_end" => "The End".to_owned(),
+        "minecraft:overworld" | "" => "Overworld".to_owned(),
+        other => format_item_name(other),
+    };
+
+    Ok(WorldInspection {
+        folder: summary.folder.clone(),
+        name: if level.name.is_empty() {
+            summary.name.clone()
+        } else {
+            level.name
+        },
+        game_mode: level.game_mode,
+        hardcore: level.hardcore,
+        seed: level.seed,
+        dimension: dim,
+        day: (level.day_time.max(0) as u64 / 24_000) + 1,
+        health: level.health,
+        food: level.food,
+        xp_level: level.xp_level,
+        difficulty: if level.difficulty.is_empty() {
+            "Normal".into()
+        } else {
+            format_item_name(&level.difficulty)
+        },
+        allow_commands: level.allow_commands.unwrap_or(summary.commands),
+        size_bytes: summary.size_bytes,
+        stats,
+        armor,
+        offhand,
+        hotbar,
+        inventory,
+        ender_chest,
+        occupied_slots,
+        total_items,
+        ender_stacks,
+    })
+}
+
+#[cfg(test)]
+mod world_tests {
+    use super::*;
+
+    #[test]
+    fn formats_item_and_play_time_cleanly() {
+        assert_eq!(format_item_name("minecraft:diamond_sword"), "Diamond Sword");
+        assert_eq!(format_item_name("oak_planks"), "Oak Planks");
+        assert_eq!(format_play_time(0), "0m");
+        assert_eq!(format_play_time(45), "45s");
+        assert_eq!(format_play_time(3720), "1h 2m");
+        assert_eq!(game_mode_label(1, false), "Creative");
+        assert_eq!(game_mode_label(0, true), "Hardcore");
+    }
+
+    #[test]
+    fn reads_vanilla_stats_json_into_summary() {
+        let dir = std::env::temp_dir().join(format!("volt-world-stats-{}", std::process::id()));
+        let stats_dir = dir.join("stats");
+        let _ = std::fs::create_dir_all(&stats_dir);
+        std::fs::write(
+            stats_dir.join("player.json"),
+            r#"{
+                "stats": {
+                    "minecraft:custom": {
+                        "minecraft:play_time": 72000,
+                        "minecraft:deaths": 3,
+                        "minecraft:mob_kills": 19,
+                        "minecraft:jump": 420,
+                        "minecraft:walk_one_cm": 250000
+                    },
+                    "minecraft:mined": { "minecraft:stone": 80, "minecraft:iron_ore": 12 },
+                    "minecraft:crafted": { "minecraft:torch": 32 }
+                }
+            }"#,
+        )
+        .unwrap();
+        let summary = read_world_stats(&dir);
+        assert_eq!(summary.play_time_secs, 3600);
+        assert_eq!(summary.deaths, 3);
+        assert_eq!(summary.mob_kills, 19);
+        assert_eq!(summary.jumps, 420);
+        assert_eq!(summary.walked_meters, 2500);
+        assert_eq!(summary.blocks_mined, 92);
+        assert_eq!(summary.items_crafted, 32);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

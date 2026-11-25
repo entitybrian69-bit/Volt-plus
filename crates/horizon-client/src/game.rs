@@ -15161,7 +15161,9 @@ impl Game<'_> {
             }
             let in_menu = self.pad_in_menu();
             let waiting_for_key = self.screen == Screen::Options && self.options_waiting_for_key();
-            let show_controls = (!in_menu || self.pad.touch.settings.overlay_show_controls_in_menus)
+            let show_controls = (!in_menu
+                || self.pad.touch.settings.overlay_show_controls_in_menus
+                || self.pad.touch.has_menu_visible_custom())
                 && !waiting_for_key
                 && (!self.ui.hide_gui || in_menu)
                 && self.replay.is_none();
@@ -16854,6 +16856,10 @@ impl Game<'_> {
             if touch.phase == TouchPhase::Cancelled {
                 self.pad.hotbar_finger = None;
                 self.pad.touch.clear();
+                self.pad.touch_ui.replay_look_finger = None;
+                self.pad.touch_ui.replay_fly_pad = None;
+                self.pad.touch_ui.replay_fly_vert = None;
+                self.pad.touch_ui.replay_timeline_drag = None;
                 return;
             }
             let overlay_point = [
@@ -16920,15 +16926,21 @@ impl Game<'_> {
                     self.pad.touch.projectile_crosshair = self.touch_projectile_crosshair();
                     self.pad.touch.hold_uses_item = self.touch_item_held_use();
                 }
-                let raw_delta = self.pad.touch.update(
-                    touch.id,
-                    [
-                        touch.location.x as f32 / size.width.max(1) as f32,
-                        touch.location.y as f32 / size.height.max(1) as f32,
-                    ],
-                    touch.phase == TouchPhase::Started,
-                    matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled),
-                );
+                let raw_delta = if self.replay.is_some() {
+                    self.pad.touch_ui.replay_look_update(
+                        touch.id,
+                        overlay_point,
+                        touch.phase == TouchPhase::Started,
+                        matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled),
+                    )
+                } else {
+                    self.pad.touch.update(
+                        touch.id,
+                        overlay_point,
+                        touch.phase == TouchPhase::Started,
+                        matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled),
+                    )
+                };
                 if self.pad.touch.has_pending_key_events() {
                     self.android_custom_events();
                     self.pad.touch.projectile_crosshair = self.touch_projectile_crosshair();
@@ -16994,7 +17006,6 @@ impl Game<'_> {
                 }
                 self.android_sync_pointer();
                 if !touch_controls_hidden
-                    && self.pad.touch.settings.overlay_show_controls_in_menus
                     && (self.pad.touch.owns_pointer(touch.id)
                         || (touch.phase == TouchPhase::Started
                             && self.pad.touch.custom_at(overlay_point).is_some()))

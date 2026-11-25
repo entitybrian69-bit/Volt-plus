@@ -384,6 +384,20 @@ pub(super) enum Action {
     ReplayToggleAutoSp,
     ReplayToggleAutoMp,
     ReplayToggleRecordSelf,
+    // Worlds, Servers & World Analysis tab
+    SetWorldsSubTab(crate::catalog::WorldsSubTab),
+    RefreshWorlds,
+    PlayWorld(usize),
+    InspectWorld(usize),
+    CloseWorldInspection,
+    DeleteWorld(usize),
+    ImportWorldZip,
+    ImportWorldFolder,
+    JoinServer(usize),
+    DeleteServer(usize),
+    AddServer,
+    SearchDiscoverWorlds,
+    InstallDiscoverWorld(usize),
     RenderDistDelta(i32),
     SimDistDelta(i32),
     CycleMaxFps,
@@ -839,6 +853,7 @@ enum SettingControl<'a> {
 fn page_icon(page: Page) -> Icon {
     match page {
         Page::Play => Icon::Play,
+        Page::Worlds => Icon::Folder,
         Page::Mods => Icon::Mods,
         Page::Packs => Icon::Packs,
         Page::ControlsStudio => Icon::Gamepad,
@@ -1340,6 +1355,7 @@ impl Launcher {
 
         let nav_pages = [
             Page::Play,
+            Page::Worlds,
             Page::Mods,
             Page::Packs,
             Page::ControlsStudio,
@@ -2043,6 +2059,8 @@ impl Launcher {
                 my3_muted(),
                 &fitted_page_info,
             );
+        } else if page == Page::Worlds {
+            self.draw_worlds_page(&mut ui, content_x, content_w, h, compact, slide_y);
         } else if page == Page::ControlsStudio {
             self.draw_controls_studio_page(&mut ui, content_x, content_w, h, compact, slide_y);
         } else if page == Page::Compiler {
@@ -2893,6 +2911,556 @@ impl Launcher {
                 }
             }
         });
+    }
+
+    fn draw_worlds_page(
+        &mut self,
+        ui: &mut Ui,
+        content_x: f32,
+        content_w: f32,
+        h: f32,
+        compact: bool,
+        slide_y: f32,
+    ) {
+        use crate::catalog::{WorldsSubTab, format_play_time, game_mode_label};
+
+        let header_y = 60.0 + slide_y;
+        if let Some(info) = self.catalog.world_inspection.clone() {
+            ui.text(
+                Face::SemiBold,
+                18.0,
+                content_x,
+                header_y + 2.0,
+                my3_text(),
+                &ui.fit_text(Face::SemiBold, 18.0, &info.name, content_w - 196.0),
+            );
+            let back_r = [content_x + content_w - 86.0, header_y, 86.0, 30.0];
+            button(ui, &mut self.targets, back_r, "Back", Action::CloseWorldInspection, false);
+            if let Some(idx) = self.catalog.worlds.iter().position(|w| w.folder == info.folder) {
+                let play_r = [content_x + content_w - 184.0, header_y, 90.0, 30.0];
+                button(ui, &mut self.targets, play_r, "Play World", Action::PlayWorld(idx), true);
+            }
+
+            let list_top = 98.0 + slide_y;
+            let list_bottom = (h - 46.0).max(list_top + 60.0);
+            let mut y_cursor = 0.0_f32;
+            let card_gap = 10.0;
+            let overview_h = if compact { 126.0 } else { 104.0 };
+            let analytics_h = if compact { 126.0 } else { 104.0 };
+            let equip_h = 108.0;
+            let inv_rows = (info.inventory.len().min(12) + 1) / 2;
+            let inv_h = (56.0 + inv_rows as f32 * 20.0).max(82.0);
+            let ender_rows = (info.ender_chest.len().min(8) + 1) / 2;
+            let ender_h = if info.ender_chest.is_empty() {
+                68.0
+            } else {
+                54.0 + ender_rows as f32 * 20.0
+            };
+            let total_h = overview_h + analytics_h + equip_h + inv_h + ender_h + card_gap * 5.0;
+            let max_scroll = (total_h - (list_bottom - list_top)).max(0.0);
+            self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
+            self.list_view = Some([list_top, list_bottom, max_scroll]);
+
+            ui.clipped([content_x - 2.0, list_top, content_w + 4.0, list_bottom - list_top], |ui| {
+                // Card 1: World & Player Overview
+                let cy = list_top + y_cursor - self.catalog.scroll;
+                if cy + overview_h >= list_top && cy <= list_bottom {
+                    ui.rounded(content_x, cy, content_w, overview_h, 13.0, my3_card_bg());
+                    ui.border(content_x, cy, content_w, overview_h, 13.0, my3_card_border());
+                    ui.text(Face::SemiBold, 13.0, content_x + 14.0, cy + 11.0, my3_text(), "World & Player Overview");
+                    let mode_s = game_mode_label(info.game_mode, info.hardcore);
+                    let size_mb = info.size_bytes as f64 / 1_048_576.0;
+                    let line1 = ui.fit_text(
+                        Face::Regular,
+                        10.6,
+                        &format!(
+                            "{mode_s}  •  {}  •  Day {}  •  Difficulty: {}  •  {size_mb:.1} MB",
+                            info.dimension, info.day, info.difficulty
+                        ),
+                        content_w - 28.0,
+                    );
+                    ui.text(Face::Regular, 10.6, content_x + 14.0, cy + 34.0, my3_muted(), &line1);
+                    let hearts = (info.health / 2.0).max(0.0);
+                    let line2 = ui.fit_text(
+                        Face::Regular,
+                        10.6,
+                        &format!(
+                            "Health: {hearts:.1}/10 ♥  •  Hunger: {}/20  •  XP Level: {}  •  Commands: {}",
+                            info.food,
+                            info.xp_level,
+                            if info.allow_commands { "ON" } else { "OFF" }
+                        ),
+                        content_w - 28.0,
+                    );
+                    ui.text(Face::Regular, 10.6, content_x + 14.0, cy + 54.0, my3_text(), &line2);
+                    let line3 = ui.fit_text(
+                        Face::Regular,
+                        10.2,
+                        &format!("Seed: {}  •  Folder: saves/{}", info.seed, info.folder),
+                        content_w - 28.0,
+                    );
+                    ui.text(Face::Regular, 10.2, content_x + 14.0, cy + 74.0, my3_muted(), &line3);
+                }
+                y_cursor += overview_h + card_gap;
+
+                // Card 2: Play Analysis (stats/*.json)
+                let ay = list_top + y_cursor - self.catalog.scroll;
+                if ay + analytics_h >= list_top && ay <= list_bottom {
+                    ui.rounded(content_x, ay, content_w, analytics_h, 13.0, my3_card_bg());
+                    ui.border(content_x, ay, content_w, analytics_h, 13.0, my3_card_border());
+                    ui.text(Face::SemiBold, 13.0, content_x + 14.0, ay + 11.0, my3_text(), "Play Analysis & Session Stats");
+                    let st = &info.stats;
+                    let walked_km = st.walked_meters as f64 / 1000.0;
+                    let s1 = ui.fit_text(
+                        Face::Regular,
+                        10.8,
+                        &format!(
+                            "Play Time: {}   •   Blocks Mined: {}   •   Items Crafted: {}",
+                            format_play_time(st.play_time_secs),
+                            st.blocks_mined,
+                            st.items_crafted
+                        ),
+                        content_w - 28.0,
+                    );
+                    ui.text(Face::Regular, 10.8, content_x + 14.0, ay + 35.0, my3_text(), &s1);
+                    let s2 = ui.fit_text(
+                        Face::Regular,
+                        10.6,
+                        &format!(
+                            "Mob Kills: {}   •   Deaths: {}   •   Jumps: {}   •   Walked: {walked_km:.2} km",
+                            st.mob_kills, st.deaths, st.jumps
+                        ),
+                        content_w - 28.0,
+                    );
+                    ui.text(Face::Regular, 10.6, content_x + 14.0, ay + 57.0, my3_muted(), &s2);
+                    let s3 = ui.fit_text(
+                        Face::Regular,
+                        10.2,
+                        &format!(
+                            "Hotbar: {}/9 used   •   Inventory: {}/36 slots ({} items)   •   Ender Chest: {}/27 stacks",
+                            info.hotbar.len(), info.occupied_slots, info.total_items, info.ender_stacks
+                        ),
+                        content_w - 28.0,
+                    );
+                    ui.text(Face::Regular, 10.2, content_x + 14.0, ay + 77.0, my3_text(), &s3);
+                }
+                y_cursor += analytics_h + card_gap;
+
+                // Card 3: Equipped Armor & Offhand + Hotbar
+                let ey = list_top + y_cursor - self.catalog.scroll;
+                if ey + equip_h >= list_top && ey <= list_bottom {
+                    ui.rounded(content_x, ey, content_w, equip_h, 13.0, my3_card_bg());
+                    ui.border(content_x, ey, content_w, equip_h, 13.0, my3_card_border());
+                    ui.text(Face::SemiBold, 13.0, content_x + 14.0, ey + 11.0, my3_text(), "Equipped Gear & Hotbar");
+                    let armor_str = format!(
+                        "Head: {}  •  Chest: {}  •  Legs: {}  •  Feet: {}",
+                        info.armor[3].as_deref().unwrap_or("Empty"),
+                        info.armor[2].as_deref().unwrap_or("Empty"),
+                        info.armor[1].as_deref().unwrap_or("Empty"),
+                        info.armor[0].as_deref().unwrap_or("Empty"),
+                    );
+                    let armor_fit = ui.fit_text(Face::Regular, 10.4, &armor_str, content_w - 28.0);
+                    ui.text(Face::Regular, 10.4, content_x + 14.0, ey + 34.0, my3_muted(), &armor_fit);
+                    let off_str = format!("Offhand: {}", info.offhand.as_deref().unwrap_or("Empty"));
+                    ui.text(Face::Regular, 10.4, content_x + 14.0, ey + 54.0, my3_text(), &off_str);
+                    let hb_line = if info.hotbar.is_empty() {
+                        "Hotbar: Empty".to_owned()
+                    } else {
+                        info.hotbar
+                            .iter()
+                            .take(6)
+                            .map(|(s, name, cnt)| {
+                                if *cnt > 1 {
+                                    format!("[{}] {name} x{cnt}", s + 1)
+                                } else {
+                                    format!("[{}] {name}", s + 1)
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("  •  ")
+                    };
+                    let hb_fit = ui.fit_text(Face::Regular, 10.2, &hb_line, content_w - 28.0);
+                    ui.text(Face::Regular, 10.2, content_x + 14.0, ey + 75.0, my3_muted(), &hb_fit);
+                }
+                y_cursor += equip_h + card_gap;
+
+                // Card 4: Main Inventory Summary
+                let iy = list_top + y_cursor - self.catalog.scroll;
+                if iy + inv_h >= list_top && iy <= list_bottom {
+                    ui.rounded(content_x, iy, content_w, inv_h, 13.0, my3_card_bg());
+                    ui.border(content_x, iy, content_w, inv_h, 13.0, my3_card_border());
+                    ui.text(
+                        Face::SemiBold,
+                        13.0,
+                        content_x + 14.0,
+                        iy + 11.0,
+                        my3_text(),
+                        &format!("Inventory Breakdown ({} items across {} slots)", info.total_items, info.occupied_slots),
+                    );
+                    if info.inventory.is_empty() {
+                        ui.text(Face::Regular, 10.5, content_x + 14.0, iy + 38.0, my3_muted(), "Inventory is empty.");
+                    } else {
+                        let col_w = (content_w - 36.0) * 0.5;
+                        for (idx, (item_name, count)) in info.inventory.iter().take(12).enumerate() {
+                            let col = idx % 2;
+                            let row = idx / 2;
+                            let ix = content_x + 14.0 + col as f32 * (col_w + 8.0);
+                            let i_y = iy + 36.0 + row as f32 * 20.0;
+                            let txt = ui.fit_text(Face::Regular, 10.4, &format!("{item_name}  x{count}"), col_w);
+                            ui.text(Face::Regular, 10.4, ix, i_y, my3_text(), &txt);
+                        }
+                    }
+                }
+                y_cursor += inv_h + card_gap;
+
+                // Card 5: Ender Chest Summary
+                let cy2 = list_top + y_cursor - self.catalog.scroll;
+                if cy2 + ender_h >= list_top && cy2 <= list_bottom {
+                    ui.rounded(content_x, cy2, content_w, ender_h, 13.0, my3_card_bg());
+                    ui.border(content_x, cy2, content_w, ender_h, 13.0, my3_card_border());
+                    ui.text(
+                        Face::SemiBold,
+                        13.0,
+                        content_x + 14.0,
+                        cy2 + 11.0,
+                        my3_text(),
+                        &format!("Ender Chest ({}/27 slots)", info.ender_stacks),
+                    );
+                    if info.ender_chest.is_empty() {
+                        ui.text(Face::Regular, 10.5, content_x + 14.0, cy2 + 36.0, my3_muted(), "Ender Chest is empty.");
+                    } else {
+                        let col_w = (content_w - 36.0) * 0.5;
+                        for (idx, (item_name, count)) in info.ender_chest.iter().take(8).enumerate() {
+                            let col = idx % 2;
+                            let row = idx / 2;
+                            let ix = content_x + 14.0 + col as f32 * (col_w + 8.0);
+                            let i_y = cy2 + 36.0 + row as f32 * 20.0;
+                            let txt = ui.fit_text(Face::Regular, 10.4, &format!("{item_name}  x{count}"), col_w);
+                            ui.text(Face::Regular, 10.4, ix, i_y, my3_text(), &txt);
+                        }
+                    }
+                }
+            });
+            return;
+        }
+
+        ui.text(
+            Face::SemiBold,
+            19.0,
+            content_x,
+            header_y + 2.0,
+            my3_text(),
+            "Worlds & Servers",
+        );
+        let seg_w = if compact { 72.0 } else { 90.0 };
+        let tabs = [
+            (WorldsSubTab::Worlds, "Worlds"),
+            (WorldsSubTab::Servers, "Servers"),
+            (WorldsSubTab::Discover, "Discover"),
+        ];
+        let seg_start = content_x + content_w - seg_w * 3.0 - 6.0;
+        for (i, (tab, lbl)) in tabs.into_iter().enumerate() {
+            let r = [seg_start + i as f32 * (seg_w + 3.0), header_y - 1.0, seg_w, 30.0];
+            ui.m3_connected_segment(
+                r,
+                i,
+                3,
+                lbl,
+                self.catalog.worlds_sub_tab == tab,
+                None,
+            );
+            self.targets.push((r, Action::SetWorldsSubTab(tab)));
+        }
+
+        match self.catalog.worlds_sub_tab {
+            WorldsSubTab::Worlds => {
+                let bar_y = 98.0 + slide_y;
+                let btn_w = ((content_w - 16.0) / 3.0).min(138.0);
+                button(ui, &mut self.targets, [content_x, bar_y, btn_w, 30.0], "Refresh", Action::RefreshWorlds, false);
+                button(ui, &mut self.targets, [content_x + btn_w + 8.0, bar_y, btn_w, 30.0], "Import .zip", Action::ImportWorldZip, true);
+                button(ui, &mut self.targets, [content_x + (btn_w + 8.0) * 2.0, bar_y, btn_w, 30.0], "Import Folder", Action::ImportWorldFolder, false);
+
+                let list_top = bar_y + 40.0;
+                let list_bottom = (h - 46.0).max(list_top + 60.0);
+                let row_h = if compact { 82.0 } else { 72.0 };
+                let row_gap = 8.0;
+                let total_h = self.catalog.worlds.len() as f32 * (row_h + row_gap);
+                let max_scroll = (total_h - (list_bottom - list_top)).max(0.0);
+                self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
+                self.list_view = Some([list_top, list_bottom, max_scroll]);
+
+                let worlds = self.catalog.worlds.clone();
+                let del_confirm = self.catalog.world_delete_confirm;
+                let list_targets = &mut self.list_targets;
+                ui.clipped([content_x - 2.0, list_top, content_w + 4.0, list_bottom - list_top], |ui| {
+                    if worlds.is_empty() {
+                        ui.rounded(content_x, list_top + 6.0, content_w, 84.0, 14.0, my3_card_bg());
+                        ui.border(content_x, list_top + 6.0, content_w, 84.0, 14.0, my3_card_border());
+                        ui.text(Face::SemiBold, 13.0, content_x + 14.0, list_top + 20.0, my3_text(), "No saved worlds in saves/ yet");
+                        let hint = ui.fit_text(
+                            Face::Regular,
+                            10.6,
+                            "Create a world in-game, import a .zip/.mcworld archive above, or switch to Discover.",
+                            content_w - 28.0,
+                        );
+                        ui.text(Face::Regular, 10.6, content_x + 14.0, list_top + 44.0, my3_muted(), &hint);
+                        return;
+                    }
+                    for (i, w_item) in worlds.iter().enumerate() {
+                        let ry = list_top + i as f32 * (row_h + row_gap) - self.catalog.scroll;
+                        if ry + row_h < list_top || ry > list_bottom {
+                            continue;
+                        }
+                        ui.rounded(content_x, ry, content_w, row_h, 13.0, my3_card_bg());
+                        ui.border(content_x, ry, content_w, row_h, 13.0, my3_card_border());
+                        let btn_area = if compact { 216.0 } else { 236.0 };
+                        let title = ui.fit_text(Face::SemiBold, 13.0, &w_item.name, content_w - btn_area);
+                        ui.text(Face::SemiBold, 13.0, content_x + 14.0, ry + 11.0, my3_text(), &title);
+                        let size_mb = w_item.size_bytes as f64 / 1_048_576.0;
+                        let mode_lbl = game_mode_label(w_item.game_mode, w_item.hardcore);
+                        let status_tag = if w_item.corrupted {
+                            "Corrupted"
+                        } else if w_item.locked {
+                            "In Use"
+                        } else {
+                            mode_lbl
+                        };
+                        let meta = ui.fit_text(
+                            Face::Regular,
+                            10.4,
+                            &format!(
+                                "{status_tag}  •  Day {}  •  {}  •  {size_mb:.1} MB",
+                                w_item.day,
+                                format_play_time(w_item.play_time_secs)
+                            ),
+                            content_w - btn_area,
+                        );
+                        ui.text(Face::Regular, 10.4, content_x + 14.0, ry + 34.0, my3_muted(), &meta);
+
+                        let by = ry + (row_h - 30.0) * 0.5;
+                        let play_r = [content_x + content_w - 208.0, by, 58.0, 30.0];
+                        let ana_r = [content_x + content_w - 144.0, by, 70.0, 30.0];
+                        let del_r = [content_x + content_w - 68.0, by, 60.0, 30.0];
+                        ui.rounded(play_r[0], play_r[1], play_r[2], play_r[3], 9.0, my3_accent());
+                        ui.centered_fit(Face::SemiBold, 10.6, play_r, color::hex(0x0c0e14, 255), "Play");
+                        if let Some(c) = ui.clip_rect(play_r) {
+                            self.targets.push((c, Action::PlayWorld(i)));
+                            list_targets.push((c, Action::PlayWorld(i)));
+                        }
+                        ui.rounded(ana_r[0], ana_r[1], ana_r[2], ana_r[3], 9.0, my3_surface_high());
+                        ui.border(ana_r[0], ana_r[1], ana_r[2], ana_r[3], 9.0, my3_card_border());
+                        ui.centered_fit(Face::SemiBold, 10.2, ana_r, my3_text(), "Analyze");
+                        if let Some(c) = ui.clip_rect(ana_r) {
+                            self.targets.push((c, Action::InspectWorld(i)));
+                            list_targets.push((c, Action::InspectWorld(i)));
+                        }
+                        let confirming = del_confirm == Some(i);
+                        ui.rounded(
+                            del_r[0],
+                            del_r[1],
+                            del_r[2],
+                            del_r[3],
+                            9.0,
+                            if confirming {
+                                horizon_client::hud::rgba(220, 38, 38, 220)
+                            } else {
+                                my3_surface()
+                            },
+                        );
+                        ui.border(del_r[0], del_r[1], del_r[2], del_r[3], 9.0, my3_card_border());
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            10.2,
+                            del_r,
+                            my3_text(),
+                            if confirming { "Confirm" } else { "Delete" },
+                        );
+                        if let Some(c) = ui.clip_rect(del_r) {
+                            self.targets.push((c, Action::DeleteWorld(i)));
+                            list_targets.push((c, Action::DeleteWorld(i)));
+                        }
+                    }
+                });
+            }
+            WorldsSubTab::Servers => {
+                let row1_y = 98.0 + slide_y;
+                let add_btn_w = 78.0;
+                let fields_w = (content_w - add_btn_w - 14.0).max(160.0);
+                let name_w = fields_w * 0.42;
+                let ip_w = fields_w - name_w - 6.0;
+                let name_r = ui.text_field(
+                    content_x,
+                    row1_y,
+                    name_w,
+                    32.0,
+                    "",
+                    &self.catalog.add_server_name,
+                    "Server name...",
+                    self.catalog.editing == Some("add_server_name"),
+                );
+                self.targets.push((name_r, Action::Field("add_server_name")));
+                let ip_r = ui.text_field(
+                    content_x + name_w + 6.0,
+                    row1_y,
+                    ip_w,
+                    32.0,
+                    "",
+                    &self.catalog.add_server_ip,
+                    "Address (play.example.net)...",
+                    self.catalog.editing == Some("add_server_ip"),
+                );
+                self.targets.push((ip_r, Action::Field("add_server_ip")));
+                button(
+                    ui,
+                    &mut self.targets,
+                    [content_x + fields_w + 12.0, row1_y, add_btn_w, 32.0],
+                    "+ Add",
+                    Action::AddServer,
+                    true,
+                );
+
+                let list_top = row1_y + 42.0;
+                let list_bottom = (h - 46.0).max(list_top + 60.0);
+                let row_h = 66.0;
+                let row_gap = 8.0;
+                let total_h = self.catalog.servers.len() as f32 * (row_h + row_gap);
+                let max_scroll = (total_h - (list_bottom - list_top)).max(0.0);
+                self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
+                self.list_view = Some([list_top, list_bottom, max_scroll]);
+
+                let servers = self.catalog.servers.clone();
+                let del_confirm = self.catalog.server_delete_confirm;
+                let list_targets = &mut self.list_targets;
+                ui.clipped([content_x - 2.0, list_top, content_w + 4.0, list_bottom - list_top], |ui| {
+                    if servers.is_empty() {
+                        ui.rounded(content_x, list_top + 6.0, content_w, 76.0, 14.0, my3_card_bg());
+                        ui.border(content_x, list_top + 6.0, content_w, 76.0, 14.0, my3_card_border());
+                        ui.text(Face::SemiBold, 13.0, content_x + 14.0, list_top + 20.0, my3_text(), "No saved multiplayer servers");
+                        ui.text(Face::Regular, 10.6, content_x + 14.0, list_top + 42.0, my3_muted(), "Add a server above — it saves directly to servers.dat.");
+                        return;
+                    }
+                    for (i, srv) in servers.iter().enumerate() {
+                        let ry = list_top + i as f32 * (row_h + row_gap) - self.catalog.scroll;
+                        if ry + row_h < list_top || ry > list_bottom {
+                            continue;
+                        }
+                        ui.rounded(content_x, ry, content_w, row_h, 13.0, my3_card_bg());
+                        ui.border(content_x, ry, content_w, row_h, 13.0, my3_card_border());
+                        let title = ui.fit_text(Face::SemiBold, 13.0, &srv.name, content_w - 156.0);
+                        ui.text(Face::SemiBold, 13.0, content_x + 14.0, ry + 11.0, my3_text(), &title);
+                        let ip_txt = ui.fit_text(Face::Regular, 10.5, &srv.ip, content_w - 156.0);
+                        ui.text(Face::Regular, 10.5, content_x + 14.0, ry + 34.0, my3_muted(), &ip_txt);
+
+                        let by = ry + (row_h - 30.0) * 0.5;
+                        let join_r = [content_x + content_w - 140.0, by, 64.0, 30.0];
+                        let del_r = [content_x + content_w - 70.0, by, 62.0, 30.0];
+                        ui.rounded(join_r[0], join_r[1], join_r[2], join_r[3], 9.0, my3_accent());
+                        ui.centered_fit(Face::SemiBold, 10.6, join_r, color::hex(0x0c0e14, 255), "Join");
+                        if let Some(c) = ui.clip_rect(join_r) {
+                            self.targets.push((c, Action::JoinServer(i)));
+                            list_targets.push((c, Action::JoinServer(i)));
+                        }
+                        let confirming = del_confirm == Some(i);
+                        ui.rounded(
+                            del_r[0],
+                            del_r[1],
+                            del_r[2],
+                            del_r[3],
+                            9.0,
+                            if confirming {
+                                horizon_client::hud::rgba(220, 38, 38, 220)
+                            } else {
+                                my3_surface()
+                            },
+                        );
+                        ui.border(del_r[0], del_r[1], del_r[2], del_r[3], 9.0, my3_card_border());
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            10.2,
+                            del_r,
+                            my3_text(),
+                            if confirming { "Confirm" } else { "Delete" },
+                        );
+                        if let Some(c) = ui.clip_rect(del_r) {
+                            self.targets.push((c, Action::DeleteServer(i)));
+                            list_targets.push((c, Action::DeleteServer(i)));
+                        }
+                    }
+                });
+            }
+            WorldsSubTab::Discover => {
+                let row1_y = 98.0 + slide_y;
+                let search_w = (content_w - 104.0).max(120.0);
+                let search_r = ui.text_field(
+                    content_x,
+                    row1_y,
+                    search_w,
+                    32.0,
+                    "",
+                    &self.catalog.world_search_query,
+                    "Search Modrinth worlds & data packs...",
+                    self.catalog.editing == Some("world_search_query"),
+                );
+                self.targets.push((search_r, Action::Field("world_search_query")));
+                button(
+                    ui,
+                    &mut self.targets,
+                    [content_x + search_w + 8.0, row1_y, 96.0, 32.0],
+                    if self.catalog.world_discover_busy { "Loading..." } else { "Search" },
+                    Action::SearchDiscoverWorlds,
+                    true,
+                );
+
+                let list_top = row1_y + 42.0;
+                let list_bottom = (h - 46.0).max(list_top + 60.0);
+                let row_h = 70.0;
+                let row_gap = 8.0;
+                let total_h = self.catalog.world_discover_results.len() as f32 * (row_h + row_gap);
+                let max_scroll = (total_h - (list_bottom - list_top)).max(0.0);
+                self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
+                self.list_view = Some([list_top, list_bottom, max_scroll]);
+
+                let hits = self.catalog.world_discover_results.clone();
+                let busy = self.catalog.world_discover_busy;
+                let list_targets = &mut self.list_targets;
+                ui.clipped([content_x - 2.0, list_top, content_w + 4.0, list_bottom - list_top], |ui| {
+                    if hits.is_empty() {
+                        ui.rounded(content_x, list_top + 6.0, content_w, 78.0, 14.0, my3_card_bg());
+                        ui.border(content_x, list_top + 6.0, content_w, 78.0, 14.0, my3_card_border());
+                        ui.text(Face::SemiBold, 13.0, content_x + 14.0, list_top + 20.0, my3_text(), "Discover Community Maps & Data Packs");
+                        ui.text(Face::Regular, 10.5, content_x + 14.0, list_top + 43.0, my3_muted(), "Tap Search to browse Modrinth, or import a .zip/.mcworld in the Worlds tab.");
+                        return;
+                    }
+                    for (i, proj) in hits.iter().enumerate() {
+                        let ry = list_top + i as f32 * (row_h + row_gap) - self.catalog.scroll;
+                        if ry + row_h < list_top || ry > list_bottom {
+                            continue;
+                        }
+                        ui.rounded(content_x, ry, content_w, row_h, 13.0, my3_card_bg());
+                        ui.border(content_x, ry, content_w, row_h, 13.0, my3_card_border());
+                        let title = ui.fit_text(Face::SemiBold, 13.0, &proj.title, content_w - 116.0);
+                        ui.text(Face::SemiBold, 13.0, content_x + 14.0, ry + 11.0, my3_text(), &title);
+                        let summary = ui.fit_text(Face::Regular, 10.4, &proj.summary, content_w - 116.0);
+                        ui.text(Face::Regular, 10.4, content_x + 14.0, ry + 34.0, my3_muted(), &summary);
+
+                        let by = ry + (row_h - 30.0) * 0.5;
+                        let ins_r = [content_x + content_w - 92.0, by, 84.0, 30.0];
+                        ui.rounded(ins_r[0], ins_r[1], ins_r[2], ins_r[3], 9.0, my3_accent());
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            10.6,
+                            ins_r,
+                            color::hex(0x0c0e14, 255),
+                            if busy { "Wait..." } else { "Install" },
+                        );
+                        if !busy && let Some(c) = ui.clip_rect(ins_r) {
+                            self.targets.push((c, Action::InstallDiscoverWorld(i)));
+                            list_targets.push((c, Action::InstallDiscoverWorld(i)));
+                        }
+                    }
+                });
+            }
+        }
     }
 
     fn draw_installed(
@@ -8021,7 +8589,106 @@ impl Launcher {
                 self.catalog.scroll = 0.0;
                 self.error = None;
                 self.catalog.offset = 0;
+                if page == Page::Worlds {
+                    self.catalog.refresh_worlds(&self.home);
+                    if self.catalog.worlds_sub_tab == crate::catalog::WorldsSubTab::Discover
+                        && self.catalog.world_discover_results.is_empty()
+                        && !self.catalog.world_discover_busy
+                    {
+                        self.catalog.search_discover_worlds();
+                    }
+                }
                 self.catalog.browse(&self.home);
+                self.sync_discord_presence();
+            }
+            Some(Action::SetWorldsSubTab(tab)) => {
+                self.catalog.worlds_sub_tab = tab;
+                self.catalog.scroll = 0.0;
+                self.catalog.world_inspection = None;
+                self.catalog.world_delete_confirm = None;
+                self.catalog.server_delete_confirm = None;
+                if tab == crate::catalog::WorldsSubTab::Discover
+                    && self.catalog.world_discover_results.is_empty()
+                    && !self.catalog.world_discover_busy
+                {
+                    self.catalog.search_discover_worlds();
+                }
+            }
+            Some(Action::RefreshWorlds) => {
+                self.catalog.refresh_worlds(&self.home);
+                self.catalog.status = format!(
+                    "Found {} world(s) and {} server(s).",
+                    self.catalog.worlds.len(),
+                    self.catalog.servers.len()
+                );
+            }
+            Some(Action::PlayWorld(idx)) => {
+                if let Some(w) = self.catalog.worlds.get(idx) {
+                    self.pending_world = Some(w.folder.clone());
+                    self.action(events)?;
+                }
+            }
+            Some(Action::InspectWorld(idx)) => {
+                self.catalog.scroll = 0.0;
+                self.catalog.inspect_world(&self.home, idx);
+            }
+            Some(Action::CloseWorldInspection) => {
+                self.catalog.world_inspection = None;
+                self.catalog.scroll = 0.0;
+            }
+            Some(Action::DeleteWorld(idx)) => {
+                if self.catalog.world_delete_confirm == Some(idx) {
+                    self.catalog.delete_world(&self.home, idx);
+                    self.catalog.world_delete_confirm = None;
+                } else {
+                    self.catalog.world_delete_confirm = Some(idx);
+                    self.catalog.status = "Tap Delete again to permanently remove this world.".into();
+                }
+            }
+            Some(Action::ImportWorldZip) => {
+                crate::platform::hide();
+                let saves = self.catalog.config.game_home(&self.home).join("saves");
+                let _ = std::fs::create_dir_all(&saves);
+                if let Err(e) = crate::documents::begin_into_dir(saves) {
+                    self.catalog.status = e;
+                }
+            }
+            Some(Action::ImportWorldFolder) => {
+                crate::platform::hide();
+                let saves = self.catalog.config.game_home(&self.home).join("saves");
+                let _ = std::fs::create_dir_all(&saves);
+                if let Err(e) = crate::documents::begin_folder_into_dir(saves) {
+                    self.catalog.status = e;
+                }
+            }
+            Some(Action::JoinServer(idx)) => {
+                if let Some(srv) = self.catalog.servers.get(idx) {
+                    self.pending_server = Some(srv.ip.clone());
+                    self.action(events)?;
+                }
+            }
+            Some(Action::DeleteServer(idx)) => {
+                if self.catalog.server_delete_confirm == Some(idx) {
+                    self.catalog.delete_server(&self.home, idx);
+                } else {
+                    self.catalog.server_delete_confirm = Some(idx);
+                    self.catalog.status = "Tap Delete again to remove this server.".into();
+                }
+            }
+            Some(Action::AddServer) => {
+                self.catalog.editing = None;
+                crate::platform::hide();
+                self.catalog.add_server(&self.home);
+            }
+            Some(Action::SearchDiscoverWorlds) => {
+                self.catalog.editing = None;
+                crate::platform::hide();
+                self.catalog.search_discover_worlds();
+            }
+            Some(Action::InstallDiscoverWorld(idx)) => {
+                if !self.catalog.world_discover_busy {
+                    self.catalog.install_discover_world(&self.home, idx);
+                }
             }
             Some(Action::Play) => self.action(events)?,
             Some(Action::RefreshReplays) => {
@@ -8155,6 +8822,9 @@ impl Launcher {
                     "installed_search" => &self.catalog.installed_query,
                     "compiler_query" => &self.catalog.compiler_query,
                     "fm_rename" | "fm_new_folder" => &self.catalog.fm_input_text,
+                    "add_server_name" => &self.catalog.add_server_name,
+                    "add_server_ip" => &self.catalog.add_server_ip,
+                    "world_search_query" => &self.catalog.world_search_query,
                     _ => &self.catalog.query,
                 };
                 crate::platform::show(initial);

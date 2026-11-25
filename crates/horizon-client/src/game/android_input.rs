@@ -214,6 +214,52 @@ impl Game<'_> {
         }
     }
 
+    fn android_step_scroll(&mut self, up: bool) {
+        let sign = if up { 1.0_f32 } else { -1.0_f32 };
+        let d = sign * self.settings.mouse_wheel_sensitivity;
+        if self.dialog_open() {
+            self.dialog_scroll(d);
+            return;
+        }
+        if self.code_of_conduct.is_some() {
+            self.code_of_conduct_scroll(d);
+            return;
+        }
+        if self.screen == Screen::Options {
+            let _ = self.options_scroll(d);
+            return;
+        }
+        if self.screen == Screen::Chat {
+            self.chat_scroll(d);
+            return;
+        }
+        if self.screen == Screen::WorldOptions {
+            self.world_options_scroll(d);
+            return;
+        }
+        if self.screen == Screen::DebugOptions {
+            self.debug_options_scroll(d);
+            return;
+        }
+        if self.screen == Screen::Mod {
+            self.mod_screen_scroll(d);
+            return;
+        }
+        if let Some(title) = &mut self.title {
+            if let Some(b) = self.gui_scale() {
+                title.scroll_worlds(d, self.cursor, (b.width, b.height));
+            }
+            return;
+        }
+        let delta = if up { 8.0 } else { 1.0 };
+        let next = horizon_client::mouse::ScrollWheelHandler::next_selection(
+            delta,
+            self.selected as i32,
+            9,
+        );
+        self.selected = next as usize;
+    }
+
     pub(super) fn android_dispatch_custom_token(&mut self, name: &str, down: bool) {
         self.last_input = Instant::now();
         self.pad.in_use = true;
@@ -320,14 +366,15 @@ impl Game<'_> {
             name,
             "mouse.scroll.up" | "mouse.scroll.down" | "mouse.scroll.up.held" | "mouse.scroll.down.held"
         ) {
+            let up = name.starts_with("mouse.scroll.up");
+            let held = name.ends_with(".held");
             if down {
-                let delta = if name.starts_with("mouse.scroll.up") { 8.0 } else { 1.0 };
-                let next = horizon_client::mouse::ScrollWheelHandler::next_selection(
-                    delta,
-                    self.selected as i32,
-                    9,
-                );
-                self.selected = next as usize;
+                self.android_step_scroll(up);
+                if held {
+                    self.pad.held_scroll = Some((up, Instant::now()));
+                }
+            } else if held && self.pad.held_scroll.is_some_and(|(u, _)| u == up) {
+                self.pad.held_scroll = None;
             }
             return;
         }
@@ -429,6 +476,18 @@ impl Game<'_> {
                 let _ = self.pad_back();
                 return;
             }
+            if self.dialog_open() {
+                let _ = self.dialog_key(key, None, None);
+                return;
+            }
+            if self.screen == Screen::Paused && self.pause_menu {
+                let _ = self.pause_key(key);
+                return;
+            }
+            if self.screen == Screen::Dead {
+                let _ = self.death_key(key);
+                return;
+            }
             if key == KeyCode::KeyE && matches!(self.screen, Screen::Inventory | Screen::Creative) {
                 let _ = self.pad_back();
                 return;
@@ -477,6 +536,11 @@ impl Game<'_> {
         }
         let translated = self.settings.keys.translate_all(key);
         if translated.is_empty() {
+            if down {
+                self.keys.insert(key);
+            } else {
+                self.keys.remove(&key);
+            }
             if down && matches!(self.screen, Screen::Inventory | Screen::Creative) {
                 let _ = self.key_pressed(key);
             }
@@ -544,13 +608,17 @@ impl Game<'_> {
                 .touch_ui
                 .sync_viewport_cursor(&mut self.cursor, [b.width, b.height]);
         }
-        let want = self.pad.touch_ui.compute_virtual_mouse_visibility(
-            &self.pad.touch,
-            in_menu,
-            self.ui.hide_gui,
-            crate::touch_visible(),
-            self.captured,
-        );
+        let want = if self.replay.is_some() && !in_menu {
+            false
+        } else {
+            self.pad.touch_ui.compute_virtual_mouse_visibility(
+                &self.pad.touch,
+                in_menu,
+                self.ui.hide_gui,
+                crate::touch_visible(),
+                self.captured,
+            )
+        };
         if self.pad.touch_ui.virtual_mouse != want {
             self.android_set_virtual_mouse(want);
         }
@@ -1144,8 +1212,9 @@ impl Game<'_> {
                     .touch_ui
                     .replay_touch(b.width, b.height, t.id, t.phase, p)
         {
-            self.pad.touch.clear();
-            self.pad.touch.ignore(t.id);
+            if t.phase == TouchPhase::Started {
+                self.pad.touch.ignore(t.id);
+            }
             if let Some(act) = maybe_act {
                 if t.phase == TouchPhase::Started {
                     self.audio.play_button_click();
@@ -1357,6 +1426,12 @@ impl Game<'_> {
 
     pub(super) fn android_poll_keyboard(&mut self) {
         self.android_custom_events();
+        if let Some((up, last)) = self.pad.held_scroll
+            && last.elapsed() >= std::time::Duration::from_millis(120)
+        {
+            self.pad.held_scroll = Some((up, Instant::now()));
+            self.android_step_scroll(up);
+        }
         self.android_sync_pointer();
         if let Some(ed) = self.pad.touch.editor.as_mut()
             && std::mem::take(&mut ed.keyboard_request)

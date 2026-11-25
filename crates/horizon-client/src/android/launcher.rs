@@ -83,6 +83,8 @@ pub(super) struct Launcher {
     pub(super) launching: bool,
     pub(super) launch_pending_tick: bool,
     pub(super) pending_replay: Option<PathBuf>,
+    pub(super) pending_world: Option<String>,
+    pub(super) pending_server: Option<String>,
     pub(super) diagnostics_modal_open: bool,
     focus: Option<usize>,
     diagnostic_export: Option<mpsc::Receiver<std::result::Result<String, String>>>,
@@ -272,7 +274,11 @@ impl Launcher {
         if dp_enabled {
             crate::discord_presence_android::install(false);
             horizon_client::discord_presence::start(true, false);
-            horizon_client::discord_presence::set(horizon_client::discord_presence::Status::Menus);
+            horizon_client::discord_presence::set(
+                horizon_client::discord_presence::Status::Launcher(
+                    horizon_client::discord_presence::LauncherSection::Play,
+                ),
+            );
         }
         let initial_game_home = catalog.config.game_home(&home);
         let mouse_touch =
@@ -324,6 +330,8 @@ impl Launcher {
             launching: false,
             launch_pending_tick: false,
             pending_replay: None,
+            pending_world: None,
+            pending_server: None,
             diagnostics_modal_open: false,
             focus: None,
             diagnostic_export: None,
@@ -345,6 +353,7 @@ impl Launcher {
         crate::platform::hide();
         horizon_client::auth::clear_current();
         self.catalog.refresh_replays(&self.home);
+        self.catalog.refresh_worlds(&self.home);
         let game_home = self.catalog.config.game_home(&self.home);
         self.mouse_touch =
             horizon_client::touch::Settings::load_from(&game_home.join("horizon-touch.json"));
@@ -359,7 +368,7 @@ impl Launcher {
         .discord_presence;
         if dp_enabled {
             crate::discord_presence_android::install(false);
-            horizon_client::discord_presence::set(horizon_client::discord_presence::Status::Menus);
+            self.sync_discord_presence();
         } else {
             horizon_client::discord_presence::stop();
         }
@@ -392,6 +401,35 @@ impl Launcher {
             self.start_wallpaper();
         }
     }
+    pub(super) fn sync_discord_presence(&self) {
+        use horizon_client::discord_presence::{self as presence, LauncherSection, Status};
+        let dp_enabled = horizon_client::settings::Settings::load(
+            &self.catalog.config.game_home(&self.home).join("options.txt"),
+        )
+        .extras
+        .discord_presence;
+        if !dp_enabled {
+            presence::set(Status::Off);
+            return;
+        }
+        let section = match self.catalog.page {
+            Page::Play => LauncherSection::Play,
+            Page::Worlds => LauncherSection::Worlds,
+            Page::Mods => LauncherSection::Mods,
+            Page::Shaders => LauncherSection::Shaders,
+            Page::Packs => LauncherSection::Resources,
+            Page::Replays => LauncherSection::Replays,
+            Page::Skins => LauncherSection::Account,
+            Page::Settings => match self.catalog.settings_category {
+                crate::catalog::SettingsCategory::Diagnostics => LauncherSection::Performance,
+                crate::catalog::SettingsCategory::Account => LauncherSection::Account,
+                _ => LauncherSection::Settings,
+            },
+            Page::ControlsStudio | Page::Compiler | Page::Installed => LauncherSection::Settings,
+        };
+        presence::set(Status::Launcher(section));
+    }
+
     pub(super) fn configure_screen(&self) {
         crate::native_ime::configure_screen(
             self.catalog.config.screen.immersive,
@@ -513,6 +551,8 @@ impl Launcher {
             self.login.hide();
         } else if self.chooser.take().is_some() {
             // Back dismisses the current dialog, including the exit question.
+        } else if self.catalog.page == Page::Worlds && self.catalog.world_inspection.take().is_some() {
+            self.catalog.scroll = 0.0;
         } else if self.catalog.page == Page::Installed
             && self.catalog.installed_sub_tab == crate::catalog::InstalledSubTab::FileManager
             && self.catalog.fm_back(&self.home)
@@ -708,6 +748,16 @@ impl Launcher {
             self.controller_edges = Default::default();
             self.controller_repeat = None;
             let replay_path = self.pending_replay.take();
+            let world = if replay_path.is_some() {
+                None
+            } else {
+                self.pending_world.take()
+            };
+            let explicit_server = if replay_path.is_some() || world.is_some() {
+                None
+            } else {
+                self.pending_server.take()
+            };
             let request = crate::game_launch::LaunchRequest {
                 resources: self
                     .home
@@ -716,11 +766,12 @@ impl Launcher {
                 game_home,
                 session_file: self.prepared_session.take(),
                 offline_name: crate::catalog::truncate_player_name(&self.catalog.config.name),
-                server: if replay_path.is_some() {
+                server: if replay_path.is_some() || world.is_some() {
                     String::new()
                 } else {
-                    self.catalog.config.server.clone()
+                    explicit_server.unwrap_or_else(|| self.catalog.config.server.clone())
                 },
+                world,
                 replay_path,
                 control_socket: (!crate::PUBLIC_BUILD).then(|| self.home.join("control.json")),
                 extra_arguments,
@@ -1042,7 +1093,10 @@ impl ApplicationHandler for Launcher {
             self.catalog.status = notice.text;
             if notice.changed {
                 self.catalog.refresh(&self.home);
-                self.catalog.show_installed(notice.kind);
+                self.catalog.refresh_worlds(&self.home);
+                if notice.kind.is_some() || self.catalog.page != Page::Worlds {
+                    self.catalog.show_installed(notice.kind);
+                }
             }
         }
         for result in crate::gallery::poll() {

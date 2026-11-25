@@ -13,6 +13,11 @@ use crate::{
 use winit::event::TouchPhase;
 
 const EXPORT_BITRATES: [u32; 4] = [10, 18, 28, 40];
+const REPLAY_TEXT: u32 = rgba(246, 248, 255, 255);
+const REPLAY_MUTED: u32 = rgba(196, 206, 232, 255);
+const REPLAY_ACCENT: u32 = rgba(168, 130, 255, 255);
+const REPLAY_ACCENT_TEXT: u32 = rgba(232, 224, 255, 255);
+const REPLAY_ON_ACCENT: u32 = rgba(255, 255, 255, 255);
 
 fn hit(p: [f32; 2], r: [f32; 4]) -> bool {
     p[0] >= r[0] && p[0] <= r[0] + r[2] && p[1] >= r[1] && p[1] <= r[1] + r[3]
@@ -22,6 +27,7 @@ struct ReplayHudLayout {
     show_hud_pill: [f32; 4],
     // Top bar
     exit_btn: [f32; 4],
+    options_btn: [f32; 4],
     speed_down: [f32; 4],
     speed_up: [f32; 4],
     loop_btn: [f32; 4],
@@ -30,6 +36,7 @@ struct ReplayHudLayout {
     gizmo_btn: [f32; 4],
     nametag_btn: [f32; 4],
     hide_players_btn: [f32; 4],
+    night_btn: [f32; 4],
     time_btn: [f32; 4],
     weather_btn: [f32; 4],
     save_btn: [f32; 4],
@@ -80,22 +87,32 @@ fn replay_layout(w: f32, h: f32) -> ReplayHudLayout {
     let btn_h = 24.0;
     let show_hud_pill = [w - 86.0, 8.0, 78.0, 24.0];
 
-    let exit_btn = [8.0, top_y, 44.0, btn_h];
-    let speed_down = [58.0, top_y, 20.0, btn_h];
-    let speed_up = [122.0, top_y, 20.0, btn_h];
-    let loop_btn = [146.0, top_y, 40.0, btn_h];
+    let exit_btn = [8.0, top_y, 40.0, btn_h];
+    let options_btn = [52.0, top_y, 50.0, btn_h];
+    let speed_down = [106.0, top_y, 20.0, btn_h];
+    let speed_up = [166.0, top_y, 20.0, btn_h];
+    let loop_btn = [190.0, top_y, 38.0, btn_h];
 
     let right_margin = 8.0;
-    let hide_hud_btn = [w - right_margin - 44.0, top_y, 44.0, btn_h];
-    let export_btn = [hide_hud_btn[0] - 58.0, top_y, 54.0, btn_h];
-    let save_btn = [export_btn[0] - 44.0, top_y, 40.0, btn_h];
-    let weather_btn = [save_btn[0] - 54.0, top_y, 50.0, btn_h];
-    let time_btn = [weather_btn[0] - 50.0, top_y, 46.0, btn_h];
-    let hide_players_btn = [time_btn[0] - 52.0, top_y, 48.0, btn_h];
-    let nametag_btn = [hide_players_btn[0] - 46.0, top_y, 42.0, btn_h];
-    let gizmo_btn = [nametag_btn[0] - 42.0, top_y, 38.0, btn_h];
-    let markers_btn = [gizmo_btn[0] - 54.0, top_y, 50.0, btn_h];
-    let players_btn = [markers_btn[0] - 54.0, top_y, 50.0, btn_h];
+    let hide_hud_btn = [w - right_margin - 40.0, top_y, 40.0, btn_h];
+    let export_btn = [hide_hud_btn[0] - 54.0, top_y, 50.0, btn_h];
+    let save_btn = [export_btn[0] - 42.0, top_y, 38.0, btn_h];
+    let single_row_left_limit = loop_btn[0] + loop_btn[2] + 6.0;
+    // Secondary toggles (Ply, Mrk, Path, Tags, HideP, Night, Time, Wthr) fit on row 1 on wide
+    // displays, and wrap cleanly onto a compact row 2 on narrow phones so nothing ever hides.
+    let secondary_total = 48.0 + 48.0 + 38.0 + 38.0 + 42.0 + 42.0 + 46.0 + 46.0 + 7.0 * 3.0;
+    let two_rows = save_btn[0] - single_row_left_limit < secondary_total + 4.0;
+    let sec_y = if two_rows { top_y + btn_h + 4.0 } else { top_y };
+    let sec_right = if two_rows { w - right_margin } else { save_btn[0] - 4.0 };
+
+    let weather_btn = [sec_right - 46.0, sec_y, 46.0, btn_h];
+    let time_btn = [weather_btn[0] - 50.0, sec_y, 46.0, btn_h];
+    let night_btn = [time_btn[0] - 46.0, sec_y, 42.0, btn_h];
+    let hide_players_btn = [night_btn[0] - 46.0, sec_y, 42.0, btn_h];
+    let nametag_btn = [hide_players_btn[0] - 42.0, sec_y, 38.0, btn_h];
+    let gizmo_btn = [nametag_btn[0] - 42.0, sec_y, 38.0, btn_h];
+    let markers_btn = [gizmo_btn[0] - 52.0, sec_y, 48.0, btn_h];
+    let players_btn = [markers_btn[0] - 52.0, sec_y, 48.0, btn_h];
 
     // Bottom timeline + keyframe strip
     let bot_h = 34.0;
@@ -118,13 +135,13 @@ fn replay_layout(w: f32, h: f32) -> ReplayHudLayout {
     let kf_start_x = ((w - kf_total) * 0.5).max(8.0);
     let kf = |i: usize| [kf_start_x + i as f32 * (kf_bw + kf_gap), kf_y, kf_bw, kf_h];
 
-    // Left free-cam fly pad
-    let fly_pad_radius = 34.0;
-    let fly_pad_center = [56.0, kf_y - 54.0];
-    let ascend_btn = [102.0, kf_y - 84.0, 34.0, 26.0];
-    let descend_btn = [102.0, kf_y - 52.0, 34.0, 26.0];
+    // Left free-cam fly pad (generous thumbstick size for touch control)
+    let fly_pad_radius = 52.0;
+    let fly_pad_center = [66.0, kf_y - 66.0];
+    let ascend_btn = [128.0, kf_y - 98.0, 42.0, 30.0];
+    let descend_btn = [128.0, kf_y - 60.0, 42.0, 30.0];
 
-    let chip_y = 40.0;
+    let chip_y = if two_rows { sec_y + btn_h + 6.0 } else { 40.0 };
     let roll_minus = [8.0, chip_y, 22.0, 20.0];
     let roll_reset = [32.0, chip_y, 44.0, 20.0];
     let roll_plus = [78.0, chip_y, 22.0, 20.0];
@@ -136,7 +153,8 @@ fn replay_layout(w: f32, h: f32) -> ReplayHudLayout {
     let cancel_render_btn = [(w - 120.0) * 0.5, h * 0.5 + 32.0, 120.0, 30.0];
 
     let drawer_w = (w * 0.36).clamp(210.0, 300.0);
-    let drawer_rect = [w - drawer_w - 10.0, 40.0, drawer_w, (kf_y - 48.0).max(120.0)];
+    let drawer_y = if two_rows { sec_y + btn_h + 6.0 } else { 40.0 };
+    let drawer_rect = [w - drawer_w - 10.0, drawer_y, drawer_w, (kf_y - drawer_y - 8.0).max(120.0)];
 
     let modal_w = (w * 0.56).clamp(280.0, 400.0);
     let modal_h = 224.0;
@@ -168,6 +186,7 @@ fn replay_layout(w: f32, h: f32) -> ReplayHudLayout {
     ReplayHudLayout {
         show_hud_pill,
         exit_btn,
+        options_btn,
         speed_down,
         speed_up,
         loop_btn,
@@ -176,6 +195,7 @@ fn replay_layout(w: f32, h: f32) -> ReplayHudLayout {
         gizmo_btn,
         nametag_btn,
         hide_players_btn,
+        night_btn,
         time_btn,
         weather_btn,
         save_btn,
@@ -262,11 +282,40 @@ pub fn draw_recording_badge(batch: &mut HudBatch, atlas: &HudAtlas) {
             rgba(239, 68, 68, 255)
         },
     );
-    ui.text(Face::SemiBold, 8.8, x + 19.0, y + 4.5, theme.text_primary, &label);
+    ui.text(Face::SemiBold, 8.8, x + 19.0, y + 4.5, REPLAY_TEXT, &label);
     ui.finish();
 }
 
 impl TouchUi {
+    pub fn replay_look_update(
+        &mut self,
+        id: u64,
+        point: [f32; 2],
+        started: bool,
+        ended: bool,
+    ) -> [f32; 2] {
+        if ended {
+            if self.replay_look_finger.is_some_and(|(fid, _)| fid == id) {
+                self.replay_look_finger = None;
+            }
+            return [0.0; 2];
+        }
+        if started || self.replay_look_finger.is_none() {
+            if self.replay_look_finger.is_none() || started {
+                self.replay_look_finger = Some((id, point));
+            }
+            return [0.0; 2];
+        }
+        if let Some((fid, prev)) = self.replay_look_finger.as_mut()
+            && *fid == id
+        {
+            let delta = [point[0] - prev[0], point[1] - prev[1]];
+            *prev = point;
+            return delta;
+        }
+        [0.0; 2]
+    }
+
     pub fn replay_fly_move(&self) -> [f32; 3] {
         let [strafe, forward] = self.replay_fly_pad.map_or([0.0, 0.0], |(_, v)| v);
         let vert = self.replay_fly_vert.map_or(0.0, |(_, v)| v);
@@ -279,7 +328,7 @@ impl TouchUi {
             return;
         }
         let mut ui = Ui::mobile(atlas, batch, (0.0, 0.0));
-        let theme = active_theme();
+        let _theme = active_theme();
         let lay = replay_layout(ui.w, ui.h);
 
         // If MP4 offline render is running, show dedicated progress overlay + Cancel button.
@@ -289,20 +338,20 @@ impl TouchUi {
             let bx = (ui.w - bw) * 0.5;
             let by = (ui.h - bh) * 0.5;
             ui.rounded(bx, by, bw, bh, 14.0, rgba(16, 18, 28, 225));
-            ui.border(bx, by, bw, bh, 14.0, theme.accent);
+            ui.border(bx, by, bw, bh, 14.0, REPLAY_ACCENT);
             let pct = ((job.current_frame * 100) / job.total_frames.max(1)).min(100);
             ui.centered_fit(
                 Face::SemiBold,
                 11.0,
                 [bx + 12.0, by + 10.0, bw - 24.0, 18.0],
-                theme.text_primary,
+                REPLAY_TEXT,
                 &format!("Rendering MP4 ({}x{} @ {}fps)", job.width, job.height, job.fps),
             );
             ui.centered_fit(
                 Face::Regular,
                 9.2,
                 [bx + 12.0, by + 29.0, bw - 24.0, 16.0],
-                theme.text_muted,
+                REPLAY_MUTED,
                 &format!("{}  •  {}%", job.status_text, pct),
             );
             let bar_x = bx + 16.0;
@@ -314,7 +363,7 @@ impl TouchUi {
                 (bar_w * (pct as f32 / 100.0)).max(6.0),
                 8.0,
                 4.0,
-                theme.accent,
+                REPLAY_ACCENT,
             );
             ui.rounded(
                 lay.cancel_render_btn[0],
@@ -328,7 +377,7 @@ impl TouchUi {
                 Face::SemiBold,
                 9.6,
                 lay.cancel_render_btn,
-                theme.text_primary,
+                REPLAY_TEXT,
                 "Cancel Export",
             );
             ui.finish();
@@ -342,7 +391,7 @@ impl TouchUi {
                 lay.show_hud_pill[2],
                 lay.show_hud_pill[3],
                 12.0,
-                rgba(16, 18, 28, 175),
+                rgba(16, 18, 28, 195),
             );
             ui.border(
                 lay.show_hud_pill[0],
@@ -350,13 +399,13 @@ impl TouchUi {
                 lay.show_hud_pill[2],
                 lay.show_hud_pill[3],
                 12.0,
-                theme.accent,
+                REPLAY_ACCENT,
             );
             ui.centered_fit(
                 Face::SemiBold,
                 9.0,
                 lay.show_hud_pill,
-                theme.text_primary,
+                REPLAY_TEXT,
                 "Show HUD",
             );
             ui.finish();
@@ -365,23 +414,23 @@ impl TouchUi {
 
         let pill = |ui: &mut Ui<'_>, r: [f32; 4], active: bool, accent_btn: bool, label: &str| {
             let bg = if accent_btn {
-                theme.accent
+                REPLAY_ACCENT
             } else if active {
-                rgba(139, 92, 246, 75)
+                rgba(139, 92, 246, 105)
             } else {
-                rgba(16, 18, 28, 195)
+                rgba(16, 18, 28, 205)
             };
             let br = if accent_btn || active {
-                theme.accent
+                REPLAY_ACCENT
             } else {
-                rgba(255, 255, 255, 42)
+                rgba(255, 255, 255, 48)
             };
             let fg = if accent_btn {
-                theme.on_accent
+                REPLAY_ON_ACCENT
             } else if active {
-                theme.accent_text
+                REPLAY_ACCENT_TEXT
             } else {
-                theme.text_primary
+                REPLAY_TEXT
             };
             ui.rounded(r[0], r[1], r[2], r[3], 7.0, bg);
             ui.border(r[0], r[1], r[2], r[3], 7.0, br);
@@ -390,6 +439,7 @@ impl TouchUi {
 
         // Top Bar
         pill(&mut ui, lay.exit_btn, false, false, "Exit");
+        pill(&mut ui, lay.options_btn, false, false, "Options");
         pill(&mut ui, lay.speed_down, false, false, "-");
         let spd_rect = [
             lay.speed_down[0] + lay.speed_down[2] + 2.0,
@@ -397,38 +447,51 @@ impl TouchUi {
             (lay.speed_up[0] - (lay.speed_down[0] + lay.speed_down[2]) - 4.0).max(30.0),
             lay.speed_down[3],
         ];
-        ui.rounded(spd_rect[0], spd_rect[1], spd_rect[2], spd_rect[3], 7.0, rgba(16, 18, 28, 195));
+        ui.rounded(spd_rect[0], spd_rect[1], spd_rect[2], spd_rect[3], 7.0, rgba(16, 18, 28, 205));
         ui.centered_fit(
             Face::SemiBold,
             8.6,
             spd_rect,
-            theme.accent_text,
+            REPLAY_ACCENT_TEXT,
             &format!("{}x", snap.speed),
         );
         pill(&mut ui, lay.speed_up, false, false, "+");
         pill(&mut ui, lay.loop_btn, snap.loop_playback, false, "Loop");
 
-        if lay.players_btn[0] > lay.loop_btn[0] + lay.loop_btn[2] + 4.0 {
-            pill(
-                &mut ui,
-                lay.players_btn,
-                snap.players_drawer_open || snap.spectating_entity.is_some(),
-                false,
-                &format!("Ply ({})", snap.players.len()),
-            );
-            pill(
-                &mut ui,
-                lay.markers_btn,
-                snap.markers_drawer_open,
-                false,
-                &format!("Mrk ({})", snap.markers.len()),
-            );
-            pill(&mut ui, lay.gizmo_btn, snap.show_path_gizmos, false, "Path");
-            pill(&mut ui, lay.nametag_btn, !snap.hide_nametags, false, "Tags");
-            pill(&mut ui, lay.hide_players_btn, snap.hide_players, false, "HideP");
-            pill(&mut ui, lay.time_btn, snap.time_override.is_some(), false, "Time");
-            pill(&mut ui, lay.weather_btn, snap.weather_override.is_some(), false, "Wthr");
-        }
+        pill(
+            &mut ui,
+            lay.players_btn,
+            snap.players_drawer_open || snap.spectating_entity.is_some(),
+            false,
+            &format!("Ply ({})", snap.players.len()),
+        );
+        pill(
+            &mut ui,
+            lay.markers_btn,
+            snap.markers_drawer_open,
+            false,
+            &format!("Mrk ({})", snap.markers.len()),
+        );
+        pill(&mut ui, lay.gizmo_btn, snap.show_path_gizmos, false, "Path");
+        pill(&mut ui, lay.nametag_btn, !snap.hide_nametags, false, "Tags");
+        pill(&mut ui, lay.hide_players_btn, snap.hide_players, false, "HideP");
+        pill(
+            &mut ui,
+            lay.night_btn,
+            snap.time_override == Some(18000),
+            false,
+            "Night",
+        );
+        let time_label = match snap.time_override {
+            None => "Time",
+            Some(1000) => "Morn",
+            Some(6000) => "Noon",
+            Some(12500) => "Dusk",
+            _ => "18k",
+        };
+        pill(&mut ui, lay.time_btn, snap.time_override.is_some(), false, time_label);
+        pill(&mut ui, lay.weather_btn, snap.weather_override.is_some(), false, "Wthr");
+
         pill(&mut ui, lay.save_btn, false, false, "Save");
         pill(&mut ui, lay.export_btn, snap.render_modal_open, true, "Export");
         pill(&mut ui, lay.hide_hud_btn, false, false, "Hide");
@@ -445,25 +508,25 @@ impl TouchUi {
         pill(&mut ui, lay.roll_plus, false, false, "R+");
         pill(&mut ui, lay.fov_minus, false, false, "F-");
         let fov_r = [32.0, lay.fov_minus[1], 44.0, 20.0];
-        ui.rounded(fov_r[0], fov_r[1], fov_r[2], fov_r[3], 6.0, rgba(16, 18, 28, 180));
-        ui.centered_fit(Face::Medium, 8.2, fov_r, theme.text_primary, &format!("FOV {:.0}", snap.cam_fov));
+        ui.rounded(fov_r[0], fov_r[1], fov_r[2], fov_r[3], 6.0, rgba(16, 18, 28, 195));
+        ui.centered_fit(Face::Medium, 8.2, fov_r, REPLAY_TEXT, &format!("FOV {:.0}", snap.cam_fov));
         pill(&mut ui, lay.fov_plus, false, false, "F+");
         pill(&mut ui, lay.fly_minus, false, false, "V-");
         let fly_r = [32.0, lay.fly_minus[1], 44.0, 20.0];
-        ui.rounded(fly_r[0], fly_r[1], fly_r[2], fly_r[3], 6.0, rgba(16, 18, 28, 180));
-        ui.centered_fit(Face::Medium, 8.2, fly_r, theme.text_primary, &format!("Spd {:.0}", snap.fly_speed));
+        ui.rounded(fly_r[0], fly_r[1], fly_r[2], fly_r[3], 6.0, rgba(16, 18, 28, 195));
+        ui.centered_fit(Face::Medium, 8.2, fly_r, REPLAY_TEXT, &format!("Spd {:.0}", snap.fly_speed));
         pill(&mut ui, lay.fly_plus, false, false, "V+");
 
         // Virtual Free-Cam Fly Thumbstick + Ascend/Descend
         let [cx, cy] = lay.fly_pad_center;
         let rad = lay.fly_pad_radius;
-        ui.rounded(cx - rad, cy - rad, rad * 2.0, rad * 2.0, rad, rgba(16, 18, 28, 125));
-        ui.border(cx - rad, cy - rad, rad * 2.0, rad * 2.0, rad, rgba(255, 255, 255, 48));
+        ui.rounded(cx - rad, cy - rad, rad * 2.0, rad * 2.0, rad, rgba(16, 18, 28, 138));
+        ui.border(cx - rad, cy - rad, rad * 2.0, rad * 2.0, rad, rgba(255, 255, 255, 62));
         let [sx, sy] = self.replay_fly_pad.map_or([0.0, 0.0], |(_, v)| v);
-        let kx = cx + sx * (rad * 0.65);
-        let ky = cy - sy * (rad * 0.65);
-        ui.rounded(kx - 13.0, ky - 13.0, 26.0, 26.0, 13.0, rgba(139, 92, 246, 190));
-        ui.border(kx - 13.0, ky - 13.0, 26.0, 26.0, 13.0, theme.text_primary);
+        let kx = cx + sx * (rad * 0.62);
+        let ky = cy - sy * (rad * 0.62);
+        ui.rounded(kx - 17.0, ky - 17.0, 34.0, 34.0, 17.0, rgba(139, 92, 246, 205));
+        ui.border(kx - 17.0, ky - 17.0, 34.0, 34.0, 17.0, REPLAY_TEXT);
 
         let vert = self.replay_fly_vert.map_or(0.0, |(_, v)| v);
         pill(&mut ui, lay.ascend_btn, vert > 0.5, false, "Up");
@@ -513,7 +576,7 @@ impl TouchUi {
         ui.rounded(tr[0], tr[1], tr[2], tr[3], 4.0, rgba(255, 255, 255, 32));
         let dur = snap.duration_ms.max(1) as f32;
         let prog = (snap.current_ms as f32 / dur).clamp(0.0, 1.0);
-        ui.rounded(tr[0], tr[1], (tr[2] * prog).max(4.0), tr[3], 4.0, theme.accent);
+        ui.rounded(tr[0], tr[1], (tr[2] * prog).max(4.0), tr[3], 4.0, REPLAY_ACCENT);
 
         // Draw Markers, Time Keyframes, and Position Keyframes on the track
         for m in &snap.markers {
@@ -534,7 +597,7 @@ impl TouchUi {
 
         // Playhead thumb
         let head_x = tr[0] + tr[2] * prog;
-        ui.rounded(head_x - 5.0, tr[1] - 3.0, 10.0, tr[3] + 6.0, 5.0, theme.text_primary);
+        ui.rounded(head_x - 5.0, tr[1] - 3.0, 10.0, tr[3] + 6.0, 5.0, REPLAY_TEXT);
 
         let time_txt = format!(
             "{}/{}",
@@ -545,7 +608,7 @@ impl TouchUi {
             Face::Medium,
             8.4,
             [tr[0] + tr[2] + 6.0, lay.scrubber_hit[1], 74.0, 34.0],
-            theme.text_primary,
+            REPLAY_TEXT,
             &time_txt,
         );
 
@@ -553,9 +616,9 @@ impl TouchUi {
         if snap.players_drawer_open || snap.markers_drawer_open {
             let dr = lay.drawer_rect;
             ui.rounded(dr[0], dr[1], dr[2], dr[3], 12.0, rgba(16, 18, 28, 232));
-            ui.border(dr[0], dr[1], dr[2], dr[3], 12.0, theme.accent);
+            ui.border(dr[0], dr[1], dr[2], dr[3], 12.0, REPLAY_ACCENT);
             if snap.players_drawer_open {
-                ui.text(Face::SemiBold, 10.0, dr[0] + 12.0, dr[1] + 10.0, theme.text_primary, "Players in Replay");
+                ui.text(Face::SemiBold, 10.0, dr[0] + 12.0, dr[1] + 10.0, REPLAY_TEXT, "Players in Replay");
                 let free_r = [dr[0] + 10.0, dr[1] + 30.0, dr[2] - 20.0, 24.0];
                 pill(&mut ui, free_r, snap.spectating_entity.is_none(), false, "Return to Free-Cam");
                 for (i, pr) in snap.players.iter().take(6).enumerate() {
@@ -569,7 +632,7 @@ impl TouchUi {
                     } else {
                         pr.name.clone()
                     };
-                    ui.text(Face::Medium, 8.8, dr[0] + 16.0, ry + 8.0, theme.text_primary, &lbl);
+                    ui.text(Face::Medium, 8.8, dr[0] + 16.0, ry + 8.0, REPLAY_TEXT, &lbl);
                     let spec_r = [dr[0] + dr[2] - 88.0, ry + 3.0, 42.0, 22.0];
                     let tp_r = [dr[0] + dr[2] - 42.0, ry + 3.0, 30.0, 22.0];
                     pill(
@@ -582,7 +645,7 @@ impl TouchUi {
                     pill(&mut ui, tp_r, false, false, "TP");
                 }
             } else {
-                ui.text(Face::SemiBold, 10.0, dr[0] + 12.0, dr[1] + 10.0, theme.text_primary, "Bookmarks / Markers");
+                ui.text(Face::SemiBold, 10.0, dr[0] + 12.0, dr[1] + 10.0, REPLAY_TEXT, "Bookmarks / Markers");
                 for (i, m) in snap.markers.iter().take(7).enumerate() {
                     let ry = dr[1] + 32.0 + i as f32 * 30.0;
                     if ry + 26.0 > dr[1] + dr[3] {
@@ -594,7 +657,7 @@ impl TouchUi {
                         8.8,
                         dr[0] + 16.0,
                         ry + 7.0,
-                        theme.text_primary,
+                        REPLAY_TEXT,
                         &format!("{}  ({})", m.name, format_duration_ms(m.time_ms)),
                     );
                 }
@@ -605,18 +668,18 @@ impl TouchUi {
         if snap.render_modal_open {
             let mr = lay.modal_rect;
             ui.rounded(mr[0], mr[1], mr[2], mr[3], 14.0, rgba(16, 18, 28, 242));
-            ui.border(mr[0], mr[1], mr[2], mr[3], 14.0, theme.accent);
-            ui.text(Face::SemiBold, 11.2, mr[0] + 14.0, mr[1] + 12.0, theme.text_primary, "Export Camera Path to MP4");
-            ui.text(Face::Regular, 8.4, mr[0] + 14.0, mr[1] + 29.0, theme.text_muted, "Deterministic offline H.264 render saved to Movies/VoltPlus Replays");
-            ui.text(Face::SemiBold, 8.2, mr[0] + 14.0, mr[1] + 42.0, theme.text_muted, "RESOLUTION");
+            ui.border(mr[0], mr[1], mr[2], mr[3], 14.0, REPLAY_ACCENT);
+            ui.text(Face::SemiBold, 11.2, mr[0] + 14.0, mr[1] + 12.0, REPLAY_TEXT, "Export Camera Path to MP4");
+            ui.text(Face::Regular, 8.4, mr[0] + 14.0, mr[1] + 29.0, REPLAY_MUTED, "Deterministic offline H.264 render saved to Movies/VoltPlus Replays");
+            ui.text(Face::SemiBold, 8.2, mr[0] + 14.0, mr[1] + 42.0, REPLAY_MUTED, "RESOLUTION");
             for (i, (lbl, _, _)) in EXPORT_RESOLUTIONS.iter().enumerate() {
                 pill(&mut ui, lay.modal_res[i], self.replay_export_res_idx == i, false, lbl);
             }
-            ui.text(Face::SemiBold, 8.2, mr[0] + 14.0, mr[1] + 94.0, theme.text_muted, "FRAME RATE");
+            ui.text(Face::SemiBold, 8.2, mr[0] + 14.0, mr[1] + 94.0, REPLAY_MUTED, "FRAME RATE");
             for (i, fps) in EXPORT_FPS.iter().enumerate() {
                 pill(&mut ui, lay.modal_fps[i], self.replay_export_fps_idx == i, false, &format!("{fps} fps"));
             }
-            ui.text(Face::SemiBold, 8.2, mr[0] + 14.0, mr[1] + 144.0, theme.text_muted, "BITRATE");
+            ui.text(Face::SemiBold, 8.2, mr[0] + 14.0, mr[1] + 144.0, REPLAY_MUTED, "BITRATE");
             for (i, br) in EXPORT_BITRATES.iter().enumerate() {
                 pill(&mut ui, lay.modal_br[i], self.replay_export_bitrate_idx == i, false, &format!("{br} Mbps"));
             }
@@ -628,10 +691,14 @@ impl TouchUi {
         if let Some(banner) = &snap.banner {
             let bw = (ui.measure(Face::SemiBold, 9.2, banner) + 26.0).clamp(140.0, ui.w - 40.0);
             let bx = (ui.w - bw) * 0.5;
-            let by = 38.0;
-            ui.rounded(bx, by, bw, 22.0, 11.0, rgba(16, 18, 28, 220));
-            ui.border(bx, by, bw, 22.0, 11.0, theme.accent);
-            ui.centered_fit(Face::SemiBold, 8.8, [bx, by, bw, 22.0], theme.accent_text, banner);
+            let by = if lay.players_btn[1] > 20.0 {
+                lay.players_btn[1] + 28.0
+            } else {
+                38.0
+            };
+            ui.rounded(bx, by, bw, 22.0, 11.0, rgba(16, 18, 28, 225));
+            ui.border(bx, by, bw, 22.0, 11.0, REPLAY_ACCENT);
+            ui.centered_fit(Face::SemiBold, 8.8, [bx, by, bw, 22.0], REPLAY_ACCENT_TEXT, banner);
         }
 
         ui.finish();
@@ -804,6 +871,7 @@ impl TouchUi {
         // Discrete buttons
         let checks: &[([f32; 4], ReplayAction)] = &[
             (lay.exit_btn, ReplayAction::ExitReplay),
+            (lay.options_btn, ReplayAction::OpenOptions),
             (lay.speed_down, ReplayAction::CycleSpeed(-1)),
             (lay.speed_up, ReplayAction::CycleSpeed(1)),
             (lay.loop_btn, ReplayAction::ToggleLoop),
@@ -812,6 +880,7 @@ impl TouchUi {
             (lay.gizmo_btn, ReplayAction::TogglePathGizmos),
             (lay.nametag_btn, ReplayAction::ToggleHideNametags),
             (lay.hide_players_btn, ReplayAction::ToggleHidePlayers),
+            (lay.night_btn, ReplayAction::ToggleNight),
             (lay.time_btn, ReplayAction::CycleTimeOverride),
             (lay.weather_btn, ReplayAction::CycleWeatherOverride),
             (lay.save_btn, ReplayAction::SaveEdits),

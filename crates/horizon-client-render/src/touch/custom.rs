@@ -397,6 +397,13 @@ impl TouchControls {
             p.visible_in_game
         }
     }
+    pub fn has_menu_visible_custom(&self) -> bool {
+        self.settings
+            .custom_buttons
+            .iter()
+            .enumerate()
+            .any(|(i, _)| self.custom_visible_for_state(i, true))
+    }
     pub fn custom_at(&self, point: [f32; 2]) -> Option<usize> {
         (0..self.settings.custom_buttons.len()).rev().find(|&i| {
             self.custom_visible_for_state(i, self.in_menu)

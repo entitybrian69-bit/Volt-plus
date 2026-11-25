@@ -33,6 +33,8 @@ pub(super) struct Pads {
     #[cfg(target_os = "android")]
     pub(super) late_custom_releases: Vec<String>,
     #[cfg(target_os = "android")]
+    pub(super) held_scroll: Option<(bool, Instant)>,
+    #[cfg(target_os = "android")]
     pub(super) hardware_keys: std::collections::HashSet<KeyCode>,
     #[cfg(target_os = "android")]
     last_input_mode: Option<horizon_client::android_gamepad::InputMode>,

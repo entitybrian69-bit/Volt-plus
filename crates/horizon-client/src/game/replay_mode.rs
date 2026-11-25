@@ -63,8 +63,19 @@ impl Game<'_> {
         }
         self.replay_seeking = false;
         self.replay_last_step = None;
+        #[cfg(target_os = "android")]
+        {
+            self.pad.touch_ui.replay_look_finger = None;
+            self.pad.touch_ui.replay_fly_pad = None;
+            self.pad.touch_ui.replay_fly_vert = None;
+            self.pad.touch_ui.replay_timeline_drag = None;
+        }
         replay::publish_hud_snapshot(ReplayHudSnapshot::default());
         self.leave_server(None)?;
+        #[cfg(target_os = "android")]
+        if self.options.replay_path.is_some() {
+            horizon_client::android_runtime::return_to_launcher();
+        }
         Ok(())
     }
 
@@ -715,6 +726,20 @@ impl Game<'_> {
                     };
                     r.set_banner(label);
                 }
+            }
+            ReplayAction::ToggleNight => {
+                if let Some(r) = self.replay.as_mut() {
+                    if r.time_override == Some(18000) {
+                        r.time_override = None;
+                        r.set_banner("Time: Recorded");
+                    } else {
+                        r.time_override = Some(18000);
+                        r.set_banner("Time: Night");
+                    }
+                }
+            }
+            ReplayAction::OpenOptions => {
+                self.open_options(false);
             }
             ReplayAction::CycleWeatherOverride => {
                 if let Some(r) = self.replay.as_mut() {

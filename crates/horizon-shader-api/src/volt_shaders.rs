@@ -503,15 +503,15 @@ impl VoltShaderConfig {
             VoltQualityPreset::High => {
                 self.shadows = VoltShadowQuality::Medium1024;
                 self.shadow_softness = VoltShadowSoftness::Soft4;
-                self.translucent_shadows = true;
+                self.translucent_shadows = false;
                 self.shadow_distance = 112.0;
-                self.water_reflections = VoltWaterReflections::PlanarMirror;
-                self.water_caustics = VoltWaterCaustics::Realistic;
+                self.water_reflections = VoltWaterReflections::SkyFresnel;
+                self.water_caustics = VoltWaterCaustics::Fast;
                 self.clouds = VoltCloudMode::Volumetric;
                 self.stars = VoltStarMode::Rich;
                 self.aurora = VoltAuroraMode::Subtle;
                 self.god_rays = VoltGodRaysMode::Fast;
-                self.bloom = VoltBloomMode::SoftQuarter;
+                self.bloom = VoltBloomMode::Fast;
                 self.rain_wetness = true;
                 self.colored_blocklights = true;
                 self.labpbr = false;
@@ -790,23 +790,31 @@ impl VoltShaderConfig {
         let shadow_res = self.shadows.resolution(self.low_ram_guard);
         let shadow_mb = if shadow_res == 0 {
             0
-        } else if self.translucent_shadows {
+        } else if self.translucent_shadows && !self.low_ram_guard {
             // depth (4B) + translucent (4B) + color (4B)
             (shadow_res * shadow_res * 12) / (1024 * 1024)
         } else {
             // depth (4B) only
             (shadow_res * shadow_res * 4) / (1024 * 1024)
         };
-        let refl_mb = match self.water_reflections {
-            VoltWaterReflections::PlanarMirror => 6,
-            _ => 0,
+        let refl_mb = if self.water_reflections == VoltWaterReflections::PlanarMirror
+            && !self.low_ram_guard
+        {
+            6
+        } else {
+            0
         };
-        let post_mb = match self.bloom {
-            VoltBloomMode::Off | VoltBloomMode::Fast => 0,
-            VoltBloomMode::SoftQuarter | VoltBloomMode::Cinematic => 18,
+        let post_mb = if self.low_ram_guard {
+            0
+        } else {
+            match self.bloom {
+                VoltBloomMode::Off | VoltBloomMode::Fast => 0,
+                VoltBloomMode::SoftQuarter | VoltBloomMode::Cinematic => 18,
+            }
         };
         let depth_copy_mb = if self.water_reflections == VoltWaterReflections::PlanarMirror
             && self.water_caustics == VoltWaterCaustics::Realistic
+            && !self.low_ram_guard
         {
             8
         } else {
@@ -820,14 +828,21 @@ impl VoltShaderConfig {
     pub fn build_pack(&self) -> (Pack, Vec<(String, f64)>) {
         let shadow_res = self.shadows.resolution(self.low_ram_guard);
         let has_shadows = shadow_res > 0;
-        let has_translucent_shadow = has_shadows && self.translucent_shadows;
-        let has_planar_refl = self.water_reflections == VoltWaterReflections::PlanarMirror;
-        let has_opaque_depth = has_planar_refl && self.water_caustics == VoltWaterCaustics::Realistic;
+        let has_translucent_shadow = has_shadows && self.translucent_shadows && !self.low_ram_guard;
+        let has_planar_refl =
+            self.water_reflections == VoltWaterReflections::PlanarMirror && !self.low_ram_guard;
+        let has_opaque_depth =
+            has_planar_refl && self.water_caustics == VoltWaterCaustics::Realistic;
         let use_two_pass_bloom = matches!(
             self.bloom,
             VoltBloomMode::SoftQuarter | VoltBloomMode::Cinematic
-        );
-        let use_one_pass_post = self.bloom == VoltBloomMode::Fast;
+        ) && !self.low_ram_guard;
+        let use_one_pass_post = self.bloom == VoltBloomMode::Fast
+            || (self.low_ram_guard
+                && matches!(
+                    self.bloom,
+                    VoltBloomMode::SoftQuarter | VoltBloomMode::Cinematic
+                ));
         let has_post = use_two_pass_bloom || use_one_pass_post;
 
         let mut manifest = format!(
@@ -880,7 +895,6 @@ distance = {dist}
             manifest.push_str(
                 r#"
 [reflection]
-option = "enable_planar_reflection"
 "#,
             );
         }
@@ -1059,41 +1073,41 @@ fn volt_grade(c: vec3<f32>, saturation: f32, contrast: f32, vibrance: f32) -> ve
         let wave_veg = if self.waving_vegetation { "true" } else { "false" };
         let wave_water = if self.waving_water { "true" } else { "false" };
         format!(
-            r#"const VOLT_WAVING_VEG: bool = {wave_veg};
-const VOLT_WAVING_WATER: bool = {wave_water};
-const VOLT_WIND_SPEED: f32 = {wind_speed:.4};
-const VOLT_WIND_STRENGTH: f32 = {wind_strength:.4};
-const VOLT_WATER_WAVE: f32 = {water_wave:.4};
+            r#"const VOLT_VTX_WAVING_VEG: bool = {wave_veg};
+const VOLT_VTX_WAVING_WATER: bool = {wave_water};
+const VOLT_VTX_WIND_SPEED: f32 = {wind_speed:.4};
+const VOLT_VTX_WIND_STRENGTH: f32 = {wind_strength:.4};
+const VOLT_VTX_WATER_WAVE: f32 = {water_wave:.4};
 
 fn vertex(input: VertexInput) -> vec3<f32> {{
     var pos = input.position;
     let world = pos + frame.camera_position;
-    let t = frame.time * VOLT_WIND_SPEED;
+    let t = frame.time * VOLT_VTX_WIND_SPEED;
 
-    if VOLT_WAVING_VEG {{
+    if VOLT_VTX_WAVING_VEG {{
         if input.material == 1u {{
             // Ground plants, grass, crops, flowers, vines, kelp: pin lower verts so bases stay anchored.
             let gust = 0.72 + 0.34 * sin(t * 0.9 + world.x * 0.14 + world.z * 0.11);
             let phase = t * 2.9 + world.x * 0.95 + world.z * 0.78 + world.y * 0.35;
-            let amp = 0.072 * VOLT_WIND_STRENGTH * gust * (0.35 + 0.65 * input.light.y);
+            let amp = 0.072 * VOLT_VTX_WIND_STRENGTH * gust * (0.35 + 0.65 * input.light.y);
             let top_weight = clamp(1.0 - fract(input.uv.y * 16.0), 0.25, 1.0);
             pos.x += sin(phase) * amp * top_weight;
             pos.z += cos(phase * 0.83) * amp * 0.72 * top_weight;
         }} else if input.material == 2u {{
             // Tree leaves: coherent gentle canopy sway so adjacent leaf blocks stay connected.
             let phase = t * 2.1 + world.x * 0.55 + world.z * 0.48 + world.y * 0.42;
-            let amp = 0.036 * VOLT_WIND_STRENGTH * (0.40 + 0.60 * input.light.y);
+            let amp = 0.036 * VOLT_VTX_WIND_STRENGTH * (0.40 + 0.60 * input.light.y);
             pos.x += sin(phase) * amp;
             pos.y += cos(phase * 1.15) * amp * 0.42;
             pos.z += sin(phase * 0.87 + 1.3) * amp * 0.75;
         }}
     }}
 
-    if VOLT_WAVING_WATER && input.fluid == 1u {{
+    if VOLT_VTX_WAVING_WATER && input.fluid == 1u {{
         let wt = frame.time * 2.4;
         let w1 = sin(wt + world.x * 1.65 + world.z * 1.15);
         let w2 = cos(wt * 0.82 - world.x * 1.10 + world.z * 1.75);
-        let h_disp = (w1 + w2 * 0.6) * 0.028 * VOLT_WATER_WAVE;
+        let h_disp = (w1 + w2 * 0.6) * 0.028 * VOLT_VTX_WATER_WAVE;
         pos.y += h_disp;
     }}
 
@@ -1556,6 +1570,12 @@ fn material(input: MaterialInput) -> Surface {{
     col += bavg * smoothstep(0.68, 1.25, volt_luma(bavg)) * VOLT_BLOOM_INTENSITY * 0.42;"#
         };
 
+        let sky_mask_code = if self.low_ram_guard {
+            "let sky_mask = mix(0.28, 1.0, smoothstep(-0.05, 0.35, normalize(ray_v).y));"
+        } else {
+            "let sky_mask = select(0.28, 1.0, input.depth <= 0.0001);"
+        };
+
         format!(
             r#"const VOLT_TM_MODE: u32 = {tm_mode}u;
 const VOLT_BLOOM_INTENSITY: f32 = {bloom:.4};
@@ -1575,7 +1595,7 @@ fn post(input: PostInput) -> vec4<f32> {{
         let ray_v = (frame.view_inverse * (frame.projection_inverse * vec4<f32>(clip_uv, 0.0, 1.0))).xyz;
         let sun_align = max(dot(normalize(ray_v), frame.sun_direction), 0.0);
         let sun_vis = max(frame.sun_direction.y * 3.0 + 0.25, 0.0);
-        let sky_mask = select(0.28, 1.0, input.depth <= 0.0001);
+        {sky_mask_code}
         let shaft = pow(sun_align, select(7.0, 5.0, VOLT_GOD_RAYS == 2u)) * sun_vis * sky_mask * (1.0 - frame.rain);
         col += vec3<f32>(1.05, 0.80, 0.46) * shaft * select(0.26, 0.42, VOLT_GOD_RAYS == 2u);
     }}

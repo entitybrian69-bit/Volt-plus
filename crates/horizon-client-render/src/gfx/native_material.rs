@@ -216,8 +216,8 @@ fn layer_table(name: &str, table: &[(u32, u32)]) -> String {
     out + "        default: { return 0u; }\n    }\n}\n"
 }
 
-fn override_ident(line: &str) -> Option<&str> {
-    let rest = line.trim_start().strip_prefix("override")?;
+fn decl_ident<'a>(line: &'a str, kw: &str) -> Option<&'a str> {
+    let rest = line.trim_start().strip_prefix(kw)?;
     if !rest.starts_with(char::is_whitespace) {
         return None;
     }
@@ -228,6 +228,18 @@ fn override_ident(line: &str) -> Option<&str> {
         .map(char::len_utf8)
         .sum::<usize>();
     (ident_len > 0).then(|| &rest[..ident_len])
+}
+
+fn override_ident(line: &str) -> Option<&str> {
+    decl_ident(line, "override")
+}
+
+fn const_ident(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    if !trimmed.ends_with(';') {
+        return None;
+    }
+    decl_ident(trimmed, "const")
 }
 
 /// Extracts the pack's `[vertex]` stage code after `<prelude>` and shared files
@@ -262,17 +274,26 @@ fn vertex_shim(material_source: &str, vertex_stage: Option<&CheckedStage>) -> St
         }
         let vertex_own = &v_after[common_bytes..];
 
-        // Collect override names already declared in material_source so we never emit duplicate overrides
+        // Collect override and const names already declared in material_source so we never emit duplicates.
         let existing_overrides: std::collections::HashSet<&str> = material_source
             .lines()
             .filter_map(override_ident)
             .collect();
+        let existing_consts: std::collections::HashSet<&str> = material_source
+            .lines()
+            .filter_map(const_ident)
+            .collect();
 
         for line in vertex_own.split_inclusive('\n') {
-            if let Some(id) = override_ident(line) {
-                if existing_overrides.contains(id) {
-                    continue;
-                }
+            if let Some(id) = override_ident(line)
+                && existing_overrides.contains(id)
+            {
+                continue;
+            }
+            if let Some(id) = const_ident(line)
+                && existing_consts.contains(id)
+            {
+                continue;
             }
             out += line;
         }

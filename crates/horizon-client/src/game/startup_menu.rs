@@ -1073,6 +1073,61 @@ impl Loading {
             }
             return;
         }
+        if token == "action:horizon.toggle_keyboard" {
+            if pressed {
+                crate::platform::show("");
+            }
+            return;
+        }
+        if token == "action:horizon.open_menu" {
+            if pressed {
+                if self.menu.options_open {
+                    if let Some(gui) = self.gui.as_ref() {
+                        let e = self.menu.options.key(
+                            &mut self.settings,
+                            &gui.atlas,
+                            KeyCode::Escape,
+                            None,
+                        );
+                        self.menu_option_events(e);
+                    }
+                } else if let Some(t) = &mut self.menu.title {
+                    t.escape();
+                    self.save_menu_address();
+                }
+            }
+            return;
+        }
+        if matches!(
+            token,
+            "mouse.scroll.up"
+                | "mouse.scroll.down"
+                | "mouse.scroll.up.held"
+                | "mouse.scroll.down.held"
+        ) {
+            if pressed {
+                let sign = if token.starts_with("mouse.scroll.up") {
+                    1.0_f32
+                } else {
+                    -1.0_f32
+                };
+                let amount = sign * self.settings.mouse_wheel_sensitivity;
+                let size = self.menu_size();
+                if self.menu.options_open {
+                    let events = self.menu.options.wheel(
+                        &mut self.settings,
+                        (b.width, b.height),
+                        self.menu.cursor,
+                        [size[0] as i32, size[1] as i32],
+                        amount,
+                    );
+                    self.menu_option_events(events);
+                } else if let Some(title) = &mut self.menu.title {
+                    title.scroll_worlds(amount, self.menu.cursor, (b.width, b.height));
+                }
+            }
+            return;
+        }
         let resolved = token
             .strip_prefix("action:")
             .map(horizon_client::keybinds::KeyBinds::default_of)
@@ -1091,12 +1146,17 @@ impl Loading {
             }
             return;
         }
-        if !pressed {
-            return;
-        }
         let Some(code) = horizon_client::keybinds::key_code(resolved) else {
             return;
         };
+        if matches!(code, KeyCode::ShiftLeft | KeyCode::ShiftRight) {
+            self.menu.modifiers.set(ModifiersState::SHIFT, pressed);
+        } else if matches!(code, KeyCode::ControlLeft | KeyCode::ControlRight) {
+            self.menu.modifiers.set(ModifiersState::CONTROL, pressed);
+        }
+        if !pressed {
+            return;
+        }
         if self.menu.options_open {
             if let Some(gui) = self.gui.as_ref() {
                 let e = self
@@ -2666,7 +2726,8 @@ impl Loading {
             }
             // Render touch/JVM controls on menu/title screens when `Show Controls on Menu Screen` is on.
             if !waiting_for_key {
-                if self.menu.controls.settings.overlay_show_controls_in_menus
+                if (self.menu.controls.settings.overlay_show_controls_in_menus
+                    || self.menu.controls.has_menu_visible_custom())
                     && self.menu.controls.editor.is_none()
                 {
                     self.menu.controls.draw(batch, &gui.atlas);

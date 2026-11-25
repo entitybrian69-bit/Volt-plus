@@ -433,6 +433,37 @@ pub fn submit_token(token: &'static str, down: bool) {
 pub fn submit_pojav(code: i32, down: bool) -> bool {
     enqueue_pojav(&mut shared_queue().lock().unwrap_or_else(|e| e.into_inner()), code, down)
 }
+/// Routes a recognized `ControlEvent` (including launcher keyboard/menu/scroll
+/// actions) into the input queue. Overlay-owned events (layer switches, control
+/// visibility, raw text) still return `false` so Java handles them locally.
+pub fn submit_control_event(event: ControlEvent, down: bool) -> bool {
+    let token = match event {
+        ControlEvent::Token(token) => token,
+        ControlEvent::ToggleKeyboard => "action:horizon.toggle_keyboard",
+        ControlEvent::OpenMenu => "action:horizon.open_menu",
+        ControlEvent::ScrollUpHeld => "mouse.scroll.up.held",
+        ControlEvent::ScrollDownHeld => "mouse.scroll.down.held",
+        ControlEvent::ToggleControls
+        | ControlEvent::LayerSwitch
+        | ControlEvent::LayerShow
+        | ControlEvent::LayerHide
+        | ControlEvent::SendText => return false,
+    };
+    submit_token(token, down);
+    true
+}
+pub fn submit_pojav_event(code: i32, down: bool) -> bool {
+    let Some(event) = pojav_code(code) else { return false; };
+    if matches!(code, -7 | -8) {
+        if !down && let ControlEvent::Token(token) = event {
+            let mut q = shared_queue().lock().unwrap_or_else(|e| e.into_inner());
+            q.send(token, true);
+            q.send(token, false);
+        }
+        return true;
+    }
+    submit_control_event(event, down)
+}
 pub fn drain_tokens() -> Vec<(&'static str, bool)> {
     shared_queue().lock().unwrap_or_else(|e| e.into_inner()).drain()
 }
@@ -485,6 +516,17 @@ mod tests {
         assert_eq!(q.drain(), vec![("mouse.scroll.down", true), ("mouse.scroll.down", false)]);
         assert!(!enqueue_pojav(&mut q, -1, true));
         assert!(!enqueue_pojav(&mut q, 0, true));
+        assert!(submit_pojav_event(-1, true));
+        assert!(submit_pojav_event(-1, false));
+        assert!(submit_pojav_event(-9, true));
+        assert!(submit_pojav_event(-9, false));
+        assert!(!submit_pojav_event(-2, true));
+        assert!(submit_control_event(ControlEvent::ScrollUpHeld, true));
+        assert!(submit_control_event(ControlEvent::ScrollUpHeld, false));
+        let drained = drain_tokens();
+        assert!(drained.contains(&("action:horizon.toggle_keyboard", true)));
+        assert!(drained.contains(&("action:horizon.open_menu", true)));
+        assert!(drained.contains(&("mouse.scroll.up.held", true)));
     }
     #[test]
     fn queue_balances_shared_keys_and_releases_after_focus_loss() {

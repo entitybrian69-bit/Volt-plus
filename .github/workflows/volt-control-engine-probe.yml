@@ -43,7 +43,7 @@ jobs:
       - name: Compile experimental engine in Android application
         run: |
           set -o pipefail
-          gradle --no-daemon -p packaging/android -Pabi=arm64-v8a -PminSdk=28 \
+          gradle --no-daemon -p packaging/android -Pabi=arm64-v8a -PminSdk=26 \
             -PexperimentalJavaControls=true compileDebugJavaWithJavac --stacktrace 2>&1 | tee "$RUNNER_TEMP/controls-app-build.log"
       - name: Confirm default build does not enable engine
         run: |
