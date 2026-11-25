@@ -20,7 +20,7 @@ impl Game<'_> {
             return (Status::Off, PresenceDetails::default());
         }
         let shaders_active = self.settings.horizon.volt_shaders.enabled
-            || !self.settings.horizon.shader_packs.is_empty();
+            || !self.settings.horizon.shader_pack.is_empty();
         let screen_recording = horizon_client::recorder::status().phase.active();
         if let Some(replay) = &self.replay {
             let view = match replay.camera_mode {
