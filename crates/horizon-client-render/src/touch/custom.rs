@@ -99,34 +99,13 @@ impl CustomButton {
                 };
             }
             1 => {
-                if (self.key.is_empty() || self.key == "key.keyboard.unknown")
-                    && !token.is_empty()
-                    && token != "key.keyboard.unknown"
-                {
-                    self.key = token;
-                } else {
-                    self.second_key = token;
-                }
+                self.second_key = token;
             }
             2 => {
-                if (self.key.is_empty() || self.key == "key.keyboard.unknown")
-                    && !token.is_empty()
-                    && token != "key.keyboard.unknown"
-                {
-                    self.key = token;
-                } else {
-                    self.third_key = token;
-                }
+                self.third_key = token;
             }
             _ => {
-                if (self.key.is_empty() || self.key == "key.keyboard.unknown")
-                    && !token.is_empty()
-                    && token != "key.keyboard.unknown"
-                {
-                    self.key = token;
-                } else {
-                    self.fourth_key = token;
-                }
+                self.fourth_key = token;
             }
         }
     }

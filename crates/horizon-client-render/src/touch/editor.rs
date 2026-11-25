@@ -622,13 +622,8 @@ impl TouchControls {
                         if layout::contains(key_rect(i), p)
                             && let Some(index) = e.selected_custom
                         {
-                            let is_mcpe = self.settings.control_style == ControlStyle::Mcpe;
                             if let Some(btn) = self.settings.custom_buttons.get_mut(index) {
-                                if is_mcpe {
-                                    btn.set_exclusive_binding(token);
-                                } else {
-                                    btn.key = token;
-                                }
+                                btn.key = token;
                             }
                             e.key_picker = false;
                             break;
@@ -840,7 +835,6 @@ impl TouchControls {
         if crate::keybinds::key_code(name).is_none() {
             return false;
         }
-        let is_mcpe = self.settings.control_style == ControlStyle::Mcpe;
         if let Some(e) = &mut self.editor
             && (e.key_picker || e.picker_step != PickerStep::None)
             && let Some(i) = e.selected_custom
@@ -853,14 +847,9 @@ impl TouchControls {
                 _ => 0,
             };
             let lbl = super::custom::friendly_token_name(name);
-            if is_mcpe {
-                btn.set_exclusive_binding(name.into());
+            btn.set_event_slot(slot, name.into());
+            if slot == 0 && (btn.custom_label.is_empty() || btn.custom_label == "BTN") {
                 btn.custom_label = lbl.clone();
-            } else {
-                btn.set_event_slot(slot, name.into());
-                if slot == 0 && (btn.custom_label.is_empty() || btn.custom_label == "BTN") {
-                    btn.custom_label = lbl.clone();
-                }
             }
             e.key_picker = false;
             e.picker_step = PickerStep::None;

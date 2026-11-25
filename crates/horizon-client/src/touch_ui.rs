@@ -1337,7 +1337,7 @@ fn draw_input_picker_modal(
             } else if mcpe_exclusive {
                 "Exclusive binding: Keyboard OR Mouse (selecting one clears the other)."
             } else {
-                "Each GoyControl button can trigger up to 3 Keyboard or Mouse events simultaneously."
+                "Each button can trigger up to 4 Keyboard, Mouse, or Action events simultaneously."
             };
             ui.text(
                 Face::SemiBold,
@@ -6003,7 +6003,6 @@ pub fn draw_hud_editor(
 
     // 7. Step 1 / Step 2 Mouse vs Keyboard Horizontal Picker Modal
     if ed.picker_step != PickerStep::None {
-        let mcpe_excl = tc.settings.control_style == ControlStyle::Mcpe;
         draw_input_picker_modal(
             &mut ui,
             w,
@@ -6011,7 +6010,7 @@ pub fn draw_hud_editor(
             ed.picker_step,
             ed.kb_scroll_x,
             false,
-            mcpe_excl,
+            false,
         );
         ui.finish();
         return;
@@ -6062,7 +6061,7 @@ pub fn draw_hud_editor(
             if is_mcpe_mode {
                 (
                     format!("MCPE Custom Button — {lbl}"),
-                    "Exclusive Binding (Keyboard OR Mouse) • Icon, style & geometry",
+                    "Multi-Event Mapping (up to 4 slots) • Icon, style & geometry",
                 )
             } else {
                 (
@@ -7090,125 +7089,57 @@ pub fn draw_hud_editor(
                 }
                 _ => {
                     // Button Tab 2: Events, Behavior Toggles & Visibility Checkboxes
-                    if is_mcpe_mode && ed.selected_custom.is_some() {
-                        let cur_tok = ed
-                            .selected_custom
-                            .and_then(|idx| tc.settings.custom_buttons.get(idx))
-                            .map(|b| b.key.as_str())
-                            .unwrap_or("");
-                        let is_kb = CustomButton::is_keyboard_binding(cur_tok);
-                        let is_ms = CustomButton::is_mouse_binding(cur_tok);
-                        let kb_lbl = if is_kb {
-                            format!(
-                                "Active: {}",
-                                crate::touch::custom::friendly_token_name(cur_tok)
-                            )
-                        } else {
-                            "Inactive (Cleared)".to_owned()
-                        };
-                        let ms_lbl = if is_ms {
-                            format!(
-                                "Active: {}",
-                                crate::touch::custom::friendly_token_name(cur_tok)
-                            )
-                        } else {
-                            "Inactive (Cleared)".to_owned()
-                        };
-                        let half_w = (ww - 24.0 - 8.0) * 0.5;
-                        for (ci, (title, status, active)) in [
-                            ("KEYBOARD BINDING (EXCLUSIVE)", kb_lbl.as_str(), is_kb),
-                            ("MOUSE / ACTION BINDING (EXCLUSIVE)", ms_lbl.as_str(), is_ms),
-                        ]
-                        .into_iter()
-                        .enumerate()
-                        {
-                            let ex = wx + 12.0 + ci as f32 * (half_w + 8.0);
-                            ui.rounded(
-                                ex,
-                                body_y,
-                                half_w,
-                                42.0,
-                                12.0,
-                                if active { st_cyan_soft } else { st_card },
-                            );
-                            ui.border(
-                                ex,
-                                body_y,
-                                half_w,
-                                42.0,
-                                12.0,
-                                if active { st_cyan } else { st_border },
-                            );
-                            ui.centered_fit(
-                                Face::SemiBold,
-                                8.8,
-                                [ex + 4.0, body_y + 4.0, half_w - 8.0, 16.0],
-                                if active { st_cyan } else { st_muted },
-                                title,
-                            );
-                            ui.centered_fit(
-                                Face::SemiBold,
-                                10.2,
-                                [ex + 4.0, body_y + 20.0, half_w - 8.0, 18.0],
-                                if active { st_text } else { st_muted },
-                                status,
-                            );
-                        }
-                    } else {
-                        let ew = (ww - 24.0 - 30.0) / 4.0;
-                        for slot in 0..4 {
-                            let ex = wx + 12.0 + slot as f32 * (ew + 10.0);
-                            let tok_name = if let Some(idx) = ed.selected_custom {
-                                tc.settings
-                                    .custom_buttons
-                                    .get(idx)
-                                    .map(|b| {
-                                        crate::touch::custom::friendly_token_name(
-                                            b.event_slot(slot),
-                                        )
-                                    })
-                                    .unwrap_or_else(|| "Unassigned".into())
-                            } else if let Some(c) = ed.selected {
-                                if slot == 0 {
-                                    c.name().to_owned()
-                                } else {
-                                    "Built-in".to_owned()
-                                }
+                    let ew = (ww - 24.0 - 30.0) / 4.0;
+                    for slot in 0..4 {
+                        let ex = wx + 12.0 + slot as f32 * (ew + 10.0);
+                        let tok_name = if let Some(idx) = ed.selected_custom {
+                            tc.settings
+                                .custom_buttons
+                                .get(idx)
+                                .map(|b| {
+                                    crate::touch::custom::friendly_token_name(b.event_slot(slot))
+                                })
+                                .unwrap_or_else(|| "Unassigned".into())
+                        } else if let Some(c) = ed.selected {
+                            if slot == 0 {
+                                crate::touch::custom::friendly_token_name(c.default_binding_token())
                             } else {
-                                "Unassigned".into()
-                            };
-                            let has_binding = tok_name != "Unassigned" && tok_name != "None";
-                            ui.rounded(
-                                ex,
-                                body_y,
-                                ew,
-                                42.0,
-                                8.0,
-                                if has_binding { st_cyan_soft } else { st_card },
-                            );
-                            ui.border(
-                                ex,
-                                body_y,
-                                ew,
-                                42.0,
-                                8.0,
-                                if has_binding { st_cyan } else { st_border },
-                            );
-                            ui.centered_fit(
-                                Face::SemiBold,
-                                8.8,
-                                [ex + 6.0, body_y + 4.0, ew - 12.0, 16.0],
-                                if has_binding { st_cyan } else { st_muted },
-                                &format!("EVENT SLOT #{}", slot + 1),
-                            );
-                            ui.centered_fit(
-                                Face::SemiBold,
-                                10.2,
-                                [ex + 6.0, body_y + 20.0, ew - 12.0, 18.0],
-                                st_text,
-                                &tok_name,
-                            );
-                        }
+                                "Unassigned".to_owned()
+                            }
+                        } else {
+                            "Unassigned".into()
+                        };
+                        let has_binding = tok_name != "Unassigned" && tok_name != "None";
+                        ui.rounded(
+                            ex,
+                            body_y,
+                            ew,
+                            42.0,
+                            8.0,
+                            if has_binding { st_cyan_soft } else { st_card },
+                        );
+                        ui.border(
+                            ex,
+                            body_y,
+                            ew,
+                            42.0,
+                            8.0,
+                            if has_binding { st_cyan } else { st_border },
+                        );
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            8.8,
+                            [ex + 6.0, body_y + 4.0, ew - 12.0, 16.0],
+                            if has_binding { st_cyan } else { st_muted },
+                            &format!("EVENT SLOT #{}", slot + 1),
+                        );
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            10.2,
+                            [ex + 6.0, body_y + 20.0, ew - 12.0, 18.0],
+                            st_text,
+                            &tok_name,
+                        );
                     }
 
                     let by = body_y + 54.0;
@@ -8035,7 +7966,6 @@ pub fn touch_hud_editor(
                                 if !moved
                                     && let PickerStep::Keyboard { event_slot } = ed.picker_step
                                 {
-                                    let is_mcpe = tc.settings.control_style == ControlStyle::Mcpe;
                                     let dh = (h - 20.0).clamp(235.0, 340.0);
                                     let dx = (w - dw) * 0.5;
                                     let dy = (h - dh) * 0.5;
@@ -8059,36 +7989,23 @@ pub fn touch_hud_editor(
                                                     && let Some(btn) =
                                                         tc.settings.custom_buttons.get_mut(idx)
                                                 {
-                                                    if is_mcpe {
-                                                        btn.set_exclusive_binding(
-                                                            (*tok).to_owned(),
-                                                        );
+                                                    btn.set_event_slot(
+                                                        event_slot,
+                                                        (*tok).to_owned(),
+                                                    );
+                                                    if event_slot == 0
+                                                        && (btn.custom_label.is_empty()
+                                                            || btn.custom_label == "BTN")
+                                                    {
                                                         btn.custom_label = (*lbl).to_owned();
-                                                    } else {
-                                                        btn.set_event_slot(
-                                                            event_slot,
-                                                            (*tok).to_owned(),
-                                                        );
-                                                        if event_slot == 0
-                                                            && (btn.custom_label.is_empty()
-                                                                || btn.custom_label == "BTN")
-                                                        {
-                                                            btn.custom_label = (*lbl).to_owned();
-                                                        }
                                                     }
                                                     let _ = tc.settings.save();
                                                 }
                                                 ed.picker_step = PickerStep::None;
-                                                ed.status_msg = Some(if is_mcpe {
-                                                    format!(
-                                                        "Bound key '{lbl}' (exclusive — mouse binding cleared)."
-                                                    )
-                                                } else {
-                                                    format!(
-                                                        "Assigned key '{lbl}' to Event Slot #{}.",
-                                                        event_slot + 1
-                                                    )
-                                                });
+                                                ed.status_msg = Some(format!(
+                                                    "Assigned key '{lbl}' to Event Slot #{}.",
+                                                    event_slot + 1
+                                                ));
                                                 tc.clicked = true;
                                                 break;
                                             }
@@ -8377,7 +8294,6 @@ pub fn touch_hud_editor(
 
         // 2. If Mouse vs Keyboard Picker Modal is open:
         if ed.picker_step != PickerStep::None {
-            let is_mcpe = tc.settings.control_style == ControlStyle::Mcpe;
             match ed.picker_step {
                 PickerStep::AskInputType { event_slot } => {
                     let dw = (w - 36.0).clamp(270.0, 440.0);
@@ -8407,11 +8323,7 @@ pub fn touch_hud_editor(
                         if let Some(idx) = ed.selected_custom
                             && let Some(btn) = tc.settings.custom_buttons.get_mut(idx)
                         {
-                            if is_mcpe {
-                                btn.set_exclusive_binding("key.keyboard.unknown".into());
-                            } else {
-                                btn.set_event_slot(event_slot, String::new());
-                            }
+                            btn.set_event_slot(event_slot, String::new());
                             let _ = tc.settings.save();
                         }
                         ed.picker_step = PickerStep::None;
@@ -8488,15 +8400,7 @@ pub fn touch_hud_editor(
                             if let Some(idx) = ed.selected_custom
                                 && let Some(btn) = tc.settings.custom_buttons.get_mut(idx)
                             {
-                                if is_mcpe {
-                                    // Strict single-binding exclusivity in MCPE mode:
-                                    // selecting a mouse binding clears any keyboard binding.
-                                    btn.set_exclusive_binding((*tok).to_owned());
-                                    btn.custom_label =
-                                        crate::touch::custom::friendly_token_name(tok);
-                                } else {
-                                    btn.set_event_slot(event_slot, (*tok).to_owned());
-                                }
+                                btn.set_event_slot(event_slot, (*tok).to_owned());
                                 if *tok == "mouse.look" {
                                     for l in &mut btn.layouts {
                                         l.passthrough = true;
@@ -8505,11 +8409,10 @@ pub fn touch_hud_editor(
                                 let _ = tc.settings.save();
                             }
                             ed.picker_step = PickerStep::None;
-                            ed.status_msg = Some(if is_mcpe {
-                                format!("Bound '{lbl}' (exclusive — keyboard binding cleared).")
-                            } else {
-                                format!("Assigned '{lbl}' to Event Slot #{}.", event_slot + 1)
-                            });
+                            ed.status_msg = Some(format!(
+                                "Assigned '{lbl}' to Event Slot #{}.",
+                                event_slot + 1
+                            ));
                             tc.clicked = true;
                             return false;
                         }
@@ -9158,53 +9061,43 @@ pub fn touch_hud_editor(
                     }
                 }
                 _ => {
-                    if tc.settings.control_style == ControlStyle::Mcpe
-                        && ed.selected_custom.is_some()
-                    {
-                        let half_w = (ww - 24.0 - 8.0) * 0.5;
-                        if inside([wx + 12.0, body_y, half_w, 42.0]) {
-                            ed.picker_step = PickerStep::Keyboard { event_slot: 0 };
-                            tc.clicked = true;
-                            return false;
-                        }
-                        if inside([wx + 12.0 + half_w + 8.0, body_y, half_w, 42.0]) {
-                            ed.picker_step = PickerStep::MouseAndActions { event_slot: 0 };
-                            tc.clicked = true;
-                            return false;
-                        }
-                    } else {
-                        let ew = (ww - 24.0 - 30.0) / 4.0;
-                        for slot in 0..4 {
-                            let ex = wx + 12.0 + slot as f32 * (ew + 10.0);
-                            if inside([ex, body_y, ew, 42.0]) {
-                                if ed.selected_custom.is_none() {
-                                    push_undo_snapshot(&mut ed, &tc.settings);
-                                    let idx = tc.settings.custom_buttons.len();
-                                    let is_goy =
-                                        tc.settings.control_style == ControlStyle::GoyControl;
-                                    let mut nb = CustomButton::new("key.mouse.left".into(), idx);
-                                    nb.custom_label = format!("BTN {}", idx + 1);
-                                    for m in 0..3 {
-                                        nb.layouts[m].use_goy_style = is_goy;
-                                    }
-                                    tc.settings.custom_buttons.push(nb);
-                                    ed.selected_custom = Some(idx);
-                                    ed.selected = None;
+                    let ew = (ww - 24.0 - 30.0) / 4.0;
+                    for slot in 0..4 {
+                        let ex = wx + 12.0 + slot as f32 * (ew + 10.0);
+                        if inside([ex, body_y, ew, 42.0]) {
+                            if ed.selected_custom.is_none() {
+                                push_undo_snapshot(&mut ed, &tc.settings);
+                                let idx = tc.settings.custom_buttons.len();
+                                let is_goy = tc.settings.control_style == ControlStyle::GoyControl;
+                                let mut nb = if let Some(c) = ed.selected {
+                                    let mut btn = CustomButton::new(
+                                        c.default_binding_token().to_owned(),
+                                        idx,
+                                    );
+                                    btn.custom_label = c.short_label().to_owned();
+                                    let base_pl = tc.placement(c);
+                                    btn.layouts = [base_pl.clone(), base_pl.clone(), base_pl];
+                                    tc.settings.button_visibility[c as usize] = 2;
+                                    btn
+                                } else {
+                                    let mut btn =
+                                        CustomButton::new("key.mouse.left".into(), idx);
+                                    btn.custom_label = format!("BTN {}", idx + 1);
+                                    btn
+                                };
+                                for m in 0..3 {
+                                    nb.layouts[m].use_goy_style = is_goy;
                                 }
-                                if ed.selected_custom.is_some() {
-                                    ed.picker_step = PickerStep::AskInputType {
-                                        event_slot: if tc.settings.control_style
-                                            == ControlStyle::Mcpe
-                                        {
-                                            0
-                                        } else {
-                                            slot
-                                        },
-                                    };
-                                }
-                                tc.clicked = true;
-                                return false;
+                                tc.settings.custom_buttons.push(nb);
+                                let _ = tc.settings.save();
+                                ed.selected_custom = Some(idx);
+                                ed.selected = None;
                             }
+                            if ed.selected_custom.is_some() {
+                                ed.picker_step = PickerStep::AskInputType { event_slot: slot };
+                            }
+                            tc.clicked = true;
+                            return false;
                         }
                     }
                     let by = body_y + 54.0;

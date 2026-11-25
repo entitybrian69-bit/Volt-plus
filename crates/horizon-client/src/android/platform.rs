@@ -506,6 +506,10 @@ pub fn capture_mouse(capture: bool) -> bool {
     crate::native_ime::capture_mouse(capture)
 }
 
+pub fn hide_os_pointer() {
+    crate::native_ime::hide_system_pointer_now();
+}
+
 pub fn show_secret(text: &str) {
     MULTILINE.with(|mode| mode.set(false));
     if crate::native_ime::show_secret(text) {

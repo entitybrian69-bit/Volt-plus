@@ -7732,6 +7732,7 @@ impl Game<'_> {
             {
                 self.os_mouse_captured = false;
                 let _ = crate::platform::capture_mouse(false);
+                crate::platform::hide_os_pointer();
             }
         }
         // The real pointer takes over from an agent's.
@@ -7829,9 +7830,10 @@ impl Game<'_> {
             self.cursor = pos;
         }
         if !self.options.offscreen {
-            let pointer = !self.captured;
             #[cfg(target_os = "android")]
-            let pointer = pointer && (!crate::touch_visible() || self.settings.keypad.enabled);
+            let pointer = false;
+            #[cfg(not(target_os = "android"))]
+            let pointer = !self.captured;
             window.set_cursor_visible(pointer);
         }
     }
@@ -7851,6 +7853,7 @@ impl Game<'_> {
         if effective == self.cursor_icon || !self.keyboard_mouse {
             return;
         }
+        #[cfg(not(target_os = "android"))]
         if let Some(window) = &self.window {
             window.set_cursor(match effective {
                 Cursor::Arrow => winit::window::CursorIcon::Default,

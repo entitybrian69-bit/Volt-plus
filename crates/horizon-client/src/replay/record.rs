@@ -42,8 +42,8 @@ pub struct ReplaySettings {
 impl Default for ReplaySettings {
     fn default() -> Self {
         Self {
-            auto_record_sp: true,
-            auto_record_mp: true,
+            auto_record_sp: false,
+            auto_record_mp: false,
             record_self: true,
             show_recording_badge: true,
             export_resolution: 1, // 1080p

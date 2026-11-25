@@ -219,22 +219,68 @@ public final class HorizonActivity extends android.app.NativeActivity {
         }
     }
 
+    @Override public void onContentChanged() {
+        super.onContentChanged();
+        hideOsPointer(this);
+    }
+
+    private static boolean isPointerInputEvent(android.view.MotionEvent ev) {
+        if (ev == null) return false;
+        if (ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE)
+                || ev.isFromSource(android.view.InputDevice.SOURCE_TOUCHPAD)) {
+            return true;
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 26
+                && ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE_RELATIVE)) {
+            return true;
+        }
+        for (int i = 0; i < ev.getPointerCount(); i++) {
+            int tool = ev.getToolType(i);
+            if (tool == android.view.MotionEvent.TOOL_TYPE_MOUSE) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void ensurePointerHiddenTree(
+            android.content.Context ctx,
+            android.view.View view,
+            android.view.PointerIcon hidden) {
+        if (view == null || ctx == null || hidden == null || android.os.Build.VERSION.SDK_INT < 24) {
+            return;
+        }
+        try {
+            if (view.getPointerIcon() != hidden) {
+                view.setPointerIcon(hidden);
+            }
+            if (view instanceof android.view.ViewGroup) {
+                android.view.ViewGroup vg = (android.view.ViewGroup) view;
+                for (int i = 0; i < vg.getChildCount(); i++) {
+                    ensurePointerHiddenTree(ctx, vg.getChildAt(i), hidden);
+                }
+            }
+        } catch (Throwable ignored) {}
+    }
+
     @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent ev) {
-        if (android.os.Build.VERSION.SDK_INT >= 24 && ev != null
-                && (ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE)
-                    || (android.os.Build.VERSION.SDK_INT >= 26
-                        && ev.isFromSource(android.view.InputDevice.SOURCE_MOUSE_RELATIVE))
-                    || ev.isFromSource(android.view.InputDevice.SOURCE_TOUCHPAD))) {
+        if (android.os.Build.VERSION.SDK_INT >= 24 && isPointerInputEvent(ev)) {
             android.view.Window w = getWindow();
             if (w != null) {
-                android.view.View decor = w.getDecorView();
-                android.view.PointerIcon hidden = invisiblePointerIcon(this);
-                if (decor != null && hidden != null && decor.getPointerIcon() != hidden) {
-                    hidePointerTree(this, decor);
-                }
+                ensurePointerHiddenTree(this, w.getDecorView(), invisiblePointerIcon(this));
             }
         }
         return super.dispatchGenericMotionEvent(ev);
+    }
+
+    @Override public boolean dispatchTouchEvent(android.view.MotionEvent ev) {
+        if (android.os.Build.VERSION.SDK_INT >= 24 && isPointerInputEvent(ev)) {
+            android.view.Window w = getWindow();
+            if (w != null) {
+                ensurePointerHiddenTree(this, w.getDecorView(), invisiblePointerIcon(this));
+            }
+        }
+        return super.dispatchTouchEvent(ev);
     }
 
     private static void setKeepScreenOnTree(android.view.View view, boolean enable) {
@@ -277,6 +323,14 @@ public final class HorizonActivity extends android.app.NativeActivity {
         android.view.PointerIcon cached = sInvisiblePointerIcon;
         if (cached != null) return cached;
         try {
+            android.view.PointerIcon nullIcon = android.view.PointerIcon.getSystemIcon(
+                    ctx, android.view.PointerIcon.TYPE_NULL);
+            if (nullIcon != null) {
+                sInvisiblePointerIcon = nullIcon;
+                return nullIcon;
+            }
+        } catch (Throwable ignored) {}
+        try {
             android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(
                     1, 1, android.graphics.Bitmap.Config.ARGB_8888);
             bmp.eraseColor(android.graphics.Color.TRANSPARENT);
@@ -286,28 +340,12 @@ public final class HorizonActivity extends android.app.NativeActivity {
                 return icon;
             }
         } catch (Throwable ignored) {}
-        try {
-            return android.view.PointerIcon.getSystemIcon(
-                    ctx, android.view.PointerIcon.TYPE_NULL);
-        } catch (Throwable ignored) {
-            return null;
-        }
+        return null;
     }
 
     private static void hidePointerTree(android.content.Context ctx, android.view.View view) {
         if (view == null || ctx == null || android.os.Build.VERSION.SDK_INT < 24) return;
-        try {
-            android.view.PointerIcon icon = invisiblePointerIcon(ctx);
-            if (icon != null) {
-                view.setPointerIcon(icon);
-                if (view instanceof android.view.ViewGroup) {
-                    android.view.ViewGroup vg = (android.view.ViewGroup) view;
-                    for (int i = 0; i < vg.getChildCount(); i++) {
-                        hidePointerTree(ctx, vg.getChildAt(i));
-                    }
-                }
-            }
-        } catch (Throwable ignored) {}
+        ensurePointerHiddenTree(ctx, view, invisiblePointerIcon(ctx));
     }
 
     public static void hideOsPointer(final android.app.Activity activity) {

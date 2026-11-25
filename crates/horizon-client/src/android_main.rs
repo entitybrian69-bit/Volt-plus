@@ -105,11 +105,15 @@ pub(crate) fn touch_visible() -> bool {
     horizon_client::android_runtime::active_input() == catalog::InputHost::Touch
 }
 pub(crate) fn touch_input(touch: bool) {
+    let was_km = keyboard_mouse_input();
     horizon_client::android_runtime::note_input(if touch {
         catalog::InputHost::Touch
     } else {
         catalog::InputHost::KeyboardMouse
     });
+    if !touch && !was_km {
+        crate::platform::hide_os_pointer();
+    }
 }
 pub(crate) fn save_input_mode() {
     APP.with(|app| {

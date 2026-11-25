@@ -362,6 +362,9 @@ impl Launcher {
         self.prepared_session = None;
         self.launching = false;
         self.launch_pending_tick = false;
+        self.pending_replay = None;
+        self.pending_world = None;
+        self.pending_server = None;
         let dp_enabled = horizon_client::settings::Settings::load(
             &self.catalog.config.game_home(&self.home).join("options.txt"),
         )
@@ -799,6 +802,7 @@ impl Launcher {
             self.game = Some(game);
             self.game.as_mut().unwrap().resumed(events);
             self.configure_screen();
+            crate::platform::hide_os_pointer();
         } else {
             if !self.home.join("engine-data.zip").is_file() {
                 return Err(

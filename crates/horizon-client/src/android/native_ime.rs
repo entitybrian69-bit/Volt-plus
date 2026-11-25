@@ -31,6 +31,7 @@ enum Command {
     Hide,
     Poll,
     Capture(bool),
+    HidePointer,
     Bounds,
     ImportDocument,
     ImportFolderTree,
@@ -151,6 +152,13 @@ pub unsafe fn initialize(
                 }
             }
             env.call_method(&native, "requestFocus", "()Z", &[])?;
+            let _ = env.call_static_method(
+                "dev/horizon/android/HorizonActivity",
+                "hideOsPointer",
+                "(Landroid/app/Activity;)V",
+                &[JValue::Object(&activity)],
+            );
+            let _ = env.exception_clear();
             Ok((
                 env.new_global_ref(edit)?,
                 env.new_global_ref(input)?,
@@ -800,6 +808,9 @@ impl Ui {
                     env.call_method(&self.native, "releasePointerCapture", "()V", &[])?;
                 }
             }
+            Command::HidePointer => {
+                self.hide_system_pointer(env);
+            }
         }
         Ok(())
     }
@@ -899,6 +910,12 @@ pub fn capture_mouse(capture: bool) -> bool {
         true
     } else {
         false
+    }
+}
+
+pub fn hide_system_pointer_now() {
+    if let Some(ui) = UI.get().filter(|ui| !ui.failed.load(Ordering::Acquire)) {
+        ui.enqueue(Command::HidePointer);
     }
 }
 

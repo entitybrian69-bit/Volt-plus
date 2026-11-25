@@ -85,6 +85,42 @@ impl Control {
             Self::Shield => "Raise shield",
         }
     }
+    pub fn default_binding_token(self) -> &'static str {
+        match self {
+            Self::Move => "key.keyboard.unknown",
+            Self::Sprint => "key.keyboard.left.control",
+            Self::Jump => "key.keyboard.space",
+            Self::Sneak => "key.keyboard.left.shift",
+            Self::Attack => "key.mouse.left",
+            Self::Use => "key.mouse.right",
+            Self::Chat => "key.keyboard.t",
+            Self::Pause => "key.keyboard.escape",
+            Self::Settings => "action:horizon.touch_settings",
+            Self::Inventory => "key.keyboard.e",
+            Self::Debug => "key.keyboard.f3",
+            Self::Perspective => "key.keyboard.f5",
+            Self::Offhand => "key.keyboard.f",
+            Self::Shield => "key.mouse.right",
+        }
+    }
+    pub fn short_label(self) -> &'static str {
+        match self {
+            Self::Move => "Move",
+            Self::Sprint => "Sprint",
+            Self::Jump => "Jump",
+            Self::Sneak => "Sneak",
+            Self::Attack => "Attack",
+            Self::Use => "Use",
+            Self::Chat => "Chat",
+            Self::Pause => "Pause",
+            Self::Settings => "Menu",
+            Self::Inventory => "Inv",
+            Self::Debug => "F3",
+            Self::Perspective => "F5",
+            Self::Offhand => "Swap",
+            Self::Shield => "Shield",
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -970,13 +1006,7 @@ impl Settings {
         }
         self.custom_buttons
             .retain(|b| super::CustomButton::valid_token(&b.key) || !b.active_tokens().is_empty());
-        let is_mcpe = self.control_style == ControlStyle::Mcpe;
         for button in &mut self.custom_buttons {
-            if is_mcpe {
-                // Enforce strict single-binding exclusivity in MCPE mode (Keyboard OR Mouse)
-                button.second_key.clear();
-                button.third_key.clear();
-            }
             for p in &mut button.layouts {
                 p.sanitize();
             }

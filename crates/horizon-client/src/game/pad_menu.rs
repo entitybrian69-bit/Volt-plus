@@ -994,6 +994,9 @@ impl Game<'_> {
             return;
         }
         if let Some(window) = &self.window {
+            #[cfg(target_os = "android")]
+            window.set_cursor_visible(false);
+            #[cfg(not(target_os = "android"))]
             window.set_cursor_visible(show && !self.captured);
         }
     }
@@ -1499,7 +1502,7 @@ impl Game<'_> {
             return;
         }
         #[cfg(target_os = "android")]
-        if virtual_mouse {
+        if virtual_mouse || (!self.captured && crate::keyboard_mouse_input()) {
             // On Android, the virtual mouse pointer is drawn once at the top of the HUD z-order
             // in `game.rs` above all touch controls, floating menu, and editor overlays.
             return;
