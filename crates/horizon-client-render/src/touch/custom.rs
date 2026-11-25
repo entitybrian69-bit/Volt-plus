@@ -391,7 +391,8 @@ impl TouchControls {
             return false;
         }
         if in_menu {
-            p.visible_in_menu
+            (self.settings.overlay_show_controls_in_menus && p.visible_in_game)
+                || p.visible_in_menu
         } else {
             p.visible_in_game
         }

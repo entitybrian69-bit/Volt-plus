@@ -164,17 +164,32 @@ pub struct ShadowMap {
     pub sampler: wgpu::Sampler,
     /// The 1×1 map still holds the zeroes it was made with.
     blank_uncleared: bool,
+    /// The 1×1 translucent/color map still holds zeroes when unused.
+    translucent_blank_uncleared: bool,
 }
 
 impl ShadowMap {
     pub fn new(device: &wgpu::Device, settings: Option<&Settings>) -> Self {
+        Self::new_with_translucent(device, settings, true)
+    }
+
+    pub fn new_with_translucent(
+        device: &wgpu::Device,
+        settings: Option<&Settings>,
+        translucent_needed: bool,
+    ) -> Self {
         let size = settings.map_or(1, |s| s.resolution);
-        let texture = |label, format, usage| {
+        let translucent_size = if settings.is_some() && translucent_needed {
+            size
+        } else {
+            1
+        };
+        let texture = |label, dim, format, usage| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
-                    width: size,
-                    height: size,
+                    width: dim,
+                    height: dim,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -189,16 +204,19 @@ impl ShadowMap {
         };
         let depth = texture(
             "Native shader pack shadow map",
+            size,
             wgpu::TextureFormat::Depth32Float,
             wgpu::TextureUsages::COPY_SRC,
         );
         let translucent = texture(
             "Native shader pack translucent shadow map",
+            translucent_size,
             wgpu::TextureFormat::Depth32Float,
             wgpu::TextureUsages::COPY_DST,
         );
         let color = texture(
             "Native shader pack shadow colour",
+            translucent_size,
             SHADOW_COLOR,
             wgpu::TextureUsages::empty(),
         );
@@ -217,6 +235,7 @@ impl ShadowMap {
             color_view: color.create_view(&Default::default()),
             sampler,
             blank_uncleared: settings.is_none(),
+            translucent_blank_uncleared: settings.is_none() || !translucent_needed,
         }
     }
 
@@ -295,11 +314,33 @@ impl ShadowMap {
         })
     }
 
-    /// Clears the 1×1 map of a pack without `[shadow]` once.
+    /// Clears the 1×1 map of a pack without `[shadow]` (or unused translucent shadow) once.
     pub fn clear_blank(&mut self, encoder: &mut wgpu::CommandEncoder) {
         if std::mem::take(&mut self.blank_uncleared) {
             drop(self.begin(encoder, "Native shader pack shadow map clear"));
-            drop(self.begin_translucent(encoder, "Native shader pack shadow colour clear"));
+        }
+        if std::mem::take(&mut self.translucent_blank_uncleared) {
+            drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Native shader pack shadow colour clear"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.color_view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.translucent_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            }));
         }
     }
 }

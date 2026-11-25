@@ -336,20 +336,12 @@ impl Game<'_> {
         }
         if name == "mouse.virtual.toggle" {
             if down {
-                if self.pad_in_menu() || !self.pad.touch.settings.virtual_mouse_enabled {
-                    self.pad.touch.settings.virtual_mouse_enabled =
-                        !self.pad.touch.settings.virtual_mouse_enabled;
-                    self.pad.touch_ui.pointer_off = !self.pad.touch.settings.virtual_mouse_enabled;
-                    if self.pad.touch.settings.virtual_mouse_enabled && !self.pad_in_menu() {
-                        self.pad.touch_ui.goy_in_game_mouse = true;
-                    } else {
-                        self.pad.touch_ui.goy_in_game_mouse = false;
-                    }
-                    let _ = self.pad.touch.settings.save();
-                    self.settings.touch = self.pad.touch.settings.clone();
-                } else {
-                    self.pad.touch_ui.goy_in_game_mouse = !self.pad.touch_ui.goy_in_game_mouse;
-                }
+                self.pad.touch_ui.goy_in_game_mouse = false;
+                let next = !self.pad.touch.settings.virtual_mouse_enabled;
+                self.pad.touch.settings.virtual_mouse_enabled = next;
+                self.pad.touch_ui.pointer_off = !next;
+                let _ = self.pad.touch.settings.save();
+                self.settings.touch = self.pad.touch.settings.clone();
                 self.android_sync_pointer();
                 self.android_touch_haptic(14);
             }
@@ -1120,6 +1112,12 @@ impl Game<'_> {
                 InGameMenuAction::ToggleOverlayShowInGameplay => {
                     self.pad.touch.settings.overlay_show_in_gameplay =
                         !self.pad.touch.settings.overlay_show_in_gameplay;
+                    let _ = self.pad.touch.settings.save();
+                    self.settings.touch = self.pad.touch.settings.clone();
+                }
+                InGameMenuAction::ToggleOverlayShowControlsInMenus => {
+                    self.pad.touch.settings.overlay_show_controls_in_menus =
+                        !self.pad.touch.settings.overlay_show_controls_in_menus;
                     let _ = self.pad.touch.settings.save();
                     self.settings.touch = self.pad.touch.settings.clone();
                 }

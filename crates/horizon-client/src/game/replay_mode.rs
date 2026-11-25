@@ -28,6 +28,12 @@ impl Game<'_> {
 
     /// Launches straight into Replay Viewer mode for `mcpr_path`.
     pub(super) fn open_replay(&mut self, mcpr_path: &Path) -> Result<()> {
+        if self.defer_world_entry(super::PendingWorldEntry::Replay {
+            path: mcpr_path.to_path_buf(),
+        })? {
+            return Ok(());
+        }
+        self.join_world_rest()?;
         // Never record a replay while watching a replay.
         replay::global_recorder().discard();
         let player = ReplayPlayer::open(mcpr_path)?;
@@ -37,7 +43,9 @@ impl Game<'_> {
         self.replay_seeking = false;
         self.replay_last_step = Some(Instant::now());
         // Apply initial config + first packets so terrain starts loading right away.
-        self.poll_replay_packets(0)?;
+        if let Err(err) = self.poll_replay_packets(0) {
+            log::warn!("Replay initial packet warning: {err}");
+        }
         self.replay_publish_hud_snapshot();
         Ok(())
     }
@@ -147,16 +155,22 @@ impl Game<'_> {
                     self.handle_replay_packet(*packet)?;
                     if let Some(replay) = self.replay.as_mut()
                         && !replay.cam_initialized
-                        && let Some(p) = &self.player
                     {
-                        replay.cam_pos = [
-                            p.position.x,
-                            p.position.y + f64::from(p.dimensions.eye_height),
-                            p.position.z,
-                        ];
-                        replay.cam_yaw = self.yaw;
-                        replay.cam_pitch = self.pitch;
-                        replay.cam_initialized = true;
+                        if let Some(p) = &self.player {
+                            replay.cam_pos = [
+                                p.position.x,
+                                p.position.y + f64::from(p.dimensions.eye_height),
+                                p.position.z,
+                            ];
+                            replay.cam_yaw = self.yaw;
+                            replay.cam_pitch = self.pitch;
+                            replay.cam_initialized = true;
+                        } else if let Some(m) = self.mobs.first() {
+                            replay.cam_pos = [m.position.x, m.eye_y(), m.position.z];
+                            replay.cam_yaw = m.head_yaw;
+                            replay.cam_pitch = m.pitch;
+                            replay.cam_initialized = true;
+                        }
                     }
                 }
             }

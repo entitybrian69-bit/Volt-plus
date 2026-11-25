@@ -456,6 +456,7 @@ impl TouchControls {
         Control::ALL
             .into_iter()
             .any(|c| self.visible_for_state(c, false))
+            || (0..self.settings.custom_buttons.len()).any(|i| self.custom_visible_for_state(i, false))
     }
 
     pub fn visible_for_state(&self, c: Control, in_menu: bool) -> bool {
@@ -467,6 +468,9 @@ impl TouchControls {
         }
         let p = self.placement(c);
         if in_menu {
+            if self.settings.overlay_show_controls_in_menus {
+                return p.visible_in_game || p.visible_in_menu;
+            }
             if self.in_inventory
                 && self.settings.control_style == ControlStyle::Mcpe
                 && matches!(c, Control::Sneak | Control::Inventory)

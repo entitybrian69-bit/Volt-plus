@@ -285,8 +285,17 @@ impl ReplayRecorder {
             },
         };
         let cached = self.config_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut saw_finish_config = false;
         for body in cached.iter() {
             inner.write_body_at(0, body)?;
+            if let Ok((id, _)) = super::archive::decode_raw_body(body)
+                && id == horizon_protocol::ids::configuration::clientbound::FINISH_CONFIGURATION
+            {
+                saw_finish_config = true;
+            }
+        }
+        if saw_finish_config {
+            inner.in_configuration = false;
         }
         *guard = Some(inner);
         *self.last_status.lock().unwrap_or_else(|e| e.into_inner()) =

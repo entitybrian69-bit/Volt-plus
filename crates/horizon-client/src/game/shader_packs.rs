@@ -81,16 +81,21 @@ fn active_pack<'a>(picked: &'a str, mods: &horizon_client::mod_list::ModList) ->
     }
 }
 
-/// Whether the pack `settings` pick (or `HORIZON_SHADER_PACK`) is one of Horizon's own: only
-/// then do resource loads read the resource packs' LabPBR maps (`sprites::set_labpbr_maps`).
+/// Whether the pack `settings` pick (or `HORIZON_SHADER_PACK`) actually reads LabPBR
+/// normal/specular maps: only then do resource loads allocate LabPBR arrays (`sprites::set_labpbr_maps`).
 pub(super) fn picks_native_pack(settings: &horizon_client::settings::Settings) -> bool {
     let dev = std::env::var("HORIZON_SHADER_PACK").ok();
     let picked = active_pack(
         dev.as_deref().unwrap_or(&settings.horizon.shader_pack),
         &settings.mods,
     );
-    !picked.is_empty()
-        && horizon_shader_api::package::is_pack(&Game::shader_packs_dir().join(picked))
+    if picked.is_empty() {
+        return settings.graphics.volt_shaders.enabled && settings.graphics.volt_shaders.labpbr;
+    }
+    let path = Game::shader_packs_dir().join(picked);
+    horizon_shader_api::package::is_pack(&path)
+        && horizon_shader_api::Pack::read(&path)
+            .is_ok_and(|pack| super::native_shaders::pack_reads_labpbr(&pack))
 }
 
 /// The ids a pack gives entities and block entities (4.1, 5.3), for the spans of the entity
@@ -323,235 +328,243 @@ impl Game<'_> {
             dev.as_deref().unwrap_or(&self.settings.horizon.shader_pack),
             &self.settings.mods,
         );
-        if self.native_shaders.picked != picked {
+        const VOLT_BUILTIN_PICK: &str = "__volt_builtin_shaders__";
+        let using_builtin = picked.is_empty() && self.settings.graphics.volt_shaders.enabled;
+        let effective_picked = if using_builtin { VOLT_BUILTIN_PICK } else { picked };
+        if self.native_shaders.picked != effective_picked {
             // Another pack, or none: drop what ran.
-            self.native_shaders = super::native_shaders::NativeShaders::picking(picked);
+            self.native_shaders = super::native_shaders::NativeShaders::picking(effective_picked);
             self.pack_ids = None;
             clear_pending_shader_job();
             if let Some(renderer) = &mut self.renderer {
                 renderer.drop_shader_packs();
             }
         }
-        if picked.is_empty() {
+        if effective_picked.is_empty() {
             return PackInputs::default();
         }
-        let name = picked.to_owned();
-        let dimension = match self.dim {
-            Dim::Overworld => 0,
-            Dim::Nether => -1,
-            Dim::End => 1,
-        };
-        let mut path = Self::shader_packs_dir().join(&name);
-        if !path.exists() {
-            if let Some(bytes) = horizon_shader_api::build_builtin_hshader_bytes(&name) {
-                let clean = name
-                    .strip_prefix("horizon:")
-                    .unwrap_or(&name)
-                    .strip_suffix(".hshader")
-                    .unwrap_or(&name);
-                let dir = Self::shader_packs_dir();
-                let _ = std::fs::create_dir_all(&dir);
-                let target = dir.join(format!("{clean}.hshader"));
-                if std::fs::write(&target, bytes).is_ok() {
-                    path = target;
+        if using_builtin {
+            self.tick_volt_shader_pack();
+        } else {
+            let name = picked.to_owned();
+            let dimension = match self.dim {
+                Dim::Overworld => 0,
+                Dim::Nether => -1,
+                Dim::End => 1,
+            };
+            let mut path = Self::shader_packs_dir().join(&name);
+            if !path.exists() {
+                if let Some(bytes) = horizon_shader_api::build_builtin_hshader_bytes(&name) {
+                    let clean = name
+                        .strip_prefix("horizon:")
+                        .unwrap_or(&name)
+                        .strip_suffix(".hshader")
+                        .unwrap_or(&name);
+                    let dir = Self::shader_packs_dir();
+                    let _ = std::fs::create_dir_all(&dir);
+                    let target = dir.join(format!("{clean}.hshader"));
+                    if std::fs::write(&target, bytes).is_ok() {
+                        path = target;
+                    }
                 }
             }
-        }
-        if horizon_shader_api::package::is_pack(&path) {
-            // One of Horizon's own packs (game/native_shaders.rs).
-            self.tick_native_shader_pack(&path);
-        } else if self
-            .renderer
-            .as_ref()
-            .is_some_and(|r| r.shader_pack_dimension() != Some(dimension))
-        {
-            if cfg!(target_os = "android") {
-                let mut cpu_finished = None;
-                let mut gpu_finished = None;
-                {
-                    let mut slot = PENDING_SHADER_JOB.lock().unwrap();
-                    let matches_job = slot
-                        .as_ref()
-                        .is_some_and(|j| j.name == name && j.dimension == dimension);
-                    if !matches_job {
+            if horizon_shader_api::package::is_pack(&path) {
+                // One of Horizon's own packs (game/native_shaders.rs).
+                self.tick_native_shader_pack(&path);
+            } else if self
+                .renderer
+                .as_ref()
+                .is_some_and(|r| r.shader_pack_dimension() != Some(dimension))
+            {
+                if cfg!(target_os = "android") {
+                    let mut cpu_finished = None;
+                    let mut gpu_finished = None;
+                    {
+                        let mut slot = PENDING_SHADER_JOB.lock().unwrap();
+                        let matches_job = slot
+                            .as_ref()
+                            .is_some_and(|j| j.name == name && j.dimension == dimension);
+                        if !matches_job {
+                            let renderer = self.renderer.as_mut().unwrap();
+                            let mut macros = Macros::standard();
+                            renderer.define_pack_macros(&mut macros);
+                            let inputs = renderer.pack_inputs();
+                            let biomes = world_biomes!(self);
+                            let biome_names: Vec<String> =
+                                biomes.list.iter().map(|b| b.name.clone()).collect();
+                            let (tx, rx) = std::sync::mpsc::channel();
+                            let job_path = path.clone();
+                            let job_name = name.clone();
+                            let started = std::time::Instant::now();
+                            let _ = std::thread::Builder::new()
+                                .name("shader-pack-loader".into())
+                                .spawn(move || {
+                                    let res = horizon_client::crash::contain(|| {
+                                        compile_shader_pack_cpu(
+                                            &job_path,
+                                            &job_name,
+                                            dimension,
+                                            macros,
+                                            inputs,
+                                            &biome_names,
+                                        )
+                                    });
+                                    let _ = tx.send(res);
+                                });
+                            *slot = Some(PendingShaderJob {
+                                name: name.clone(),
+                                dimension,
+                                started,
+                                stage: ShaderJobStage::Cpu(rx),
+                            });
+                        }
+                        if let Some(job) = slot.as_ref() {
+                            match &job.stage {
+                                ShaderJobStage::Cpu(rx) => match rx.try_recv() {
+                                    Ok(res) => {
+                                        let job = slot.take().unwrap();
+                                        cpu_finished = Some((job.started, res));
+                                    }
+                                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                        let job = slot.take().unwrap();
+                                        cpu_finished = Some((
+                                            job.started,
+                                            Err("shader loader thread disconnected".into()),
+                                        ));
+                                    }
+                                },
+                                ShaderJobStage::Gpu(rx) => match rx.try_recv() {
+                                    Ok(res) => {
+                                        let job = slot.take().unwrap();
+                                        gpu_finished = Some((job.started, res));
+                                    }
+                                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                                        let job = slot.take().unwrap();
+                                        gpu_finished = Some((
+                                            job.started,
+                                            Err("shader GPU builder thread disconnected".into()),
+                                        ));
+                                    }
+                                },
+                            }
+                        }
+                    }
+                    if let Some((started, loaded)) = cpu_finished {
+                        match loaded {
+                            Ok(Ok(prepared)) => {
+                                let started_ids = std::time::Instant::now();
+                                let table = block_id_table(&self.pack, &prepared.ids);
+                                log::info!(
+                                    "shader pack {name}: mc_Entity for {} of {} block sprites in {} ms",
+                                    table.chunks(2).filter(|p| p[0] != -1).count(),
+                                    table.len() / 2,
+                                    started_ids.elapsed().as_millis()
+                                );
+                                if let Some(renderer) = &self.renderer {
+                                    let ctx = renderer.shader_pack_build_context();
+                                    let job_gen = SHADER_JOB_GENERATION
+                                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                                        + 1;
+                                    let (tx, rx) = std::sync::mpsc::channel();
+                                    let _ = std::thread::Builder::new()
+                                        .name("shader-pack-gpu".into())
+                                        .spawn(move || {
+                                            let _build_guard = SHADER_GPU_BUILD_LOCK
+                                                .lock()
+                                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                            if SHADER_JOB_GENERATION
+                                                .load(std::sync::atomic::Ordering::SeqCst)
+                                                != job_gen
+                                            {
+                                                return;
+                                            }
+                                            let res = horizon_client::crash::contain(move || {
+                                                let built = ctx.build(prepared.post, &table);
+                                                BuiltShaderPack {
+                                                    folder: prepared.folder,
+                                                    built,
+                                                    ids: prepared.ids,
+                                                    items: prepared.items,
+                                                    missing_item: prepared.missing_item,
+                                                    old_hand_light: prepared.old_hand_light,
+                                                    old_lighting: prepared.old_lighting,
+                                                    entities: prepared.entities,
+                                                    missing_entity: prepared.missing_entity,
+                                                    missing_block: prepared.missing_block,
+                                                }
+                                            });
+                                            let _ = tx.send(res);
+                                        });
+                                    let mut slot = PENDING_SHADER_JOB.lock().unwrap();
+                                    *slot = Some(PendingShaderJob {
+                                        name: name.clone(),
+                                        dimension,
+                                        started,
+                                        stage: ShaderJobStage::Gpu(rx),
+                                    });
+                                }
+                            }
+                            other => self.apply_prepared_shader_pack(&name, dimension, started, other),
+                        }
+                    }
+                    if let Some((started, gpu_res)) = gpu_finished {
+                        match gpu_res {
+                            Ok(built_pack) => {
+                                let mut active = false;
+                                if let Some(renderer) = &mut self.renderer {
+                                    if let Some((programs, notes)) = renderer
+                                        .install_built_shader_pack(dimension, Some(built_pack.built))
+                                    {
+                                        for note in notes {
+                                            log::warn!("shader pack {name}: {note}");
+                                        }
+                                        log::info!(
+                                            "shader pack {name}: folder `{}`, {} programs ({}) in {} ms",
+                                            built_pack.folder,
+                                            programs.len(),
+                                            programs.join(" "),
+                                            started.elapsed().as_millis()
+                                        );
+                                    }
+                                    active = renderer.has_active_shader_pack();
+                                }
+                                if active {
+                                    self.pack_ids = Some(PackIds {
+                                        items: built_pack.items,
+                                        missing_item: built_pack.missing_item,
+                                        old_hand_light: built_pack.old_hand_light,
+                                        old_lighting: built_pack.old_lighting,
+                                        entities: built_pack.entities,
+                                        missing_entity: built_pack.missing_entity,
+                                        missing_block: built_pack.missing_block,
+                                        blocks: built_pack.ids,
+                                        block_states: RefCell::default(),
+                                    });
+                                } else {
+                                    self.pack_ids = None;
+                                }
+                            }
+                            Err(panic) => self.shader_pack_failed(&name, dimension, &panic),
+                        }
+                    }
+                } else {
+                    let started = std::time::Instant::now();
+                    let (macros, inputs) = {
                         let renderer = self.renderer.as_mut().unwrap();
                         let mut macros = Macros::standard();
                         renderer.define_pack_macros(&mut macros);
-                        let inputs = renderer.pack_inputs();
-                        let biomes = world_biomes!(self);
-                        let biome_names: Vec<String> =
-                            biomes.list.iter().map(|b| b.name.clone()).collect();
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        let job_path = path.clone();
-                        let job_name = name.clone();
-                        let started = std::time::Instant::now();
-                        let _ = std::thread::Builder::new()
-                            .name("shader-pack-loader".into())
-                            .spawn(move || {
-                                let res = horizon_client::crash::contain(|| {
-                                    compile_shader_pack_cpu(
-                                        &job_path,
-                                        &job_name,
-                                        dimension,
-                                        macros,
-                                        inputs,
-                                        &biome_names,
-                                    )
-                                });
-                                let _ = tx.send(res);
-                            });
-                        *slot = Some(PendingShaderJob {
-                            name: name.clone(),
-                            dimension,
-                            started,
-                            stage: ShaderJobStage::Cpu(rx),
-                        });
-                    }
-                    if let Some(job) = slot.as_ref() {
-                        match &job.stage {
-                            ShaderJobStage::Cpu(rx) => match rx.try_recv() {
-                                Ok(res) => {
-                                    let job = slot.take().unwrap();
-                                    cpu_finished = Some((job.started, res));
-                                }
-                                Err(std::sync::mpsc::TryRecvError::Empty) => {}
-                                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                    let job = slot.take().unwrap();
-                                    cpu_finished = Some((
-                                        job.started,
-                                        Err("shader loader thread disconnected".into()),
-                                    ));
-                                }
-                            },
-                            ShaderJobStage::Gpu(rx) => match rx.try_recv() {
-                                Ok(res) => {
-                                    let job = slot.take().unwrap();
-                                    gpu_finished = Some((job.started, res));
-                                }
-                                Err(std::sync::mpsc::TryRecvError::Empty) => {}
-                                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                    let job = slot.take().unwrap();
-                                    gpu_finished = Some((
-                                        job.started,
-                                        Err("shader GPU builder thread disconnected".into()),
-                                    ));
-                                }
-                            },
-                        }
-                    }
+                        (macros, renderer.pack_inputs())
+                    };
+                    let biomes = world_biomes!(self);
+                    let biome_names: Vec<String> =
+                        biomes.list.iter().map(|b| b.name.clone()).collect();
+                    let loaded = horizon_client::crash::contain(|| {
+                        compile_shader_pack_cpu(&path, &name, dimension, macros, inputs, &biome_names)
+                    });
+                    self.apply_prepared_shader_pack(&name, dimension, started, loaded);
                 }
-                if let Some((started, loaded)) = cpu_finished {
-                    match loaded {
-                        Ok(Ok(prepared)) => {
-                            let started_ids = std::time::Instant::now();
-                            let table = block_id_table(&self.pack, &prepared.ids);
-                            log::info!(
-                                "shader pack {name}: mc_Entity for {} of {} block sprites in {} ms",
-                                table.chunks(2).filter(|p| p[0] != -1).count(),
-                                table.len() / 2,
-                                started_ids.elapsed().as_millis()
-                            );
-                            if let Some(renderer) = &self.renderer {
-                                let ctx = renderer.shader_pack_build_context();
-                                let job_gen = SHADER_JOB_GENERATION
-                                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                                    + 1;
-                                let (tx, rx) = std::sync::mpsc::channel();
-                                let _ = std::thread::Builder::new()
-                                    .name("shader-pack-gpu".into())
-                                    .spawn(move || {
-                                        let _build_guard = SHADER_GPU_BUILD_LOCK
-                                            .lock()
-                                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                                        if SHADER_JOB_GENERATION
-                                            .load(std::sync::atomic::Ordering::SeqCst)
-                                            != job_gen
-                                        {
-                                            return;
-                                        }
-                                        let res = horizon_client::crash::contain(move || {
-                                            let built = ctx.build(prepared.post, &table);
-                                            BuiltShaderPack {
-                                                folder: prepared.folder,
-                                                built,
-                                                ids: prepared.ids,
-                                                items: prepared.items,
-                                                missing_item: prepared.missing_item,
-                                                old_hand_light: prepared.old_hand_light,
-                                                old_lighting: prepared.old_lighting,
-                                                entities: prepared.entities,
-                                                missing_entity: prepared.missing_entity,
-                                                missing_block: prepared.missing_block,
-                                            }
-                                        });
-                                        let _ = tx.send(res);
-                                    });
-                                let mut slot = PENDING_SHADER_JOB.lock().unwrap();
-                                *slot = Some(PendingShaderJob {
-                                    name: name.clone(),
-                                    dimension,
-                                    started,
-                                    stage: ShaderJobStage::Gpu(rx),
-                                });
-                            }
-                        }
-                        other => self.apply_prepared_shader_pack(&name, dimension, started, other),
-                    }
-                }
-                if let Some((started, gpu_res)) = gpu_finished {
-                    match gpu_res {
-                        Ok(built_pack) => {
-                            let mut active = false;
-                            if let Some(renderer) = &mut self.renderer {
-                                if let Some((programs, notes)) = renderer
-                                    .install_built_shader_pack(dimension, Some(built_pack.built))
-                                {
-                                    for note in notes {
-                                        log::warn!("shader pack {name}: {note}");
-                                    }
-                                    log::info!(
-                                        "shader pack {name}: folder `{}`, {} programs ({}) in {} ms",
-                                        built_pack.folder,
-                                        programs.len(),
-                                        programs.join(" "),
-                                        started.elapsed().as_millis()
-                                    );
-                                }
-                                active = renderer.has_active_shader_pack();
-                            }
-                            if active {
-                                self.pack_ids = Some(PackIds {
-                                    items: built_pack.items,
-                                    missing_item: built_pack.missing_item,
-                                    old_hand_light: built_pack.old_hand_light,
-                                    old_lighting: built_pack.old_lighting,
-                                    entities: built_pack.entities,
-                                    missing_entity: built_pack.missing_entity,
-                                    missing_block: built_pack.missing_block,
-                                    blocks: built_pack.ids,
-                                    block_states: RefCell::default(),
-                                });
-                            } else {
-                                self.pack_ids = None;
-                            }
-                        }
-                        Err(panic) => self.shader_pack_failed(&name, dimension, &panic),
-                    }
-                }
-            } else {
-                let started = std::time::Instant::now();
-                let (macros, inputs) = {
-                    let renderer = self.renderer.as_mut().unwrap();
-                    let mut macros = Macros::standard();
-                    renderer.define_pack_macros(&mut macros);
-                    (macros, renderer.pack_inputs())
-                };
-                let biomes = world_biomes!(self);
-                let biome_names: Vec<String> = biomes.list.iter().map(|b| b.name.clone()).collect();
-                let loaded = horizon_client::crash::contain(|| {
-                    compile_shader_pack_cpu(&path, &name, dimension, macros, inputs, &biome_names)
-                });
-                self.apply_prepared_shader_pack(&name, dimension, started, loaded);
             }
         }
         let lerp = |(old, new): (f32, f32)| old + (new - old) * partial;

@@ -132,6 +132,11 @@ pub struct NativeFrame {
     /// Whether the pack's material reads `reflection` (`NativePack::new`): else no mirror
     /// is drawn and `has_reflection` stays 0.
     pub reflects: bool,
+    /// Whether the pack's material stage reads `opaque_depth` / `opaque_color`.
+    pub reads_opaque_depth: bool,
+    pub reads_opaque_color: bool,
+    /// Whether any stage reads `shadow_map_translucent` or `shadow_color`.
+    pub reads_translucent_shadow: bool,
     /// Last frame's view-projection, camera and time (`write`).
     last: Option<([[f32; 4]; 4], glam::DVec3, std::time::Instant)>,
     /// The eased eye light (block, sky) and being in water and lava (`write`); NaN until the
@@ -224,6 +229,17 @@ impl NativeFrame {
         lights: super::block_light::LightTable,
         pbr: Option<&[wgpu::Texture; 2]>,
     ) -> Self {
+        Self::new_optimized(device, shadow, textures, lights, pbr, true)
+    }
+
+    pub fn new_optimized(
+        device: &wgpu::Device,
+        shadow: Option<&horizon_shader_api::manifest::Shadow>,
+        textures: Vec<(wgpu::TextureView, wgpu::Sampler)>,
+        lights: super::block_light::LightTable,
+        pbr: Option<&[wgpu::Texture; 2]>,
+        translucent_shadow: bool,
+    ) -> Self {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Native shader pack frame"),
             size: size_of::<FrameInputs>() as u64,
@@ -286,7 +302,11 @@ impl NativeFrame {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let shadow_map = super::native_shadow::ShadowMap::new(device, shadow);
+        let shadow_map = super::native_shadow::ShadowMap::new_with_translucent(
+            device,
+            shadow,
+            translucent_shadow,
+        );
         let block_light = super::block_light::BlockLight::new(device, lights);
         let array_view = |texture: &wgpu::Texture| {
             texture.create_view(&wgpu::TextureViewDescriptor {
@@ -341,6 +361,9 @@ impl NativeFrame {
             shadow_map,
             shadow_camera: shadow.map(super::native_shadow::camera),
             reflects: false,
+            reads_opaque_depth: false,
+            reads_opaque_color: false,
+            reads_translucent_shadow: translucent_shadow,
             last: None,
             eye: [f32::NAN; 4],
             history_reset: true,
@@ -449,8 +472,12 @@ impl NativeFrame {
         depth: &wgpu::Texture,
         color: Option<&wgpu::Texture>,
     ) {
-        let size = [depth.width(), depth.height()];
-        let (color_size, format) = match color {
+        let size = if self.reads_opaque_depth {
+            [depth.width(), depth.height()]
+        } else {
+            [1, 1]
+        };
+        let (color_size, format) = match color.filter(|_| self.reads_opaque_color) {
             Some(c) => ([c.width(), c.height()], c.format()),
             None => ([1, 1], self.opaque_color.format()),
         };

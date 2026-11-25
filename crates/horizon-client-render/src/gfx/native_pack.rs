@@ -44,7 +44,28 @@ impl NativePack {
             .shadow
             .as_ref()
             .map(|settings| super::native_shadow::fitted(device, settings));
-        let mut frame = NativeFrame::new(device, settings.as_ref(), textures, lights, terrain.pbr);
+        let reads_translucent_shadow = report
+            .stages
+            .iter()
+            .any(|s| s.reads("shadow_map_translucent") || s.reads("shadow_color"));
+        let mut frame = NativeFrame::new_optimized(
+            device,
+            settings.as_ref(),
+            textures,
+            lights,
+            terrain.pbr,
+            reads_translucent_shadow,
+        );
+        frame.reads_opaque_depth = report
+            .stages
+            .iter()
+            .find(|s| s.kind == StageKind::Material)
+            .is_some_and(|s| s.reads("opaque_depth"));
+        frame.reads_opaque_color = report
+            .stages
+            .iter()
+            .find(|s| s.kind == StageKind::Material)
+            .is_some_and(|s| s.reads("opaque_color"));
         let shadow = report
             .shadow
             .as_ref()

@@ -594,6 +594,8 @@ pub struct Settings {
     #[serde(default)]
     pub overlay_show_in_gameplay: bool,
     #[serde(default)]
+    pub overlay_show_controls_in_menus: bool,
+    #[serde(default)]
     pub snap_to_grid: bool,
     /// Optional custom display names for the 14 built-in controls (empty = default Control::name()).
     #[serde(default)]
@@ -734,6 +736,7 @@ impl Default for Settings {
             overlay_hidden: false,
             overlay_hide_in_menus: false,
             overlay_show_in_gameplay: false,
+            overlay_show_controls_in_menus: false,
             snap_to_grid: false,
             control_labels: std::array::from_fn(|_| String::new()),
             layouts,
@@ -1521,6 +1524,7 @@ impl Settings {
         let prev_overlay_hidden = self.overlay_hidden;
         let prev_overlay_hide_menus = self.overlay_hide_in_menus;
         let prev_overlay_show_game = self.overlay_show_in_gameplay;
+        let prev_overlay_show_controls_menus = self.overlay_show_controls_in_menus;
         let prev_invert_y = self.invert_y;
         let prev_vm_enabled = self.virtual_mouse_enabled;
         let prev_vm_sens = self.virtual_mouse_sensitivity;
@@ -1548,6 +1552,7 @@ impl Settings {
         loaded.overlay_hidden = prev_overlay_hidden;
         loaded.overlay_hide_in_menus = prev_overlay_hide_menus;
         loaded.overlay_show_in_gameplay = prev_overlay_show_game;
+        loaded.overlay_show_controls_in_menus = prev_overlay_show_controls_menus;
         loaded.invert_y = prev_invert_y;
         loaded.virtual_mouse_enabled = prev_vm_enabled;
         loaded.virtual_mouse_sensitivity = prev_vm_sens;
@@ -1591,6 +1596,7 @@ impl Settings {
         let prev_overlay_hidden = self.overlay_hidden;
         let prev_overlay_hide_menus = self.overlay_hide_in_menus;
         let prev_overlay_show_game = self.overlay_show_in_gameplay;
+        let prev_overlay_show_controls_menus = self.overlay_show_controls_in_menus;
         let prev_invert_y = self.invert_y;
         let prev_vm_enabled = self.virtual_mouse_enabled;
         let prev_vm_sens = self.virtual_mouse_sensitivity;
@@ -1610,6 +1616,7 @@ impl Settings {
         loaded.overlay_hidden = prev_overlay_hidden;
         loaded.overlay_hide_in_menus = prev_overlay_hide_menus;
         loaded.overlay_show_in_gameplay = prev_overlay_show_game;
+        loaded.overlay_show_controls_in_menus = prev_overlay_show_controls_menus;
         loaded.invert_y = prev_invert_y;
         loaded.virtual_mouse_enabled = prev_vm_enabled;
         loaded.virtual_mouse_sensitivity = prev_vm_sens;
@@ -2301,6 +2308,7 @@ impl Settings {
             let prev_overlay_hidden = self.overlay_hidden;
             let prev_overlay_hide_menus = self.overlay_hide_in_menus;
             let prev_overlay_show_game = self.overlay_show_in_gameplay;
+            let prev_overlay_show_controls_menus = self.overlay_show_controls_in_menus;
             let prev_invert_y = self.invert_y;
             let prev_vm_enabled = self.virtual_mouse_enabled;
             let prev_vm_sens = self.virtual_mouse_sensitivity;
@@ -2319,6 +2327,7 @@ impl Settings {
             self.overlay_hidden = prev_overlay_hidden;
             self.overlay_hide_in_menus = prev_overlay_hide_menus;
             self.overlay_show_in_gameplay = prev_overlay_show_game;
+            self.overlay_show_controls_in_menus = prev_overlay_show_controls_menus;
             self.invert_y = prev_invert_y;
             self.virtual_mouse_enabled = prev_vm_enabled;
             self.virtual_mouse_sensitivity = prev_vm_sens;
@@ -2362,6 +2371,7 @@ impl Settings {
         loaded.overlay_hidden = active.overlay_hidden;
         loaded.overlay_hide_in_menus = active.overlay_hide_in_menus;
         loaded.overlay_show_in_gameplay = active.overlay_show_in_gameplay;
+        loaded.overlay_show_controls_in_menus = active.overlay_show_controls_in_menus;
         loaded.invert_y = active.invert_y;
         loaded.virtual_mouse_enabled = active.virtual_mouse_enabled;
         loaded.virtual_mouse_sensitivity = active.virtual_mouse_sensitivity;

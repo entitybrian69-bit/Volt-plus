@@ -37,7 +37,85 @@ impl NativeShaders {
     }
 }
 
+/// Whether `pack` actually references LabPBR block textures in its material/shared stages.
+pub(super) fn pack_reads_labpbr(pack: &Pack) -> bool {
+    if pack.manifest.material.is_none() {
+        return false;
+    }
+    let stage_reads = |rel: &str| {
+        pack.files
+            .get(rel)
+            .and_then(|b| std::str::from_utf8(b).ok())
+            .is_some_and(|src| {
+                src.contains("block_normal_map")
+                    || src.contains("block_specular_map")
+                    || src.contains("block_pbr_maps")
+            })
+    };
+    pack.manifest.material.as_deref().is_some_and(stage_reads)
+        || pack.manifest.shared.iter().any(|s| stage_reads(s))
+}
+
 impl Game<'_> {
+    /// Builds/reloads the in-memory Volt+ Built-in Shader Suite whenever its config changes.
+    pub(super) fn tick_volt_shader_pack(&mut self) {
+        let cfg = self.settings.graphics.volt_shaders.clone();
+        if !cfg.enabled {
+            return;
+        }
+        let stamp = Some(cfg.fingerprint());
+        if self.native_shaders.stamp == stamp {
+            return;
+        }
+        self.native_shaders.stamp = stamp;
+        let Some(renderer) = &mut self.renderer else {
+            return;
+        };
+        let (pack, constants) = cfg.build_pack();
+        let result = check(&pack)
+            .map_err(|p| p.iter().map(ToString::to_string).collect::<Vec<String>>())
+            .and_then(|report| {
+                let sprites = || {
+                    let layers = self.pack.render.sprite_layers.iter();
+                    layers.map(|(name, layer)| (name.as_str(), *layer))
+                };
+                let tags = pack.manifest.sprite_tags(sprites());
+                let materials = pack.manifest.sprite_materials(sprites());
+                let mut lights = horizon_client::gfx::block_light::LightTable::default();
+                if !pack.manifest.lights.is_empty() {
+                    for (id, state) in self.res.facts().states.iter().enumerate() {
+                        if state.emission == 0 {
+                            continue;
+                        }
+                        if let Some(color) = pack.manifest.light_of(&state.name) {
+                            lights.insert(id as u32, (color, state.emission));
+                        }
+                    }
+                }
+                let labels = renderer
+                    .set_native_shader_pack(Some((report, constants, tags, materials, lights)))
+                    .map_err(|e| vec![e])?;
+                Ok((pack.manifest, labels))
+            });
+        if cfg.labpbr && result.is_ok() && !horizon_client::sprites::labpbr_maps() {
+            horizon_client::sprites::set_labpbr_maps(true);
+            log::info!("Horizon: reloading resources for LabPBR maps");
+            self.reload_packs();
+        }
+        match result {
+            Ok((m, labels)) => {
+                log::info!("volt+ built-in shaders {} ({})", m.version, labels.join(", "));
+            }
+            Err(problems) => {
+                log::warn!("volt+ built-in shaders failed: {}", problems.join("; "));
+                self.system_message(Text::colored("Volt+ built-in shader error:", RED));
+                for p in problems {
+                    self.system_message(Text::colored(p, RED));
+                }
+            }
+        }
+    }
+
     /// Builds the pack at `path` when its files changed since it was last read.
     pub(super) fn tick_native_shader_pack(&mut self, path: &Path) {
         let now = Instant::now();
@@ -83,11 +161,12 @@ impl Game<'_> {
             let labels = renderer
                 .set_native_shader_pack(Some((report, constants, tags, materials, lights)))
                 .map_err(|e| vec![e])?;
-            Ok((pack.manifest, labels))
+            let needs_labpbr = pack_reads_labpbr(&pack);
+            Ok((pack.manifest, labels, needs_labpbr))
         });
         // The resources were loaded without a native pack, so without the resource packs'
-        // LabPBR maps its material stage reads: load them once, now that one runs.
-        if result.as_ref().is_ok_and(|(m, _)| m.material.is_some())
+        // LabPBR maps its material stage reads: load them once, when the pack actually uses them.
+        if result.as_ref().is_ok_and(|(_, _, needs)| *needs)
             && !horizon_client::sprites::labpbr_maps()
         {
             horizon_client::sprites::set_labpbr_maps(true);
@@ -96,7 +175,7 @@ impl Game<'_> {
         }
         let name = path.file_name().unwrap_or_default().to_string_lossy();
         match result {
-            Ok((m, labels)) => {
+            Ok((m, labels, _)) => {
                 log::info!(
                     "shader pack {} {}: {} in {} ms",
                     m.id,

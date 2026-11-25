@@ -196,6 +196,7 @@ pub enum InGameMenuAction {
     ToggleOverlayHidden,
     ToggleOverlayHideInMenus,
     ToggleOverlayShowInGameplay,
+    ToggleOverlayShowControlsInMenus,
     TriggerKey(KeyCode),
     OpenKeyboard,
     /// Kill the game process now (no save, no shutdown sequence).
@@ -3038,6 +3039,9 @@ impl TouchUi {
                 if inside([cx, body_y + 134.0 + step * 2.0, cw, row_h]) {
                     return Some(InGameMenuAction::ToggleOverlayShowInGameplay);
                 }
+                if inside([cx, body_y + 134.0 + step * 3.0, cw, row_h]) {
+                    return Some(InGameMenuAction::ToggleOverlayShowControlsInMenus);
+                }
             }
         }
 
@@ -3334,7 +3338,7 @@ impl TouchUi {
             4 => 340.0,
             5 => 488.0,
             6 => 340.0,
-            _ => 310.0,
+            _ => 364.0,
         };
         let max_scroll = (content_height - body_h).max(0.0);
         self.hub_max_scroll.set(max_scroll);
@@ -4692,6 +4696,14 @@ impl TouchUi {
                     "Show in Raw Gameplay",
                     "Keep the V+ button visible during normal 3D gameplay as well",
                     Some(settings.overlay_show_in_gameplay),
+                    None,
+                );
+                draw_toggle_row(
+                    &mut ui,
+                    body_y + 134.0 + step * 3.0,
+                    "Show Controls on Menu Screen",
+                    "Show your touch & JVM controls on all screens (Inventory, Pause, Options, Title)",
+                    Some(settings.overlay_show_controls_in_menus),
                     None,
                 );
             }

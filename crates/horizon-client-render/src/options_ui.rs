@@ -1487,6 +1487,8 @@ pub enum Page {
     /// Horizon Settings: every page Horizon adds, as a mod's settings
     /// screen hangs off vanilla's Options.
     Horizon,
+    /// Built-in Volt+ Shader Suite settings (`volt_shaders_ui`).
+    VoltShaders,
     /// AI Agent: agent control on or off, whether an agent is connected, the connection details.
     Agent,
     /// SkinCustomizationScreen: the skin layers and Main Hand.
@@ -1754,6 +1756,7 @@ pub struct OptionsUi {
     pub volt_video: crate::volt_video_ui::VoltVideoUi,
     pub volt_mods: crate::volt_pages_ui::VoltModsUi,
     pub volt_horizon: crate::volt_pages_ui::VoltHorizonUi,
+    pub volt_shaders: crate::volt_shaders_ui::VoltShadersUi,
     pub split_profiles: crate::split_profiles::SplitProfiles,
     /// HDR calibration while its page is open.
     pub calibration: Option<crate::hdr_calibration::Calibration>,
@@ -1816,6 +1819,7 @@ impl Default for OptionsUi {
             volt_video: Default::default(),
             volt_mods: Default::default(),
             volt_horizon: Default::default(),
+            volt_shaders: Default::default(),
             split_profiles: Default::default(),
             calibration: None,
             calibration_fullscreen: None,
@@ -1989,6 +1993,7 @@ fn option_widget(s: &Settings, opt: Opt, x: f32, y: f32, w: f32) -> Widget {
 fn horizon_page_tooltip(page: Page) -> Option<&'static str> {
     Some(match page {
         Page::Horizon => "horizon.pages.settings.tooltip",
+        Page::VoltShaders => "horizon.pages.volt_shaders.tooltip",
         Page::Graphics => "horizon.pages.graphics.tooltip",
         Page::GraphicsAdvanced => "horizon.pages.graphics_advanced.tooltip",
         Page::Controller => "horizon.pages.controller.tooltip",
@@ -2340,7 +2345,12 @@ impl OptionsUi {
         self.settings_search.focused
             && matches!(
                 self.page(),
-                Page::Video | Page::Mods | Page::Horizon | Page::Controls | Page::KeyBinds
+                Page::Video
+                    | Page::Mods
+                    | Page::Horizon
+                    | Page::VoltShaders
+                    | Page::Controls
+                    | Page::KeyBinds
             )
     }
     #[cfg(target_os = "android")]
@@ -2481,7 +2491,12 @@ impl OptionsUi {
         self.can_change_value = false;
         if matches!(
             page,
-            Page::Video | Page::Mods | Page::Horizon | Page::Controls | Page::KeyBinds
+            Page::Video
+                | Page::Mods
+                | Page::Horizon
+                | Page::VoltShaders
+                | Page::Controls
+                | Page::KeyBinds
         ) {
             self.settings_search.set_value("");
             self.settings_search.focused = false;
@@ -2494,6 +2509,9 @@ impl OptionsUi {
         }
         if page == Page::Horizon {
             self.volt_horizon.reset();
+        }
+        if page == Page::VoltShaders {
+            self.volt_shaders.reset();
         }
         if page == Page::Language {
             self.language_choice = None;
@@ -2558,6 +2576,7 @@ impl OptionsUi {
             Page::Touch => "Touch Controls",
             Page::Credits => "credits_and_attribution.screen.title",
             Page::Horizon => "horizon.pages.settings",
+            Page::VoltShaders => "horizon.pages.volt_shaders",
             Page::Agent => "horizon.pages.agent",
             Page::SplitProfiles => "horizon.pages.split_profiles",
         }
@@ -2733,6 +2752,7 @@ impl OptionsUi {
                 )
                 .collect()
             }
+            Page::VoltShaders => Vec::new(),
             Page::Agent => {
                 let mut rows = vec![Row::Buttons(
                     self.extra_button(s, crate::extras::Item::AgentControl),
@@ -3139,6 +3159,7 @@ impl OptionsUi {
                         (!self.split_guest).then_some(Page::Packs),
                     ),
                     ("options.accessibility", Some(Page::Accessibility)),
+                    ("horizon.pages.open.volt_shaders", Some(Page::VoltShaders)),
                     // Vanilla's Telemetry Data and Credits slots: Horizon's
                     // settings and its mods, as a mod adds its button here.
                     // Credits & Attribution (WinScreen's credits) follows them.
@@ -3895,6 +3916,18 @@ impl OptionsUi {
             }
             return;
         }
+        if self.page() == Page::VoltShaders {
+            self.size = (w, h);
+            self.volt_shaders.draw(
+                s,
+                batch,
+                atlas,
+                cursor,
+                self.in_world,
+                &mut self.settings_search,
+            );
+            return;
+        }
         if self.page() == Page::SplitProfiles {
             self.split_profiles
                 .draw(batch, atlas, cursor, self.in_world, self.pad_style);
@@ -4599,6 +4632,24 @@ impl OptionsUi {
             };
             return self.volt_horizon_actions(s, actions);
         }
+        if self.page() == Page::VoltShaders {
+            self.size = size;
+            self.framebuffer = framebuffer;
+            let actions = self.volt_shaders.click(
+                s,
+                atlas,
+                (x, y),
+                size,
+                drag,
+                right,
+                &mut self.settings_search,
+            );
+            self.focus = match self.volt_shaders.focus {
+                Some(crate::volt_shaders_ui::ShadersFocus::Search) => Some(FocusId::Search),
+                _ => None,
+            };
+            return self.volt_shaders_actions(s, actions);
+        }
         if self.page() == Page::Packs {
             let mut events = Vec::new();
             if drag {
@@ -4845,6 +4896,7 @@ impl OptionsUi {
                                 s.horizon.shader_pack = if s.horizon.shader_pack == pack.file {
                                     String::new()
                                 } else {
+                                    s.graphics.volt_shaders.enabled = false;
                                     pack.file.clone()
                                 };
                                 events.push(Event::ShaderPack);
@@ -5019,6 +5071,25 @@ impl OptionsUi {
         }
         events
     }
+    fn volt_shaders_actions(
+        &mut self,
+        s: &mut Settings,
+        actions: Vec<crate::volt_shaders_ui::VoltShadersAction>,
+    ) -> Vec<Event> {
+        use crate::volt_shaders_ui::VoltShadersAction;
+        let mut events = Vec::new();
+        for action in actions {
+            match action {
+                VoltShadersAction::ButtonClick => events.push(Event::ButtonClick),
+                VoltShadersAction::Changed | VoltShadersAction::SliderDrag => {
+                    events.push(Event::Changed)
+                }
+                VoltShadersAction::ShaderPackChanged => events.push(Event::ShaderPack),
+                VoltShadersAction::Done => events.extend(self.back(s)),
+            }
+        }
+        events
+    }
     pub fn release(&mut self) -> Vec<Event> {
         self.scrollbar_drag_y = None;
         if let Some(p) = &mut self.pack_screen {
@@ -5031,8 +5102,9 @@ impl OptionsUi {
         let volt_slider = self.volt_video.release();
         self.volt_mods.release();
         self.volt_horizon.release();
+        let shaders_slider = self.volt_shaders.release();
         let calibration_slider = self.calibration.as_mut().is_some_and(|c| c.release());
-        if slider || graphics_slider || volt_slider || calibration_slider {
+        if slider || graphics_slider || volt_slider || shaders_slider || calibration_slider {
             vec![Event::ButtonClick, Event::Changed]
         } else {
             Vec::new()
@@ -5151,6 +5223,11 @@ impl OptionsUi {
                 .scroll(s, size, &self.settings_search.value, amount);
             return Vec::new();
         }
+        if self.page() == Page::VoltShaders {
+            self.volt_shaders
+                .scroll(size, &self.settings_search.value, amount);
+            return Vec::new();
+        }
         let plain = self.resource_error.is_none()
             && !(self.pack_screen.is_some() && self.stack.last() == Some(&Page::Packs));
         if !plain {
@@ -5229,6 +5306,7 @@ impl OptionsUi {
         self.volt_video.can_change_value = false;
         self.volt_mods.focus = None;
         self.volt_horizon.focus = None;
+        self.volt_shaders.focus = None;
     }
     /// A touchscreen scroll moves the list, never the last focused or hovered
     /// option. Keep physical wheel handling in `wheel` separate.
@@ -5264,6 +5342,11 @@ impl OptionsUi {
         if self.page() == Page::Horizon {
             self.volt_horizon
                 .scroll(s, size, &self.settings_search.value, amount);
+            return;
+        }
+        if self.page() == Page::VoltShaders {
+            self.volt_shaders
+                .scroll(size, &self.settings_search.value, amount);
             return;
         }
         match &mut self.pack_screen {
@@ -5456,6 +5539,8 @@ impl OptionsUi {
                 self.volt_mods.reset_scroll();
             } else if self.page() == Page::Horizon {
                 self.volt_horizon.reset_scroll();
+            } else if self.page() == Page::VoltShaders {
+                self.volt_shaders.reset_scroll();
             }
         }
     }
@@ -5494,6 +5579,8 @@ impl OptionsUi {
                     self.volt_mods.reset_scroll();
                 } else if self.page() == Page::Horizon {
                     self.volt_horizon.reset_scroll();
+                } else if self.page() == Page::VoltShaders {
+                    self.volt_shaders.reset_scroll();
                 }
             }
             return true;
@@ -5697,6 +5784,23 @@ impl OptionsUi {
                 _ => None,
             };
             return self.volt_horizon_actions(s, actions);
+        }
+
+        if self.page() == Page::VoltShaders {
+            let size = (self.size.0.max(427.0), self.size.1.max(240.0));
+            let (actions, _) = self.volt_shaders.key_modifiers(
+                s,
+                key,
+                text,
+                shift,
+                size,
+                &mut self.settings_search,
+            );
+            self.focus = match self.volt_shaders.focus {
+                Some(crate::volt_shaders_ui::ShadersFocus::Search) => Some(FocusId::Search),
+                _ => None,
+            };
+            return self.volt_shaders_actions(s, actions);
         }
 
         if key == K::Escape {
@@ -5973,6 +6077,7 @@ impl OptionsUi {
                                 s.horizon.shader_pack = if s.horizon.shader_pack == pack.file {
                                     String::new()
                                 } else {
+                                    s.graphics.volt_shaders.enabled = false;
                                     pack.file.clone()
                                 };
                                 events.push(Event::ShaderPack);

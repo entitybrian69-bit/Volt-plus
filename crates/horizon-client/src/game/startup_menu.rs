@@ -1058,6 +1058,7 @@ impl Loading {
                     let _ = self.startup_mouse_button(event_loop, right, false);
                 }
                 self.menu.touch.cancel();
+                self.menu.touch.goy_in_game_mouse = false;
                 let next = !self.menu.controls.settings.virtual_mouse_enabled;
                 self.menu.controls.settings.virtual_mouse_enabled = next;
                 self.menu.touch.pointer_off = !next;
@@ -1959,6 +1960,12 @@ impl Loading {
                         let _ = self.menu.controls.settings.save();
                         self.settings.touch = self.menu.controls.settings.clone();
                     }
+                    InGameMenuAction::ToggleOverlayShowControlsInMenus => {
+                        self.menu.controls.settings.overlay_show_controls_in_menus =
+                            !self.menu.controls.settings.overlay_show_controls_in_menus;
+                        let _ = self.menu.controls.settings.save();
+                        self.settings.touch = self.menu.controls.settings.clone();
+                    }
                     InGameMenuAction::RecorderStart => crate::screen_record::start(),
                     InGameMenuAction::RecorderStop => crate::screen_record::stop(),
                     InGameMenuAction::RecorderPlay(uri) => {
@@ -2657,8 +2664,22 @@ impl Loading {
                     self.menu.controls.settings.virtual_mouse_cursor,
                 );
             }
-            // Touch controls only render during gameplay, never in title/options menus.
+            // Render touch/JVM controls on menu/title screens when `Show Controls on Menu Screen` is on.
             if !waiting_for_key {
+                if self.menu.controls.settings.overlay_show_controls_in_menus
+                    && self.menu.controls.editor.is_none()
+                {
+                    self.menu.controls.draw(batch, &gui.atlas);
+                    if !self.settings.keypad.enabled {
+                        horizon_client::touch_ui::draw_goy_hud(
+                            &self.menu.controls,
+                            batch,
+                            &gui.atlas,
+                            true,
+                            self.menu.touch.virtual_mouse,
+                        );
+                    }
+                }
                 self.menu.touch.draw(batch, &gui.atlas, true);
                 if self.menu.touch.overlay_button_visible(
                     &self.menu.controls.settings,

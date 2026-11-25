@@ -7747,34 +7747,36 @@ impl Renderer {
                 self.draw_sections(&mut pass, &self.indirect, 0, shadow_first, shadow_solid);
             }
             drop(pass);
-            let mut pass = native
-                .frame
-                .shadow_map
-                .begin_translucent(&mut encoder, "Native shader pack translucent shadow");
-            pass.set_bind_group(0, &self.group, &[]);
-            pass.set_bind_group(horizon_shader_api::stages::GROUP, &shadow.group, &[]);
-            if flat_frame
-                && let Some(flat) = &self.flat
-                && let Some(pipeline) = &shadow.flat_translucent
-            {
-                pass.set_pipeline(pipeline);
-                let [_, translucent] = flat.shadow_calls;
-                flat.draw(&mut pass, &flat.calls[translucent..], |p| {
-                    self.arena.buffer(p)
-                });
-            } else if !flat_frame {
-                pass.set_pipeline(&shadow.translucent);
-                pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.set_vertex_buffer(1, self.instances.slice(..));
-                self.draw_sections(
-                    &mut pass,
-                    &self.indirect,
-                    0,
-                    shadow_first + shadow_solid,
-                    shadow_translucent,
-                );
+            if native.frame.reads_translucent_shadow {
+                let mut pass = native
+                    .frame
+                    .shadow_map
+                    .begin_translucent(&mut encoder, "Native shader pack translucent shadow");
+                pass.set_bind_group(0, &self.group, &[]);
+                pass.set_bind_group(horizon_shader_api::stages::GROUP, &shadow.group, &[]);
+                if flat_frame
+                    && let Some(flat) = &self.flat
+                    && let Some(pipeline) = &shadow.flat_translucent
+                {
+                    pass.set_pipeline(pipeline);
+                    let [_, translucent] = flat.shadow_calls;
+                    flat.draw(&mut pass, &flat.calls[translucent..], |p| {
+                        self.arena.buffer(p)
+                    });
+                } else if !flat_frame {
+                    pass.set_pipeline(&shadow.translucent);
+                    pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.set_vertex_buffer(1, self.instances.slice(..));
+                    self.draw_sections(
+                        &mut pass,
+                        &self.indirect,
+                        0,
+                        shadow_first + shadow_solid,
+                        shadow_translucent,
+                    );
+                }
+                drop(pass);
             }
-            drop(pass);
             if entity_quads > 0 || shadow_only_quads > 0 {
                 let mut pass = native
                     .frame
@@ -8356,18 +8358,24 @@ impl Renderer {
             }
             // One of Horizon's own packs reads the world before translucent terrain
             // (`opaque_depth`, `opaque_color`): the pass ends, the targets are copied, and a
-            // pass that loads both carries on.
+            // pass that loads both carries on. When a preset skips those reads, keep the single
+            // tile render pass intact (huge bandwidth & RAM win on mobile).
             if material.is_some()
                 && let Some(native) = &self.native
+                && (native.frame.reads_opaque_depth || native.frame.reads_opaque_color)
             {
                 drop(pass);
-                let depth = world_depth.texture();
-                encoder.copy_texture_to_texture(
-                    depth.as_image_copy(),
-                    native.frame.opaque_depth.as_image_copy(),
-                    depth.size(),
-                );
-                if let Some((color, _)) = &scaled {
+                if native.frame.reads_opaque_depth {
+                    let depth = world_depth.texture();
+                    encoder.copy_texture_to_texture(
+                        depth.as_image_copy(),
+                        native.frame.opaque_depth.as_image_copy(),
+                        depth.size(),
+                    );
+                }
+                if native.frame.reads_opaque_color
+                    && let Some((color, _)) = &scaled
+                {
                     let color = color.texture();
                     encoder.copy_texture_to_texture(
                         color.as_image_copy(),

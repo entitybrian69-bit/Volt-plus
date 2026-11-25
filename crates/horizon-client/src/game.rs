@@ -15161,37 +15161,34 @@ impl Game<'_> {
             }
             let in_menu = self.pad_in_menu();
             let waiting_for_key = self.screen == Screen::Options && self.options_waiting_for_key();
+            let show_controls = (!in_menu || self.pad.touch.settings.overlay_show_controls_in_menus)
+                && !waiting_for_key
+                && (!self.ui.hide_gui || in_menu)
+                && self.replay.is_none();
             self.pad.touch.in_menu = in_menu;
             self.pad.touch.in_inventory =
                 matches!(self.screen, Screen::Inventory | Screen::Creative);
             self.pad.touch.goy_rendered_by_ui = true;
-            if !in_menu
-                && !waiting_for_key
-                && !self.ui.hide_gui
-                && self.replay.is_none()
-                && (self.player.is_some() || self.settings.keypad.enabled)
-            {
-                self.pad.touch.context_use =
-                    self.pad.touch.settings.contextual_interact && self.touch_context_use();
-                self.pad.touch.vertical_movement = self.player.as_ref().is_some_and(|p| p.flying);
-                self.pad.touch.swimming = self.player.as_ref().is_some_and(|p| p.swimming);
-                self.pad.touch.mounted = self.riding.is_some();
-                self.pad.touch.shield_available = self.touch_shield_available();
-                self.pad.touch.sneaking = self.keys.contains(&KeyCode::ShiftLeft);
-                self.pad.touch.break_progress = self.touch_mining_progress();
+            if show_controls && (self.player.is_some() || self.settings.keypad.enabled) {
+                if !in_menu {
+                    self.pad.touch.context_use =
+                        self.pad.touch.settings.contextual_interact && self.touch_context_use();
+                    self.pad.touch.vertical_movement =
+                        self.player.as_ref().is_some_and(|p| p.flying);
+                    self.pad.touch.swimming = self.player.as_ref().is_some_and(|p| p.swimming);
+                    self.pad.touch.mounted = self.riding.is_some();
+                    self.pad.touch.shield_available = self.touch_shield_available();
+                    self.pad.touch.sneaking = self.keys.contains(&KeyCode::ShiftLeft);
+                    self.pad.touch.break_progress = self.touch_mining_progress();
+                }
                 self.pad.touch.draw(&mut hud, &self.gui.atlas);
             }
-            if !in_menu
-                && !waiting_for_key
-                && !self.settings.keypad.enabled
-                && !self.ui.hide_gui
-                && self.replay.is_none()
-            {
+            if show_controls && !self.settings.keypad.enabled {
                 horizon_client::touch_ui::draw_goy_hud(
                     &self.pad.touch,
                     &mut hud,
                     &self.gui.atlas,
-                    false,
+                    in_menu,
                     self.pad.touch_ui.virtual_mouse,
                 );
             }
@@ -16996,6 +16993,25 @@ impl Game<'_> {
                     self.pad.touch.clear_world_gesture();
                 }
                 self.android_sync_pointer();
+                if !touch_controls_hidden
+                    && self.pad.touch.settings.overlay_show_controls_in_menus
+                    && (self.pad.touch.owns_pointer(touch.id)
+                        || (touch.phase == TouchPhase::Started
+                            && self.pad.touch.custom_at(overlay_point).is_some()))
+                    && self.pad.touch.menu_update(
+                        touch.id,
+                        overlay_point,
+                        touch.phase == TouchPhase::Started,
+                        matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled),
+                    )
+                {
+                    self.android_custom_events();
+                    if std::mem::take(&mut self.pad.touch.clicked) {
+                        self.audio.play_button_click();
+                        self.android_touch_haptic(10);
+                    }
+                    return;
+                }
                 if !matches!(self.screen, Screen::Inventory | Screen::Creative) {
                     self.android_menu_touch(touch, event_loop, id);
                     return;
@@ -19325,7 +19341,25 @@ impl Game<'_> {
                 self.connect_server_with_options(&address, &name, cookies, lan)?;
             }
             Some(PendingWorldEntry::Replay { path }) => {
-                self.open_replay(&path)?;
+                if let Err(error) = self.open_replay(&path) {
+                    log::warn!("Horizon: could not open replay {}: {error}", path.display());
+                    self.replay = None;
+                    self.replay_seeking = false;
+                    self.replay_last_step = None;
+                    self.remote = None;
+                    self.player = None;
+                    if self.title.is_none() {
+                        self.title = Some(
+                            Title::new(
+                                std::env::current_dir()?.join("saves"),
+                                &self.options.resources,
+                            )
+                            .with_user(|| self.options.player_name()),
+                        );
+                    }
+                    self.screen = Screen::Title;
+                    self.message = Some((format!("Could not open replay: {error}"), Instant::now()));
+                }
             }
             None => {}
         }
@@ -21069,9 +21103,10 @@ impl Loading {
         let handoff_at = Instant::now();
         let mut options = self.options.take().ok_or("loading already finished")?;
         options.resources = loaded.root.clone();
-        // StartupMenu owns world selection until it can hand it to Game.
+        // StartupMenu owns world/server/replay selection until it can hand it to Game.
         options.world = None;
         options.server = None;
+        options.replay = None;
         let gui = self.gui.take().ok_or("missing menu bundle")?;
         let window = self.window.clone().ok_or("window closed")?;
         let renderer_at = Instant::now();
