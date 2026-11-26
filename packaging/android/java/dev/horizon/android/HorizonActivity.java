@@ -36,6 +36,25 @@ public final class HorizonActivity extends android.app.NativeActivity {
     public void releaseWallpaperFrame() { WallpaperPlayer.get().releaseFrame(); }
     public String wallpaperStatus() { return WallpaperPlayer.get().status(); }
 
+    public void musicPlayQueue(
+            String[] urls,
+            String[] titles,
+            String[] artists,
+            long[] durationsMs,
+            int startIndex,
+            String playlistName) {
+        MusicPlayer.get().playQueue(urls, titles, artists, durationsMs, startIndex, playlistName);
+    }
+    public void musicTogglePause() { MusicPlayer.get().togglePause(); }
+    public void musicNext() { MusicPlayer.get().next(); }
+    public void musicPrev() { MusicPlayer.get().prev(); }
+    public void musicSeekBy(long deltaMs) { MusicPlayer.get().seekByMs(deltaMs); }
+    public void musicSeekTo(long posMs) { MusicPlayer.get().seekToMs(posMs); }
+    public void musicSetVolume(float vol) { MusicPlayer.get().setVolume(vol); }
+    public void musicSetMuted(boolean muted) { MusicPlayer.get().setMuted(muted); }
+    public void musicStop() { MusicPlayer.get().stop(); }
+    public String musicSnapshot() { return MusicPlayer.get().snapshot(); }
+
     // Optional experimental editor module. Default builds deliberately omit it.
     public boolean hasZalithStudio() {
         try {
@@ -71,6 +90,7 @@ public final class HorizonActivity extends android.app.NativeActivity {
 
     @Override protected void onPause() {
         WallpaperPlayer.get().stop();
+        MusicPlayer.get().onAppPause();
         super.onPause();
     }
 
@@ -207,8 +227,14 @@ public final class HorizonActivity extends android.app.NativeActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        MusicPlayer.get().onAppResume();
         applyHighRefreshRate(this, 0);
         hideOsPointer(this);
+    }
+
+    @Override protected void onDestroy() {
+        MusicPlayer.get().stop();
+        super.onDestroy();
     }
 
     @Override public void onWindowFocusChanged(boolean hasFocus) {

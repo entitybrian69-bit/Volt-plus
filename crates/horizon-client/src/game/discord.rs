@@ -21,6 +21,7 @@ impl Game<'_> {
         }
         let shaders_active = !self.settings.horizon.shader_pack.is_empty();
         let screen_recording = horizon_client::recorder::status().phase.active();
+        let music_now_playing = horizon_client::internet_music::now_playing_for_discord();
         if let Some(replay) = &self.replay {
             let view = match replay.camera_mode {
                 horizon_client::replay::CameraMode::FreeCam => ReplayView::FreeCam,
@@ -37,12 +38,19 @@ impl Game<'_> {
                     replay_name: Some(replay.meta.server_name.clone()),
                     shaders_active,
                     screen_recording,
+                    music_now_playing,
                     ..Default::default()
                 },
             );
         }
         if self.title.is_some() {
-            return (Status::Menus, PresenceDetails::default());
+            return (
+                Status::Menus,
+                PresenceDetails {
+                    music_now_playing,
+                    ..Default::default()
+                },
+            );
         }
         let play = if let Some(host) = &self.lan {
             Play::Hosting {
@@ -89,7 +97,7 @@ impl Game<'_> {
                 shaders_active,
                 recording_replay,
                 screen_recording,
-                ..Default::default()
+                music_now_playing,
             },
         )
     }

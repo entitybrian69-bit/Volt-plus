@@ -90,6 +90,7 @@ pub enum LauncherSection {
     Account,
     Performance,
     Settings,
+    Music,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,6 +130,7 @@ pub struct PresenceDetails {
     pub shaders_active: bool,
     pub recording_replay: bool,
     pub screen_recording: bool,
+    pub music_now_playing: Option<String>,
 }
 
 /// What the game wants shown, and since when it has been in a world.
@@ -485,13 +487,24 @@ fn card_lines_with_details(
 ) -> Option<(String, String, Option<Dimension>, u64, Option<usize>)> {
     match status {
         Status::Off => None,
-        Status::Menus => Some((
-            format!("In the {PRODUCT} launcher"),
-            format!("{PRODUCT} {VERSION} • {}", platform()),
-            None,
-            session,
-            None,
-        )),
+        Status::Menus => {
+            let state = match extra
+                .music_now_playing
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                Some(track) => format!("♪ {track}"),
+                None => format!("{PRODUCT} {VERSION} • {}", platform()),
+            };
+            Some((
+                format!("In the {PRODUCT} launcher"),
+                state,
+                None,
+                session,
+                None,
+            ))
+        }
         Status::Launcher(section) => {
             let section_label = match section {
                 LauncherSection::Play => format!("In the {PRODUCT} Launcher"),
@@ -503,14 +516,18 @@ fn card_lines_with_details(
                 LauncherSection::Account => "Managing Accounts".to_owned(),
                 LauncherSection::Performance => "Checking Performance Telemetry".to_owned(),
                 LauncherSection::Settings => "Configuring Volt+ Settings".to_owned(),
+                LauncherSection::Music => "Browsing & Playing Music".to_owned(),
             };
-            Some((
-                section_label,
-                format!("{PRODUCT} {VERSION} • {}", platform()),
-                None,
-                session,
-                None,
-            ))
+            let state = match extra
+                .music_now_playing
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                Some(track) => format!("♪ {track}"),
+                None => format!("{PRODUCT} {VERSION} • {}", platform()),
+            };
+            Some((section_label, state, None, session, None))
         }
         Status::Replay { view, paused } => {
             let title = extra
@@ -534,6 +551,14 @@ fn card_lines_with_details(
             }
             if extra.shaders_active {
                 state.push_str(" • Volt+ Shaders");
+            }
+            if let Some(track) = extra
+                .music_now_playing
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                state.push_str(&format!(" • ♪ {track}"));
             }
             Some((details, state, None, since.unwrap_or(session), None))
         }
@@ -577,6 +602,14 @@ fn card_lines_with_details(
             }
             if extra.shaders_active {
                 state.push_str(" • Volt+ Shaders");
+            }
+            if let Some(track) = extra
+                .music_now_playing
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+            {
+                state.push_str(&format!(" • ♪ {track}"));
             }
             let party = match play {
                 Play::Hosting { players } => Some(players.clamp(1, max)),

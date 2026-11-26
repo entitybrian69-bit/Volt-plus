@@ -1056,3 +1056,210 @@ pub fn wallpaper_status() -> Option<String> {
     });
     match result { Ok(status) => Some(status), Err(_) => { let _ = env.exception_clear(); None } }
 }
+
+fn music_call_void(method: &str) {
+    let Some(ui) = UI.get() else {
+        return;
+    };
+    let Ok(mut env) = ui.vm.attach_current_thread() else {
+        return;
+    };
+    if env.call_method(&ui.activity, method, "()V", &[]).is_err() {
+        let _ = env.exception_clear();
+    }
+}
+
+fn music_play_queue(tracks: &[horizon_client::internet_music::MusicTrack], start_index: usize, playlist_name: &str) {
+    let Some(ui) = UI.get() else {
+        return;
+    };
+    let Ok(mut env) = ui.vm.attach_current_thread() else {
+        return;
+    };
+    let res = env.with_local_frame(16, |env| -> jni::errors::Result<()> {
+        let n = tracks.len() as i32;
+        let urls = env.new_object_array(n, "java/lang/String", JObject::null())?;
+        let titles = env.new_object_array(n, "java/lang/String", JObject::null())?;
+        let artists = env.new_object_array(n, "java/lang/String", JObject::null())?;
+        let durs_vec: Vec<i64> = tracks
+            .iter()
+            .map(|t| (t.duration_secs.saturating_mul(1000)) as i64)
+            .collect();
+        let durs = env.new_long_array(n)?;
+        env.set_long_array_region(&durs, 0, &durs_vec)?;
+        for (i, t) in tracks.iter().enumerate() {
+            let idx = i as i32;
+            let u = env.new_string(&t.stream_url)?;
+            let ti = env.new_string(&t.title)?;
+            let ar = env.new_string(&t.artist)?;
+            env.set_object_array_element(&urls, idx, u)?;
+            env.set_object_array_element(&titles, idx, ti)?;
+            env.set_object_array_element(&artists, idx, ar)?;
+        }
+        let pl = env.new_string(playlist_name)?;
+        let urls_obj = JObject::from(urls);
+        let titles_obj = JObject::from(titles);
+        let artists_obj = JObject::from(artists);
+        let durs_obj = JObject::from(durs);
+        let pl_obj = JObject::from(pl);
+        env.call_method(
+            &ui.activity,
+            "musicPlayQueue",
+            "([Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[JILjava/lang/String;)V",
+            &[
+                JValue::Object(&urls_obj),
+                JValue::Object(&titles_obj),
+                JValue::Object(&artists_obj),
+                JValue::Object(&durs_obj),
+                JValue::Int(start_index as i32),
+                JValue::Object(&pl_obj),
+            ],
+        )?;
+        Ok(())
+    });
+    if res.is_err() {
+        let _ = env.exception_clear();
+    }
+}
+
+fn music_toggle_pause() {
+    music_call_void("musicTogglePause");
+}
+
+fn music_next() {
+    music_call_void("musicNext");
+}
+
+fn music_prev() {
+    music_call_void("musicPrev");
+}
+
+fn music_seek_by_ms(delta_ms: i64) {
+    let Some(ui) = UI.get() else {
+        return;
+    };
+    let Ok(mut env) = ui.vm.attach_current_thread() else {
+        return;
+    };
+    if env
+        .call_method(&ui.activity, "musicSeekBy", "(J)V", &[JValue::Long(delta_ms)])
+        .is_err()
+    {
+        let _ = env.exception_clear();
+    }
+}
+
+fn music_seek_to_ms(pos_ms: u64) {
+    let Some(ui) = UI.get() else {
+        return;
+    };
+    let Ok(mut env) = ui.vm.attach_current_thread() else {
+        return;
+    };
+    if env
+        .call_method(
+            &ui.activity,
+            "musicSeekTo",
+            "(J)V",
+            &[JValue::Long(pos_ms as i64)],
+        )
+        .is_err()
+    {
+        let _ = env.exception_clear();
+    }
+}
+
+fn music_set_volume(vol: f32) {
+    let Some(ui) = UI.get() else {
+        return;
+    };
+    let Ok(mut env) = ui.vm.attach_current_thread() else {
+        return;
+    };
+    if env
+        .call_method(&ui.activity, "musicSetVolume", "(F)V", &[JValue::Float(vol)])
+        .is_err()
+    {
+        let _ = env.exception_clear();
+    }
+}
+
+fn music_set_muted(muted: bool) {
+    let Some(ui) = UI.get() else {
+        return;
+    };
+    let Ok(mut env) = ui.vm.attach_current_thread() else {
+        return;
+    };
+    if env
+        .call_method(
+            &ui.activity,
+            "musicSetMuted",
+            "(Z)V",
+            &[JValue::Bool(u8::from(muted))],
+        )
+        .is_err()
+    {
+        let _ = env.exception_clear();
+    }
+}
+
+fn music_stop() {
+    music_call_void("musicStop");
+}
+
+fn music_snapshot() -> horizon_client::internet_music::MusicStatusSnapshot {
+    use horizon_client::internet_music::MusicStatusSnapshot;
+    let Some(ui) = UI.get() else {
+        return MusicStatusSnapshot::default();
+    };
+    let Ok(mut env) = ui.vm.attach_current_thread() else {
+        return MusicStatusSnapshot::default();
+    };
+    let res = env.with_local_frame(8, |env| -> jni::errors::Result<String> {
+        let obj = env
+            .call_method(&ui.activity, "musicSnapshot", "()Ljava/lang/String;", &[])?
+            .l()?;
+        Ok(env.get_string(&jni::objects::JString::from(obj))?.into())
+    });
+    let Ok(raw) = res else {
+        let _ = env.exception_clear();
+        return MusicStatusSnapshot::default();
+    };
+    let parts: Vec<&str> = raw.split('\t').collect();
+    if parts.len() < 13 {
+        return MusicStatusSnapshot::default();
+    }
+    MusicStatusSnapshot {
+        playing: parts[0] == "1",
+        buffering: parts[1] == "1",
+        muted: parts[2] == "1",
+        volume: parts[3].parse::<f32>().unwrap_or(0.85).clamp(0.0, 1.0),
+        position_ms: parts[4].parse::<u64>().unwrap_or(0),
+        duration_ms: parts[5].parse::<u64>().unwrap_or(0),
+        queue_index: parts[6].parse::<usize>().unwrap_or(0),
+        queue_len: parts[7].parse::<usize>().unwrap_or(0),
+        active_playlist: parts[8].to_owned(),
+        current_title: parts[9].to_owned(),
+        current_artist: parts[10].to_owned(),
+        current_url: parts[11].to_owned(),
+        status: parts[12].to_owned(),
+    }
+}
+
+pub fn music_install_backend() {
+    horizon_client::internet_music::install_backend(
+        horizon_client::internet_music::MusicBackend {
+            play_queue: music_play_queue,
+            toggle_pause: music_toggle_pause,
+            next: music_next,
+            prev: music_prev,
+            seek_by_ms: music_seek_by_ms,
+            seek_to_ms: music_seek_to_ms,
+            set_volume: music_set_volume,
+            set_muted: music_set_muted,
+            stop: music_stop,
+            snapshot: music_snapshot,
+        },
+    );
+}

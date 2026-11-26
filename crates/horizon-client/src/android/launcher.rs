@@ -82,6 +82,8 @@ pub(super) struct Launcher {
     prepared_session: Option<PathBuf>,
     pub(super) launching: bool,
     pub(super) launch_pending_tick: bool,
+    last_discord_music: Option<String>,
+    last_discord_music_poll: Instant,
     pub(super) pending_replay: Option<PathBuf>,
     pub(super) pending_world: Option<String>,
     pub(super) pending_server: Option<String>,
@@ -329,6 +331,8 @@ impl Launcher {
             prepared_session: None,
             launching: false,
             launch_pending_tick: false,
+            last_discord_music: None,
+            last_discord_music_poll: Instant::now(),
             pending_replay: None,
             pending_world: None,
             pending_server: None,
@@ -406,7 +410,9 @@ impl Launcher {
         }
     }
     pub(super) fn sync_discord_presence(&self) {
-        use horizon_client::discord_presence::{self as presence, LauncherSection, Status};
+        use horizon_client::discord_presence::{
+            self as presence, LauncherSection, PresenceDetails, Status,
+        };
         let dp_enabled = horizon_client::settings::Settings::load(
             &self.catalog.config.game_home(&self.home).join("options.txt"),
         )
@@ -424,6 +430,7 @@ impl Launcher {
             Page::Packs => LauncherSection::Resources,
             Page::Replays => LauncherSection::Replays,
             Page::Skins => LauncherSection::Account,
+            Page::Music => LauncherSection::Music,
             Page::Settings => match self.catalog.settings_category {
                 crate::catalog::SettingsCategory::Diagnostics => LauncherSection::Performance,
                 crate::catalog::SettingsCategory::Account => LauncherSection::Account,
@@ -431,7 +438,13 @@ impl Launcher {
             },
             Page::ControlsStudio | Page::Compiler | Page::Installed => LauncherSection::Settings,
         };
-        presence::set(Status::Launcher(section));
+        presence::set_detailed(
+            Status::Launcher(section),
+            PresenceDetails {
+                music_now_playing: horizon_client::internet_music::now_playing_for_discord(),
+                ..Default::default()
+            },
+        );
     }
 
     pub(super) fn configure_screen(&self) {
@@ -555,6 +568,14 @@ impl Launcher {
             self.login.hide();
         } else if self.chooser.take().is_some() {
             // Back dismisses the current dialog, including the exit question.
+        } else if self.catalog.music_save_modal.take().is_some() {
+            self.catalog.editing = None;
+        } else if self.catalog.page == Page::Music {
+            self.catalog.editing = None;
+            self.catalog.page = self.catalog.music_return_page;
+            self.catalog.scroll = 0.0;
+            self.anim.trigger_page_transition();
+            self.sync_discord_presence();
         } else if self.catalog.page == Page::Inventory && self.catalog.world_inspection.take().is_some() {
             self.catalog.scroll = 0.0;
         } else if self.catalog.page == Page::Installed
@@ -1092,6 +1113,14 @@ impl ApplicationHandler for Launcher {
             audio.tick(false, &Default::default());
         }
         self.catalog.poll(&self.home);
+        if self.last_discord_music_poll.elapsed() >= std::time::Duration::from_millis(800) {
+            self.last_discord_music_poll = Instant::now();
+            let now_music = horizon_client::internet_music::now_playing_for_discord();
+            if now_music != self.last_discord_music {
+                self.last_discord_music = now_music;
+                self.sync_discord_presence();
+            }
+        }
         self.wardrobe.poll();
         if let Some(notice) = crate::documents::poll() {
             self.wardrobe.reload();

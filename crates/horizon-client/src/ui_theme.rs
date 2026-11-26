@@ -152,6 +152,7 @@ pub enum Icon {
     Share,
     Skins,
     Mouse,
+    Music,
 }
 
 struct Fonts {
@@ -749,6 +750,15 @@ fn icon_hit(icon: Icon, u: f32, v: f32) -> bool {
             let e4 = seg_dist(u, v, 0.48, 0.58, 0.26, 0.78) <= 0.048;
             let stem = seg_dist(u, v, 0.46, 0.60, 0.62, 0.86) <= 0.052;
             e1 || e2 || e3 || e4 || stem
+        }
+        Icon::Music => {
+            // Crisp beamed double eighth-note glyph.
+            let head1 = ((u - 0.30).powi(2) + (v - 0.72).powi(2)).sqrt() <= 0.125;
+            let head2 = ((u - 0.68).powi(2) + (v - 0.65).powi(2)).sqrt() <= 0.125;
+            let stem1 = seg_dist(u, v, 0.39, 0.70, 0.39, 0.24) <= 0.042;
+            let stem2 = seg_dist(u, v, 0.77, 0.63, 0.77, 0.18) <= 0.042;
+            let beam = seg_dist(u, v, 0.39, 0.24, 0.77, 0.18) <= 0.058;
+            head1 || head2 || stem1 || stem2 || beam
         }
     }
 }

@@ -438,6 +438,7 @@ pub enum Page {
     Replays,
     Settings,
     Skins,
+    Music,
 }
 impl Page {
     pub const ALL: [Self; 10] = [
@@ -466,6 +467,7 @@ impl Page {
             Page::Replays => "Replays",
             Page::Settings => "Settings",
             Page::Skins => "Skins",
+            Page::Music => "Musics",
         }
     }
     pub fn is_catalog(self) -> bool {
@@ -860,6 +862,20 @@ pub struct Catalog {
     pub world_discover_busy: bool,
     world_discover_worker: Option<mpsc::Receiver<Result<Vec<Project>, String>>>,
     world_discover_install_worker: Option<mpsc::Receiver<Result<String, String>>>,
+    pub music_query: String,
+    pub music_results: Vec<horizon_client::internet_music::MusicTrack>,
+    pub music_icons: HashMap<String, (u32, u32, Vec<u8>)>,
+    pub music_tab_playlists: bool,
+    pub music_selected_playlist: Option<String>,
+    pub music_save_modal: Option<horizon_client::internet_music::MusicTrack>,
+    pub music_new_playlist_name: String,
+    pub music_scroll: f32,
+    pub music_status: String,
+    pub music_return_page: Page,
+    pub music_fetched_initial: bool,
+    pub music_searching: bool,
+    music_search_worker: Option<mpsc::Receiver<Result<Vec<horizon_client::internet_music::MusicTrack>, String>>>,
+    music_icon_worker: Option<mpsc::Receiver<(String, u32, u32, Vec<u8>)>>,
     worker: Option<mpsc::Receiver<Result<Reply, String>>>,
     search_worker: Option<mpsc::Receiver<Result<Vec<Project>, String>>>,
     icon_worker: Option<mpsc::Receiver<IconData>>,
@@ -951,6 +967,20 @@ impl Catalog {
                 "Select a Java .jar, Modrinth .mrpack, or 26.2 data pack — or enter a Modrinth mod slug/URL above.".into(),
             ],
             last_port_result: None,
+            music_query: String::new(),
+            music_results: Vec::new(),
+            music_icons: HashMap::new(),
+            music_tab_playlists: false,
+            music_selected_playlist: None,
+            music_save_modal: None,
+            music_new_playlist_name: String::new(),
+            music_scroll: 0.0,
+            music_status: String::new(),
+            music_return_page: Page::Play,
+            music_fetched_initial: false,
+            music_searching: false,
+            music_search_worker: None,
+            music_icon_worker: None,
             worker: None,
             search_worker: None,
             icon_worker: None,
@@ -2082,6 +2112,109 @@ impl Catalog {
             }
         }
         self.start_search();
+        if let Some(rx) = &self.music_search_worker {
+            match rx.try_recv() {
+                Ok(Ok(tracks)) => {
+                    self.music_searching = false;
+                    self.music_search_worker = None;
+                    self.music_status = if tracks.is_empty() {
+                        "No online songs found. Try another search or paste an https:// audio URL."
+                            .into()
+                    } else {
+                        format!("{} online songs ready", tracks.len())
+                    };
+                    self.music_results = tracks;
+                    self.music_scroll = 0.0;
+                    self.fetch_music_icons(home);
+                }
+                Ok(Err(err)) => {
+                    self.music_searching = false;
+                    self.music_search_worker = None;
+                    self.music_status = err;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.music_searching = false;
+                    self.music_search_worker = None;
+                    self.music_status = "Music search worker stopped.".into();
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if let Some(rx) = &self.music_icon_worker {
+            while let Ok((id, w, h, rgba)) = rx.try_recv() {
+                self.music_icons.insert(id, (w, h, rgba));
+            }
+        }
+    }
+
+    pub fn search_music(&mut self, home: &Path) {
+        self.music_fetched_initial = true;
+        self.music_searching = true;
+        self.music_status = if self.music_query.trim().is_empty() {
+            "Loading trending internet songs...".into()
+        } else {
+            format!("Searching \"{}\"...", self.music_query.trim())
+        };
+        let query = self.music_query.clone();
+        let (tx, rx) = mpsc::channel();
+        self.music_search_worker = Some(rx);
+        std::thread::spawn(move || {
+            let _ = tx.send(horizon_client::internet_music::search_online_tracks(&query));
+        });
+        self.fetch_music_icons(home);
+    }
+
+    pub fn fetch_music_icons(&mut self, home: &Path) {
+        let mut tasks = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let playlist_tracks: Vec<horizon_client::internet_music::MusicTrack> =
+            horizon_client::internet_music::playlists()
+                .into_iter()
+                .flat_map(|p| p.tracks.into_iter())
+                .collect();
+        for t in self.music_results.iter().chain(playlist_tracks.iter()) {
+            if self.music_icons.contains_key(&t.id) || !seen.insert(t.id.clone()) {
+                continue;
+            }
+            if let Some((w, h, rgba)) =
+                browser::images::load_cached_music_icon_rgba(home, &t.id)
+            {
+                self.music_icons.insert(t.id.clone(), (w, h, rgba));
+                continue;
+            }
+            if let Some(url) = &t.icon_url {
+                tasks.push((t.id.clone(), url.clone()));
+            }
+        }
+        if tasks.is_empty() {
+            return;
+        }
+        let home = home.to_path_buf();
+        let (tx, rx) = mpsc::channel();
+        self.music_icon_worker = Some(rx);
+        std::thread::spawn(move || {
+            let next_idx = std::sync::atomic::AtomicUsize::new(0);
+            let workers = tasks.len().min(4).max(1);
+            std::thread::scope(|scope| {
+                for _ in 0..workers {
+                    let tx = tx.clone();
+                    let home = &home;
+                    let tasks = &tasks;
+                    let next_idx = &next_idx;
+                    scope.spawn(move || loop {
+                        let i = next_idx.fetch_add(1, Ordering::Relaxed);
+                        let Some((id, url)) = tasks.get(i) else {
+                            break;
+                        };
+                        if let Ok((w, h, rgba)) =
+                            browser::images::fetch_music_icon_rgba(home, id, url)
+                        {
+                            let _ = tx.send((id.clone(), w, h, rgba));
+                        }
+                    });
+                }
+            });
+        });
     }
     pub fn fetch_icons(&mut self, home: &Path) {
         const ICON_WORKER_THREADS: usize = 6;
@@ -3443,6 +3576,8 @@ impl Catalog {
             Some("add_server_name") => &mut self.add_server_name,
             Some("add_server_ip") => &mut self.add_server_ip,
             Some("world_search_query") => &mut self.world_search_query,
+            Some("music_query") => &mut self.music_query,
+            Some("music_new_playlist") => &mut self.music_new_playlist_name,
             _ => &mut self.query,
         };
         match out {
@@ -3499,6 +3634,31 @@ impl Catalog {
                     self.editing = None;
                     if matches!(out, Output::Enter) {
                         self.search_discover_worlds();
+                    }
+                    return;
+                } else if self.editing == Some("music_query") {
+                    self.editing = None;
+                    if matches!(out, Output::Enter) {
+                        self.music_tab_playlists = false;
+                        self.search_music(home);
+                    }
+                    return;
+                } else if self.editing == Some("music_new_playlist") {
+                    self.editing = None;
+                    if matches!(out, Output::Enter) {
+                        let name = self.music_new_playlist_name.trim().to_owned();
+                        if let Ok(created) = horizon_client::internet_music::create_playlist(&name) {
+                            if let Some(track) = self.music_save_modal.take() {
+                                let _ = horizon_client::internet_music::add_track_to_playlist(
+                                    &created, track,
+                                );
+                                self.music_status = format!("Saved to playlist \"{created}\"");
+                            } else {
+                                self.music_selected_playlist = Some(created.clone());
+                                self.music_status = format!("Created playlist \"{created}\"");
+                            }
+                            self.music_new_playlist_name.clear();
+                        }
                     }
                     return;
                 } else if self.editing == Some("compiler_query") {

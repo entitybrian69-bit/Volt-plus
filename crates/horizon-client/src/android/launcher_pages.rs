@@ -512,6 +512,31 @@ pub(super) enum Action {
     CloseUpdateScreen,
     TriggerUpdateInstall,
     CheckForUpdates,
+    OpenMusic,
+    CloseMusic,
+    MusicTab(bool),
+    MusicSearch,
+    MusicQuickQuery(&'static str),
+    MusicPlayResult(usize),
+    MusicPlayPlaylistTrack(usize),
+    MusicSelectPlaylist(usize),
+    MusicPlaySelectedPlaylist,
+    MusicDeleteSelectedPlaylist,
+    MusicRemoveTrackFromPlaylist(usize),
+    MusicOpenSaveResult(usize),
+    MusicOpenSavePlaylistTrack(usize),
+    MusicCloseSave,
+    MusicAddToPlaylist(usize),
+    MusicCreatePlaylist,
+    MusicCreateAndAdd,
+    MusicTogglePause,
+    MusicNext,
+    MusicPrev,
+    MusicSeekBy(i64),
+    MusicSeekFrac(f32),
+    MusicToggleMute,
+    MusicStepVolume(f32),
+    MusicToggleDisableVanilla,
 }
 
 pub(super) fn button(
@@ -872,6 +897,7 @@ fn page_icon(page: Page) -> Icon {
         Page::Replays => Icon::Play,
         Page::Settings => Icon::Settings,
         Page::Skins => Icon::Skins,
+        Page::Music => Icon::Music,
     }
 }
 
@@ -1396,6 +1422,10 @@ impl Launcher {
         ui.h = h;
         self.draw_scene_background(&mut ui, w, full_h);
 
+        if self.catalog.page == Page::Music {
+            ui.h = full_h;
+            self.draw_music_fullscreen(&mut ui, w, full_h, ime_top_dp);
+        } else {
         let account_name = self.login.profile.clone().unwrap_or_else(|| self.catalog.config.name.clone());
         // Brand and account enter first, followed by the avatar and navigation.
         ui.set_stagger_transition((reveal * 3.0).min(1.0), 0.0, 0.0);
@@ -1411,7 +1441,7 @@ impl Launcher {
         let label = ui.fit_text(Face::Medium, 11.0, &account_name, 45.0);
         ui.text(Face::Medium, 11.0, 49.0, 63.0, my3_text(), &label);
         self.targets.push((account_rect, Action::Account));
-        let discord_space = w - 282.0 - 8.0 - 218.0;
+        let discord_space = w - 378.0 - 8.0 - 218.0;
         let discord_rect = if discord_space >= 104.0 {
             [218.0, 11.0, discord_space.min(148.0), 34.0]
         } else {
@@ -1419,6 +1449,8 @@ impl Launcher {
         };
         button(&mut ui, &mut self.targets, discord_rect,
             "Join our Discord", Action::Discord, false);
+        button(&mut ui, &mut self.targets, [w - 378.0, 12.0, 88.0, 34.0],
+            "Musics", Action::OpenMusic, false);
         button(&mut ui, &mut self.targets, [w - 282.0, 12.0, 100.0, 34.0],
             "Inventory", Action::Page(Page::Inventory), self.catalog.page == Page::Inventory);
         button(&mut ui, &mut self.targets, [w - 174.0, 12.0, 162.0, 34.0],
@@ -2235,6 +2267,7 @@ impl Launcher {
             self.list_targets = chooser.navigation(ui.w);
             self.list_view = Some(chooser.viewport(ui.h));
         }
+        } // end dashboard chrome (non-Music fullscreen)
         if let Some([top, bottom, maximum]) = self.list_view
             && maximum > 0.0
             && bottom > top
@@ -4715,6 +4748,740 @@ impl Launcher {
             );
         }
         ui.set_clip(None);
+    }
+
+    fn draw_music_fullscreen(
+        &mut self,
+        ui: &mut Ui,
+        w: f32,
+        full_h: f32,
+        ime_top_dp: Option<f32>,
+    ) {
+        use horizon_client::internet_music::{self, format_duration, format_ms};
+
+        if !self.catalog.music_fetched_initial
+            && !self.catalog.music_searching
+            && self.catalog.music_results.is_empty()
+        {
+            self.catalog.search_music(&self.home);
+        }
+
+        let snap = internet_music::snapshot();
+        let playlists = internet_music::playlists();
+        let vanilla_off = internet_music::is_vanilla_music_disabled();
+
+        let pad = 16.0;
+        let inner_w = (w - pad * 2.0).max(240.0);
+
+        // Fullscreen Material You 3 panel backdrop
+        ui.rounded(8.0, 8.0, w - 16.0, full_h - 16.0, 20.0, my3_surface());
+        ui.stroke_rounded(8.0, 8.0, w - 16.0, full_h - 16.0, 20.0, 1.0, my3_border());
+
+        // Top Header Bar
+        button(
+            ui,
+            &mut self.targets,
+            [pad + 4.0, 16.0, 82.0, 32.0],
+            "Back",
+            Action::CloseMusic,
+            false,
+        );
+        ui.rounded(pad + 94.0, 18.0, 28.0, 28.0, 8.0, my3_accent_soft());
+        ui.icon(Icon::Music, pad + 100.0, 24.0, 16.0, my3_accent());
+        ui.text(Face::SemiBold, 17.5, pad + 130.0, 16.0, my3_text(), "Musics");
+
+        let status_line = if self.catalog.music_status.is_empty() {
+            "Stream songs & build playlists"
+        } else {
+            &self.catalog.music_status
+        };
+        let status_fit = ui.fit_text(Face::Regular, 10.5, status_line, (inner_w - 430.0).max(60.0));
+        if inner_w >= 540.0 {
+            ui.text(
+                Face::Regular,
+                10.5,
+                pad + 130.0,
+                36.0,
+                my3_muted(),
+                &status_fit,
+            );
+        }
+
+        // Top-right Mode Tabs (Discover | Playlists) & Vanilla Music Toggle
+        let vanilla_lbl = if vanilla_off {
+            "MC Music: Off"
+        } else {
+            "MC Music: On"
+        };
+        let vanilla_w = 108.0;
+        let tab_w = 96.0;
+        let tabs_x = (w - pad - vanilla_w - tab_w * 2.0 - 16.0).max(pad + 205.0);
+        button(
+            ui,
+            &mut self.targets,
+            [tabs_x, 16.0, tab_w, 32.0],
+            "Discover",
+            Action::MusicTab(false),
+            !self.catalog.music_tab_playlists,
+        );
+        button(
+            ui,
+            &mut self.targets,
+            [tabs_x + tab_w + 6.0, 16.0, tab_w, 32.0],
+            "Playlists",
+            Action::MusicTab(true),
+            self.catalog.music_tab_playlists,
+        );
+        button(
+            ui,
+            &mut self.targets,
+            [w - pad - vanilla_w - 4.0, 16.0, vanilla_w, 32.0],
+            vanilla_lbl,
+            Action::MusicToggleDisableVanilla,
+            vanilla_off,
+        );
+
+        let player_bar_h = 64.0;
+        let player_y = full_h - player_bar_h - 12.0;
+
+        if !self.catalog.music_tab_playlists {
+            // Search Row
+            let search_y = 58.0;
+            let search_btn_w = 96.0;
+            let field_w = (inner_w - search_btn_w - 16.0).max(120.0);
+            let field_rect = ui.text_field(
+                pad + 4.0,
+                search_y,
+                field_w,
+                36.0,
+                "",
+                &self.catalog.music_query,
+                "Search songs, artists, or paste https:// audio URL...",
+                self.catalog.editing == Some("music_query"),
+            );
+            self.targets.push((field_rect, Action::Field("music_query")));
+            button(
+                ui,
+                &mut self.targets,
+                [pad + 4.0 + field_w + 8.0, search_y, search_btn_w, 36.0],
+                if self.catalog.music_searching {
+                    "Searching..."
+                } else {
+                    "Search"
+                },
+                Action::MusicSearch,
+                true,
+            );
+
+            // Quick Genre / Trending Chips
+            let chip_y = 102.0;
+            let chips = ["Trending", "Lo-Fi", "Chill", "Synthwave", "Electronic", "Ambient"];
+            let chip_gap = 6.0;
+            let chip_w = ((inner_w - 8.0 - chip_gap * (chips.len() as f32 - 1.0)) / chips.len() as f32)
+                .clamp(68.0, 112.0);
+            for (ci, chip) in chips.iter().enumerate() {
+                let cx = pad + 4.0 + ci as f32 * (chip_w + chip_gap);
+                if cx + chip_w > w - pad {
+                    break;
+                }
+                let q_val = if *chip == "Trending" { "" } else { *chip };
+                let active = if *chip == "Trending" {
+                    self.catalog.music_query.trim().is_empty()
+                } else {
+                    self.catalog.music_query.eq_ignore_ascii_case(chip)
+                };
+                button(
+                    ui,
+                    &mut self.targets,
+                    [cx, chip_y, chip_w, 28.0],
+                    chip,
+                    Action::MusicQuickQuery(q_val),
+                    active,
+                );
+            }
+
+            // Song Results List
+            let top = 138.0;
+            let bottom = (player_y - 8.0).max(top + 60.0);
+            let row_h = 68.0;
+            let total_h = self.catalog.music_results.len() as f32 * row_h;
+            let max_scroll = (total_h - (bottom - top)).max(0.0);
+            self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
+            self.list_view = Some([top, bottom, max_scroll]);
+
+            ui.set_clip(Some([pad, top, inner_w, (bottom - top).max(1.0)]));
+            if self.catalog.music_results.is_empty() {
+                let msg = if self.catalog.music_searching {
+                    "Searching internet music..."
+                } else {
+                    "Search for a song above or tap Trending to browse music."
+                };
+                ui.text(Face::Regular, 13.0, pad + 12.0, top + 20.0, my3_muted(), msg);
+            }
+            for (idx, track) in self.catalog.music_results.iter().enumerate() {
+                let y = top + idx as f32 * row_h - self.catalog.scroll;
+                if y + 60.0 < top || y > bottom {
+                    continue;
+                }
+                let row_x = pad + 4.0;
+                let row_w = (inner_w - 16.0).max(200.0);
+                let is_playing_this = snap.has_track() && snap.current_url == track.stream_url;
+                ui.rounded(
+                    row_x,
+                    y,
+                    row_w,
+                    60.0,
+                    14.0,
+                    if is_playing_this {
+                        my3_accent_soft()
+                    } else {
+                        my3_card_bg()
+                    },
+                );
+                ui.border(
+                    row_x,
+                    y,
+                    row_w,
+                    60.0,
+                    14.0,
+                    if is_playing_this {
+                        my3_accent()
+                    } else {
+                        my3_card_border()
+                    },
+                );
+
+                // Song cover icon
+                let drawn = if let Some((iw, ih, rgba)) = self.catalog.music_icons.get(&track.id) {
+                    ui.image(&track.id, *iw, *ih, rgba, row_x + 8.0, y + 8.0, 44.0, 44.0)
+                } else {
+                    false
+                };
+                if !drawn {
+                    ui.rounded(row_x + 8.0, y + 8.0, 44.0, 44.0, 10.0, my3_accent_soft());
+                    ui.icon(Icon::Music, row_x + 19.0, y + 19.0, 22.0, my3_accent());
+                }
+
+                // "+" Save-to-Playlist button directly beside the song logo/icon
+                let plus_rect = [row_x + 58.0, y + 13.0, 34.0, 34.0];
+                ui.rounded(
+                    plus_rect[0],
+                    plus_rect[1],
+                    plus_rect[2],
+                    plus_rect[3],
+                    10.0,
+                    my3_surface(),
+                );
+                ui.border(
+                    plus_rect[0],
+                    plus_rect[1],
+                    plus_rect[2],
+                    plus_rect[3],
+                    10.0,
+                    my3_border(),
+                );
+                ui.icon(
+                    Icon::Plus,
+                    plus_rect[0] + 9.0,
+                    plus_rect[1] + 9.0,
+                    16.0,
+                    my3_text(),
+                );
+                self.list_targets
+                    .push((plus_rect, Action::MusicOpenSaveResult(idx)));
+                if let Some(c) = ui.clip_rect(plus_rect) {
+                    self.targets.push((c, Action::MusicOpenSaveResult(idx)));
+                }
+
+                // Play button on right + duration badge
+                let play_rect = [row_x + row_w - 94.0, y + 12.0, 84.0, 36.0];
+                let dur_str = if track.duration_secs > 0 {
+                    format_duration(track.duration_secs)
+                } else {
+                    "Stream".to_owned()
+                };
+                let dur_w = 52.0;
+                let dur_x = play_rect[0] - dur_w - 8.0;
+                ui.rounded(dur_x, y + 17.0, dur_w, 26.0, 8.0, my3_surface());
+                ui.centered_fit(
+                    Face::Medium,
+                    11.0,
+                    [dur_x, y + 17.0, dur_w, 26.0],
+                    my3_muted(),
+                    &dur_str,
+                );
+
+                let text_x = row_x + 100.0;
+                let text_max = (dur_x - text_x - 8.0).max(80.0);
+                let title_fit = ui.fit_text(Face::SemiBold, 14.5, &track.title, text_max);
+                let sub = format!("{} • {}", track.artist, track.source);
+                let sub_fit = ui.fit_text(Face::Regular, 12.0, &sub, text_max);
+                ui.text(Face::SemiBold, 14.5, text_x, y + 10.0, my3_text(), &title_fit);
+                ui.text(Face::Regular, 12.0, text_x, y + 31.0, my3_muted(), &sub_fit);
+
+                let card_tap = [text_x, y, (dur_x + dur_w - text_x).max(40.0), 60.0];
+                self.list_targets
+                    .push((card_tap, Action::MusicPlayResult(idx)));
+                if let Some(c) = ui.clip_rect(card_tap) {
+                    self.targets.push((c, Action::MusicPlayResult(idx)));
+                }
+                self.list_targets
+                    .push((play_rect, Action::MusicPlayResult(idx)));
+                if let Some(c) = ui.clip_rect(play_rect) {
+                    let lbl = if is_playing_this && snap.playing {
+                        "Playing"
+                    } else {
+                        "Play"
+                    };
+                    button(
+                        ui,
+                        &mut self.targets,
+                        play_rect,
+                        lbl,
+                        Action::MusicPlayResult(idx),
+                        is_playing_this,
+                    );
+                    let _ = c;
+                }
+            }
+            ui.set_clip(None);
+        } else {
+            // Playlists View
+            let selected_name = self
+                .catalog
+                .music_selected_playlist
+                .clone()
+                .filter(|n| playlists.iter().any(|p| p.name == *n))
+                .or_else(|| playlists.first().map(|p| p.name.clone()))
+                .unwrap_or_else(|| "Favorites".to_owned());
+
+            // Create New Playlist Row
+            let new_y = 58.0;
+            let create_w = 132.0;
+            let field_w = (inner_w - create_w - 16.0).max(120.0);
+            let np_rect = ui.text_field(
+                pad + 4.0,
+                new_y,
+                field_w,
+                34.0,
+                "",
+                &self.catalog.music_new_playlist_name,
+                "New playlist name...",
+                self.catalog.editing == Some("music_new_playlist"),
+            );
+            self.targets
+                .push((np_rect, Action::Field("music_new_playlist")));
+            button(
+                ui,
+                &mut self.targets,
+                [pad + 4.0 + field_w + 8.0, new_y, create_w, 34.0],
+                "+ Create Playlist",
+                Action::MusicCreatePlaylist,
+                true,
+            );
+
+            // Playlist Selector Chips
+            let pl_y = 100.0;
+            let mut px = pad + 4.0;
+            for (pi, pl) in playlists.iter().enumerate() {
+                let chip_lbl = format!("{} ({})", pl.name, pl.tracks.len());
+                let cw = (chip_lbl.len() as f32 * 7.2 + 22.0).clamp(90.0, 180.0);
+                if px + cw > w - pad - 190.0 {
+                    break;
+                }
+                let active = pl.name == selected_name;
+                button(
+                    ui,
+                    &mut self.targets,
+                    [px, pl_y, cw, 30.0],
+                    &chip_lbl,
+                    Action::MusicSelectPlaylist(pi),
+                    active,
+                );
+                px += cw + 6.0;
+            }
+            button(
+                ui,
+                &mut self.targets,
+                [w - pad - 184.0, pl_y, 102.0, 30.0],
+                "Play All",
+                Action::MusicPlaySelectedPlaylist,
+                true,
+            );
+            button(
+                ui,
+                &mut self.targets,
+                [w - pad - 76.0, pl_y, 72.0, 30.0],
+                "Delete",
+                Action::MusicDeleteSelectedPlaylist,
+                false,
+            );
+
+            let tracks = playlists
+                .iter()
+                .find(|p| p.name == selected_name)
+                .map(|p| p.tracks.clone())
+                .unwrap_or_default();
+
+            let top = 138.0;
+            let bottom = (player_y - 8.0).max(top + 60.0);
+            let row_h = 68.0;
+            let total_h = tracks.len() as f32 * row_h;
+            let max_scroll = (total_h - (bottom - top)).max(0.0);
+            self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
+            self.list_view = Some([top, bottom, max_scroll]);
+
+            ui.set_clip(Some([pad, top, inner_w, (bottom - top).max(1.0)]));
+            if tracks.is_empty() {
+                ui.text(
+                    Face::Regular,
+                    13.0,
+                    pad + 12.0,
+                    top + 20.0,
+                    my3_muted(),
+                    "This playlist is empty. Go to Discover and tap + next to any song to add it!",
+                );
+            }
+            for (idx, track) in tracks.iter().enumerate() {
+                let y = top + idx as f32 * row_h - self.catalog.scroll;
+                if y + 60.0 < top || y > bottom {
+                    continue;
+                }
+                let row_x = pad + 4.0;
+                let row_w = (inner_w - 16.0).max(200.0);
+                let is_playing_this = snap.has_track() && snap.current_url == track.stream_url;
+                ui.rounded(
+                    row_x,
+                    y,
+                    row_w,
+                    60.0,
+                    14.0,
+                    if is_playing_this {
+                        my3_accent_soft()
+                    } else {
+                        my3_card_bg()
+                    },
+                );
+                ui.border(row_x, y, row_w, 60.0, 14.0, my3_card_border());
+
+                let drawn = if let Some((iw, ih, rgba)) = self.catalog.music_icons.get(&track.id) {
+                    ui.image(&track.id, *iw, *ih, rgba, row_x + 8.0, y + 8.0, 44.0, 44.0)
+                } else {
+                    false
+                };
+                if !drawn {
+                    ui.rounded(row_x + 8.0, y + 8.0, 44.0, 44.0, 10.0, my3_accent_soft());
+                    ui.icon(Icon::Music, row_x + 19.0, y + 19.0, 22.0, my3_accent());
+                }
+
+                let plus_rect = [row_x + 58.0, y + 13.0, 34.0, 34.0];
+                ui.rounded(
+                    plus_rect[0],
+                    plus_rect[1],
+                    plus_rect[2],
+                    plus_rect[3],
+                    10.0,
+                    my3_surface(),
+                );
+                ui.border(
+                    plus_rect[0],
+                    plus_rect[1],
+                    plus_rect[2],
+                    plus_rect[3],
+                    10.0,
+                    my3_border(),
+                );
+                ui.icon(
+                    Icon::Plus,
+                    plus_rect[0] + 9.0,
+                    plus_rect[1] + 9.0,
+                    16.0,
+                    my3_text(),
+                );
+                self.list_targets
+                    .push((plus_rect, Action::MusicOpenSavePlaylistTrack(idx)));
+                if let Some(_c) = ui.clip_rect(plus_rect) {
+                    self.targets
+                        .push((plus_rect, Action::MusicOpenSavePlaylistTrack(idx)));
+                }
+
+                let rem_rect = [row_x + row_w - 78.0, y + 13.0, 68.0, 34.0];
+                let play_rect = [rem_rect[0] - 82.0, y + 13.0, 74.0, 34.0];
+                let dur_str = if track.duration_secs > 0 {
+                    format_duration(track.duration_secs)
+                } else {
+                    "Stream".to_owned()
+                };
+                let dur_x = play_rect[0] - 58.0;
+                ui.rounded(dur_x, y + 17.0, 50.0, 26.0, 8.0, my3_surface());
+                ui.centered_fit(
+                    Face::Medium,
+                    11.0,
+                    [dur_x, y + 17.0, 50.0, 26.0],
+                    my3_muted(),
+                    &dur_str,
+                );
+
+                let text_x = row_x + 100.0;
+                let text_max = (dur_x - text_x - 8.0).max(80.0);
+                let title_fit = ui.fit_text(Face::SemiBold, 14.5, &track.title, text_max);
+                let sub_fit = ui.fit_text(Face::Regular, 12.0, &track.artist, text_max);
+                ui.text(Face::SemiBold, 14.5, text_x, y + 10.0, my3_text(), &title_fit);
+                ui.text(Face::Regular, 12.0, text_x, y + 31.0, my3_muted(), &sub_fit);
+
+                if ui.clip_rect(play_rect).is_some() {
+                    button(
+                        ui,
+                        &mut self.targets,
+                        play_rect,
+                        if is_playing_this && snap.playing {
+                            "Playing"
+                        } else {
+                            "Play"
+                        },
+                        Action::MusicPlayPlaylistTrack(idx),
+                        is_playing_this,
+                    );
+                }
+                if ui.clip_rect(rem_rect).is_some() {
+                    button(
+                        ui,
+                        &mut self.targets,
+                        rem_rect,
+                        "Remove",
+                        Action::MusicRemoveTrackFromPlaylist(idx),
+                        false,
+                    );
+                }
+            }
+            ui.set_clip(None);
+        }
+
+        // Bottom Now-Playing Player Bar
+        ui.rounded(pad + 4.0, player_y, inner_w - 8.0, player_bar_h, 16.0, my3_card_bg());
+        ui.border(pad + 4.0, player_y, inner_w - 8.0, player_bar_h, 16.0, my3_accent());
+
+        let info_x = pad + 16.0;
+        let now_title = if snap.has_track() {
+            snap.current_title.as_str()
+        } else {
+            "No song playing"
+        };
+        let now_sub = if snap.has_track() {
+            if snap.buffering {
+                "Buffering audio stream...".to_owned()
+            } else if !snap.active_playlist.is_empty() {
+                format!("{} • Playlist: {}", snap.current_artist, snap.active_playlist)
+            } else {
+                snap.current_artist.clone()
+            }
+        } else {
+            "Tap any song above to start streaming".to_owned()
+        };
+        let controls_w = 398.0;
+        let info_max = (inner_w - controls_w - 28.0).max(90.0);
+        let nt_fit = ui.fit_text(Face::SemiBold, 13.5, now_title, info_max);
+        let ns_fit = ui.fit_text(Face::Regular, 11.0, &now_sub, info_max);
+        ui.text(Face::SemiBold, 13.5, info_x, player_y + 8.0, my3_text(), &nt_fit);
+        ui.text(Face::Regular, 11.0, info_x, player_y + 27.0, my3_muted(), &ns_fit);
+
+        // Interactive Seek Bar inside Now-Playing Bar
+        let seek_x = info_x;
+        let seek_w = (info_max - 4.0).max(80.0);
+        let seek_y = player_y + 46.0;
+        let frac = if snap.duration_ms > 0 {
+            (snap.position_ms as f32 / snap.duration_ms as f32).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        ui.rounded(seek_x, seek_y, seek_w, 6.0, 3.0, my3_surface());
+        if frac > 0.0 {
+            ui.rounded(seek_x, seek_y, (seek_w * frac).max(6.0), 6.0, 3.0, my3_accent());
+        }
+        for seg in 0..8 {
+            let sw = seek_w / 8.0;
+            let sx = seek_x + seg as f32 * sw;
+            self.targets.push((
+                [sx, seek_y - 6.0, sw, 18.0],
+                Action::MusicSeekFrac((seg as f32 + 0.5) / 8.0),
+            ));
+        }
+
+        // Transport + Volume Buttons on Right
+        let ctrl_x = (w - pad - controls_w - 8.0).max(info_x + info_max + 8.0);
+        let time_lbl = if snap.duration_ms > 0 {
+            format!("{} / {}", format_ms(snap.position_ms), format_ms(snap.duration_ms))
+        } else {
+            format_ms(snap.position_ms)
+        };
+        ui.text(Face::Medium, 10.5, ctrl_x, player_y + 6.0, my3_muted(), &time_lbl);
+
+        let by = player_y + 24.0;
+        button(ui, &mut self.targets, [ctrl_x, by, 52.0, 32.0], "Prev", Action::MusicPrev, false);
+        button(
+            ui,
+            &mut self.targets,
+            [ctrl_x + 56.0, by, 68.0, 32.0],
+            if snap.playing { "Pause" } else { "Play" },
+            Action::MusicTogglePause,
+            true,
+        );
+        button(
+            ui,
+            &mut self.targets,
+            [ctrl_x + 128.0, by, 58.0, 32.0],
+            "+10s",
+            Action::MusicSeekBy(10_000),
+            false,
+        );
+        button(
+            ui,
+            &mut self.targets,
+            [ctrl_x + 190.0, by, 52.0, 32.0],
+            "Next",
+            Action::MusicNext,
+            false,
+        );
+        let vol_lbl = if snap.muted {
+            "Muted".to_owned()
+        } else {
+            format!("Vol {}%", (snap.volume * 100.0).round() as i32)
+        };
+        button(
+            ui,
+            &mut self.targets,
+            [ctrl_x + 248.0, by, 72.0, 32.0],
+            &vol_lbl,
+            Action::MusicToggleMute,
+            snap.muted,
+        );
+        button(
+            ui,
+            &mut self.targets,
+            [ctrl_x + 324.0, by, 32.0, 32.0],
+            "-",
+            Action::MusicStepVolume(-0.15),
+            false,
+        );
+        button(
+            ui,
+            &mut self.targets,
+            [ctrl_x + 360.0, by, 32.0, 32.0],
+            "+",
+            Action::MusicStepVolume(0.15),
+            false,
+        );
+
+        // Save-to-Playlist Modal Window (opened by tapping "+" beside a song's icon)
+        if let Some(track) = self.catalog.music_save_modal.clone() {
+            self.targets.clear();
+            self.list_targets.clear();
+            self.list_view = None;
+            ui.rounded(
+                0.0,
+                0.0,
+                w,
+                full_h,
+                0.0,
+                horizon_client::hud::rgba(6, 5, 12, 195),
+            );
+            let mw = (w - 36.0).clamp(320.0, 480.0);
+            let mh = (full_h - 32.0).clamp(260.0, 390.0);
+            let mx = (w - mw) * 0.5;
+            let max_my = ime_top_dp.map_or(full_h - mh - 12.0, |t| (t - mh - 10.0).max(10.0));
+            let my = ((full_h - mh) * 0.5).min(max_my).max(10.0);
+            ui.rounded(mx, my, mw, mh, 20.0, my3_surface());
+            ui.border(mx, my, mw, mh, 20.0, my3_accent());
+
+            ui.text(
+                Face::SemiBold,
+                16.5,
+                mx + 18.0,
+                my + 16.0,
+                my3_text(),
+                "Save Song to Playlist",
+            );
+            button(
+                ui,
+                &mut self.targets,
+                [mx + mw - 86.0, my + 12.0, 70.0, 30.0],
+                "Close",
+                Action::MusicCloseSave,
+                false,
+            );
+
+            let t_fit = ui.fit_text(Face::Medium, 13.0, &track.title, mw - 36.0);
+            let a_fit = ui.fit_text(
+                Face::Regular,
+                11.0,
+                &format!("{} • {}", track.artist, format_duration(track.duration_secs)),
+                mw - 36.0,
+            );
+            ui.text(Face::Medium, 13.0, mx + 18.0, my + 46.0, my3_accent(), &t_fit);
+            ui.text(Face::Regular, 11.0, mx + 18.0, my + 64.0, my3_muted(), &a_fit);
+
+            // Playlist choices
+            let list_y = my + 90.0;
+            let list_h = (mh - 196.0).max(76.0);
+            let row_step = 42.0;
+            for (pi, pl) in playlists.iter().enumerate() {
+                let ry = list_y + pi as f32 * row_step;
+                if ry + 36.0 > list_y + list_h {
+                    break;
+                }
+                let already = pl
+                    .tracks
+                    .iter()
+                    .any(|t| t.id == track.id || t.stream_url == track.stream_url);
+                let label = if already {
+                    format!("{} ({}) • Saved", pl.name, pl.tracks.len())
+                } else {
+                    format!("{} ({})", pl.name, pl.tracks.len())
+                };
+                button(
+                    ui,
+                    &mut self.targets,
+                    [mx + 18.0, ry, mw - 36.0, 36.0],
+                    &label,
+                    Action::MusicAddToPlaylist(pi),
+                    already,
+                );
+            }
+
+            // Create New Playlist + Add
+            let create_label_y = my + mh - 94.0;
+            ui.text(
+                Face::Medium,
+                12.0,
+                mx + 18.0,
+                create_label_y,
+                my3_text(),
+                "Or create a new playlist:",
+            );
+            let input_y = my + mh - 70.0;
+            let btn_w = 122.0;
+            let inp_w = (mw - 44.0 - btn_w).max(120.0);
+            let new_pl_rect = ui.text_field(
+                mx + 18.0,
+                input_y,
+                inp_w,
+                36.0,
+                "",
+                &self.catalog.music_new_playlist_name,
+                "Playlist name...",
+                self.catalog.editing == Some("music_new_playlist"),
+            );
+            self.targets
+                .push((new_pl_rect, Action::Field("music_new_playlist")));
+            button(
+                ui,
+                &mut self.targets,
+                [mx + 24.0 + inp_w, input_y, btn_w, 36.0],
+                "Create & Save",
+                Action::MusicCreateAndAdd,
+                true,
+            );
+        }
     }
 
     /// Modal dialogs for the Integrated Mini File Manager:
@@ -9374,6 +10141,8 @@ impl Launcher {
                     "add_server_name" => &self.catalog.add_server_name,
                     "add_server_ip" => &self.catalog.add_server_ip,
                     "world_search_query" => &self.catalog.world_search_query,
+                    "music_query" => &self.catalog.music_query,
+                    "music_new_playlist" => &self.catalog.music_new_playlist_name,
                     _ => &self.catalog.query,
                 };
                 crate::platform::show(initial);
@@ -10104,6 +10873,227 @@ impl Launcher {
                 self.catalog.fm_modal = None;
                 self.catalog.editing = None;
                 crate::platform::hide();
+            }
+            Some(Action::OpenMusic) => {
+                if self.catalog.page != Page::Music {
+                    self.catalog.music_return_page = self.catalog.page;
+                }
+                self.catalog.page = Page::Music;
+                self.catalog.scroll = 0.0;
+                self.catalog.editing = None;
+                crate::platform::hide();
+                self.sync_discord_presence();
+                if !self.catalog.music_fetched_initial {
+                    self.catalog.search_music(&self.home);
+                }
+            }
+            Some(Action::CloseMusic) => {
+                self.catalog.music_save_modal = None;
+                self.catalog.editing = None;
+                crate::platform::hide();
+                self.catalog.page = self.catalog.music_return_page;
+                self.catalog.scroll = 0.0;
+                self.anim.trigger_page_transition();
+                self.sync_discord_presence();
+            }
+            Some(Action::MusicTab(playlists_tab)) => {
+                self.catalog.music_tab_playlists = playlists_tab;
+                self.catalog.scroll = 0.0;
+                if playlists_tab {
+                    self.catalog.fetch_music_icons(&self.home);
+                }
+            }
+            Some(Action::MusicSearch) => {
+                self.catalog.music_tab_playlists = false;
+                self.catalog.editing = None;
+                crate::platform::hide();
+                self.catalog.search_music(&self.home);
+            }
+            Some(Action::MusicQuickQuery(q)) => {
+                self.catalog.music_query = q.to_owned();
+                self.catalog.music_tab_playlists = false;
+                self.catalog.editing = None;
+                crate::platform::hide();
+                self.catalog.search_music(&self.home);
+            }
+            Some(Action::MusicPlayResult(idx)) => {
+                if !self.catalog.music_results.is_empty() && idx < self.catalog.music_results.len() {
+                    horizon_client::internet_music::play_queue(
+                        &self.catalog.music_results,
+                        idx,
+                        "",
+                    );
+                    self.sync_discord_presence();
+                }
+            }
+            Some(Action::MusicSelectPlaylist(idx)) => {
+                let pls = horizon_client::internet_music::playlists();
+                if let Some(pl) = pls.get(idx) {
+                    self.catalog.music_selected_playlist = Some(pl.name.clone());
+                    self.catalog.scroll = 0.0;
+                }
+            }
+            Some(Action::MusicPlayPlaylistTrack(idx)) => {
+                let pls = horizon_client::internet_music::playlists();
+                let selected = self
+                    .catalog
+                    .music_selected_playlist
+                    .clone()
+                    .filter(|n| pls.iter().any(|p| p.name == *n))
+                    .or_else(|| pls.first().map(|p| p.name.clone()))
+                    .unwrap_or_else(|| "Favorites".to_owned());
+                horizon_client::internet_music::play_playlist(&selected, idx);
+                self.sync_discord_presence();
+            }
+            Some(Action::MusicPlaySelectedPlaylist) => {
+                let pls = horizon_client::internet_music::playlists();
+                let selected = self
+                    .catalog
+                    .music_selected_playlist
+                    .clone()
+                    .filter(|n| pls.iter().any(|p| p.name == *n))
+                    .or_else(|| pls.first().map(|p| p.name.clone()))
+                    .unwrap_or_else(|| "Favorites".to_owned());
+                if !horizon_client::internet_music::play_playlist(&selected, 0) {
+                    self.catalog.music_status = format!("Playlist \"{selected}\" has no tracks yet.");
+                }
+                self.sync_discord_presence();
+            }
+            Some(Action::MusicDeleteSelectedPlaylist) => {
+                let pls = horizon_client::internet_music::playlists();
+                let selected = self
+                    .catalog
+                    .music_selected_playlist
+                    .clone()
+                    .filter(|n| pls.iter().any(|p| p.name == *n))
+                    .or_else(|| pls.first().map(|p| p.name.clone()))
+                    .unwrap_or_else(|| "Favorites".to_owned());
+                horizon_client::internet_music::delete_playlist(&selected);
+                self.catalog.music_selected_playlist = None;
+                self.catalog.music_status = format!("Deleted playlist \"{selected}\"");
+            }
+            Some(Action::MusicRemoveTrackFromPlaylist(idx)) => {
+                let pls = horizon_client::internet_music::playlists();
+                let selected = self
+                    .catalog
+                    .music_selected_playlist
+                    .clone()
+                    .filter(|n| pls.iter().any(|p| p.name == *n))
+                    .or_else(|| pls.first().map(|p| p.name.clone()))
+                    .unwrap_or_else(|| "Favorites".to_owned());
+                if let Some(pl) = pls.iter().find(|p| p.name == selected)
+                    && let Some(track) = pl.tracks.get(idx)
+                {
+                    horizon_client::internet_music::remove_track_from_playlist(&selected, &track.id);
+                }
+            }
+            Some(Action::MusicOpenSaveResult(idx)) => {
+                if let Some(track) = self.catalog.music_results.get(idx).cloned() {
+                    self.catalog.music_save_modal = Some(track);
+                }
+            }
+            Some(Action::MusicOpenSavePlaylistTrack(idx)) => {
+                let pls = horizon_client::internet_music::playlists();
+                let selected = self
+                    .catalog
+                    .music_selected_playlist
+                    .clone()
+                    .filter(|n| pls.iter().any(|p| p.name == *n))
+                    .or_else(|| pls.first().map(|p| p.name.clone()))
+                    .unwrap_or_else(|| "Favorites".to_owned());
+                if let Some(pl) = pls.iter().find(|p| p.name == selected)
+                    && let Some(track) = pl.tracks.get(idx).cloned()
+                {
+                    self.catalog.music_save_modal = Some(track);
+                }
+            }
+            Some(Action::MusicCloseSave) => {
+                self.catalog.music_save_modal = None;
+                self.catalog.editing = None;
+                crate::platform::hide();
+            }
+            Some(Action::MusicAddToPlaylist(idx)) => {
+                let pls = horizon_client::internet_music::playlists();
+                if let Some(pl) = pls.get(idx)
+                    && let Some(track) = self.catalog.music_save_modal.take()
+                {
+                    match horizon_client::internet_music::add_track_to_playlist(&pl.name, track) {
+                        Ok(true) => {
+                            self.catalog.music_status = format!("Added song to \"{}\"", pl.name);
+                        }
+                        Ok(false) => {
+                            self.catalog.music_status =
+                                format!("Already in \"{}\"", pl.name);
+                        }
+                        Err(e) => self.catalog.music_status = e,
+                    }
+                    self.catalog.editing = None;
+                    crate::platform::hide();
+                }
+            }
+            Some(Action::MusicCreatePlaylist) => {
+                let name = self.catalog.music_new_playlist_name.trim().to_owned();
+                match horizon_client::internet_music::create_playlist(&name) {
+                    Ok(created) => {
+                        self.catalog.music_selected_playlist = Some(created.clone());
+                        self.catalog.music_new_playlist_name.clear();
+                        self.catalog.music_status = format!("Created playlist \"{created}\"");
+                        self.catalog.editing = None;
+                        crate::platform::hide();
+                    }
+                    Err(e) => self.catalog.music_status = e,
+                }
+            }
+            Some(Action::MusicCreateAndAdd) => {
+                let name = self.catalog.music_new_playlist_name.trim().to_owned();
+                match horizon_client::internet_music::create_playlist(&name) {
+                    Ok(created) => {
+                        if let Some(track) = self.catalog.music_save_modal.take() {
+                            let _ = horizon_client::internet_music::add_track_to_playlist(
+                                &created, track,
+                            );
+                            self.catalog.music_status =
+                                format!("Created \"{created}\" and saved song");
+                        }
+                        self.catalog.music_selected_playlist = Some(created);
+                        self.catalog.music_new_playlist_name.clear();
+                        self.catalog.editing = None;
+                        crate::platform::hide();
+                    }
+                    Err(e) => self.catalog.music_status = e,
+                }
+            }
+            Some(Action::MusicTogglePause) => {
+                horizon_client::internet_music::toggle_pause();
+                self.sync_discord_presence();
+            }
+            Some(Action::MusicNext) => {
+                horizon_client::internet_music::next_track();
+                self.sync_discord_presence();
+            }
+            Some(Action::MusicPrev) => {
+                horizon_client::internet_music::prev_track();
+                self.sync_discord_presence();
+            }
+            Some(Action::MusicSeekBy(delta)) => {
+                horizon_client::internet_music::seek_by_ms(delta);
+            }
+            Some(Action::MusicSeekFrac(frac)) => {
+                let snap = horizon_client::internet_music::snapshot();
+                if snap.duration_ms > 0 {
+                    let target = ((snap.duration_ms as f32) * frac.clamp(0.0, 1.0)) as u64;
+                    horizon_client::internet_music::seek_to_ms(target);
+                }
+            }
+            Some(Action::MusicToggleMute) => {
+                horizon_client::internet_music::toggle_mute();
+            }
+            Some(Action::MusicStepVolume(delta)) => {
+                let cur = horizon_client::internet_music::volume();
+                horizon_client::internet_music::set_volume(cur + delta);
+            }
+            Some(Action::MusicToggleDisableVanilla) => {
+                horizon_client::internet_music::toggle_vanilla_music_disabled();
             }
             None => {}
         }

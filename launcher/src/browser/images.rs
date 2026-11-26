@@ -185,6 +185,73 @@ pub fn fetch_rgba_fast_with_alias(
     Ok((rgba_img.width(), rgba_img.height(), rgba_img.into_raw()))
 }
 
+fn music_icon_path(home: &Path, id: &str) -> PathBuf {
+    home.join("music")
+        .join("icons")
+        .join(format!("{}-{FAST_ICON}.png", safe_cache_id(id)))
+}
+
+/// Synchronously loads a cached `48x48` song cover icon from `<home>/music/icons/`.
+pub fn load_cached_music_icon_rgba(home: &Path, id: &str) -> Option<(u32, u32, Vec<u8>)> {
+    let p = music_icon_path(home, id);
+    if !p.is_file() {
+        return None;
+    }
+    let decoded = image::open(&p).ok()?.into_rgba8();
+    Some((decoded.width(), decoded.height(), decoded.into_raw()))
+}
+
+/// Fetches a song's HTTPS cover artwork, scales it to `48x48`, and caches it under `<home>/music/icons/`.
+pub fn fetch_music_icon_rgba(
+    home: &Path,
+    id: &str,
+    url: &str,
+) -> Result<(u32, u32, Vec<u8>), String> {
+    if let Some(hit) = load_cached_music_icon_rgba(home, id) {
+        return Ok(hit);
+    }
+    if !url.starts_with("https://") || url.len() > 2048 || url.contains(char::is_whitespace) {
+        return Err("Invalid music artwork URL".into());
+    }
+    let response = super::download::agent(url)
+        .get(url)
+        .call()
+        .map_err(|e| format!("{url}: {e}"))?;
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .take(MAX_DOWNLOAD + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("{url}: {e}"))?;
+    if bytes.len() as u64 > MAX_DOWNLOAD {
+        return Err("Artwork exceeds size limit".into());
+    }
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(4096);
+    limits.max_image_height = Some(4096);
+    limits.max_alloc = Some(64 << 20);
+    reader.limits(limits);
+    let decoded = reader.decode().map_err(|e| format!("{url}: {e}"))?;
+    let scaled = if decoded.width() > FAST_ICON || decoded.height() > FAST_ICON {
+        decoded.resize(FAST_ICON, FAST_ICON, image::imageops::FilterType::Triangle)
+    } else {
+        decoded
+    };
+    let target = music_icon_path(home, id);
+    if let Some(parent) = target.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let part = target.with_extension("part");
+    if scaled.save_with_format(&part, image::ImageFormat::Png).is_ok() {
+        let _ = fs::rename(&part, &target);
+    }
+    let rgba_img = scaled.into_rgba8();
+    Ok((rgba_img.width(), rgba_img.height(), rgba_img.into_raw()))
+}
+
 /// How long a cached image is used without asking its server whether it changed.
 pub const FRESH: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
 

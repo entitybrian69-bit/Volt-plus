@@ -60,6 +60,10 @@ pub struct TouchUi {
     pub overlay_scale_dragging: bool,
     /// The overlay-button opacity slider of the Overlay tab is being dragged.
     pub overlay_opacity_dragging: bool,
+    /// The music volume slider in the Music tab is being dragged.
+    pub music_volume_dragging: bool,
+    /// Selected playlist index inspected in the Music tab.
+    pub music_selected_playlist: usize,
     /// Step state for the Floating Menu "Send Custom Input" picker modal.
     pub custom_input_picker: crate::touch::PickerStep,
     /// Horizontal scroll offset for the Floating Menu custom keyboard picker.
@@ -124,6 +128,8 @@ impl Default for TouchUi {
             button_scale_dragging: false,
             overlay_scale_dragging: false,
             overlay_opacity_dragging: false,
+            music_volume_dragging: false,
+            music_selected_playlist: 0,
             custom_input_picker: crate::touch::PickerStep::None,
             custom_kb_scroll_x: 0.0,
             custom_kb_drag: None,
@@ -229,6 +235,18 @@ pub enum InGameMenuAction {
     SendCustomInput(String),
     /// Replay Mod recording / settings action from Control Hub.
     Replay(crate::replay::ReplayAction),
+    /// Internet Music System controls from the in-game Music tab.
+    MusicTogglePause,
+    MusicNext,
+    MusicPrev,
+    MusicSeekBy(i64),
+    MusicSeekFrac(f32),
+    MusicSetVolume(f32),
+    MusicToggleMute,
+    MusicToggleVanilla,
+    MusicSelectPlaylist(usize),
+    MusicPlayPlaylist(usize),
+    MusicPlayPlaylistTrack(usize, usize),
 }
 
 fn key_code_to_char(code: KeyCode) -> Option<char> {
@@ -1876,7 +1894,7 @@ fn hub_metrics(w: f32, h: f32) -> (f32, f32, f32, f32, f32, f32, f32, f32, f32) 
 
 struct HubSidebarRects {
     quick_studio: [f32; 4],
-    tabs: [[f32; 4]; 8],
+    tabs: [[f32; 4]; 9],
     done_btn: [f32; 4],
     close_x: [f32; 4],
     mode_badge: [f32; 4],
@@ -1891,8 +1909,8 @@ fn hub_sidebar_rects(dx: f32, dy: f32, dw: f32, dh: f32, side_w: f32) -> HubSide
     let tabs_top = quick_studio[1] + quick_studio[3] + 8.0;
     let tabs_avail = (done_y - 8.0 - tabs_top).max(120.0);
     let gap = 4.0;
-    let tab_h = ((tabs_avail - gap * 7.0) / 8.0).clamp(15.0, 24.0);
-    let mut tabs = [[0.0f32; 4]; 8];
+    let tab_h = ((tabs_avail - gap * 8.0) / 9.0).clamp(14.0, 22.0);
+    let mut tabs = [[0.0f32; 4]; 9];
     for (i, slot) in tabs.iter_mut().enumerate() {
         *slot = [
             dx + pad,
@@ -2057,6 +2075,7 @@ impl TouchUi {
                                 self.button_scale_dragging = false;
                                 self.overlay_scale_dragging = false;
                                 self.overlay_opacity_dragging = false;
+                                self.music_volume_dragging = false;
                                 self.hub_scroll_drag = None;
                             }
                         }
@@ -2209,6 +2228,21 @@ impl TouchUi {
                 }
                 TouchPhase::Ended | TouchPhase::Cancelled => {
                     self.overlay_opacity_dragging = false;
+                    return Some(InGameMenuAction::Close);
+                }
+                _ => {}
+            }
+        }
+        if self.music_volume_dragging {
+            match phase {
+                TouchPhase::Moved => {
+                    let sl_x = cx + 92.0;
+                    let sl_w = (cw - 106.0).max(40.0);
+                    let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
+                    return Some(InGameMenuAction::MusicSetVolume(t));
+                }
+                TouchPhase::Ended | TouchPhase::Cancelled => {
+                    self.music_volume_dragging = false;
                     return Some(InGameMenuAction::Close);
                 }
                 _ => {}
@@ -2582,6 +2616,7 @@ impl TouchUi {
                 self.button_scale_dragging = false;
                 self.overlay_scale_dragging = false;
                 self.overlay_opacity_dragging = false;
+                self.music_volume_dragging = false;
                 self.custom_input_picker = crate::touch::PickerStep::None;
                 self.custom_kb_drag = None;
                 self.hub_scroll_drag = None;
@@ -2731,6 +2766,18 @@ impl TouchUi {
                     let sl_w = (cw - 28.0).max(40.0);
                     let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
                     return Some(InGameMenuAction::SetOverlayOpacity(0.20 + t * 0.80));
+                }
+            }
+
+            if self.hub_tab == 8 && inside(content_pane) {
+                let body_y = body_top - self.hub_scroll;
+                let vol_y = body_y + 132.0;
+                if inside([cx + 78.0, vol_y, cw - 78.0, 48.0]) {
+                    self.music_volume_dragging = true;
+                    let sl_x = cx + 92.0;
+                    let sl_w = (cw - 106.0).max(40.0);
+                    let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
+                    return Some(InGameMenuAction::MusicSetVolume(t));
                 }
             }
 
@@ -3020,7 +3067,7 @@ impl TouchUi {
                     return Some(act);
                 }
             }
-            _ => {
+            7 => {
                 // Tab 7: Overlay Menu — size, opacity & visibility rules for the V+ button.
                 if inside([cx, body_y + 18.0, cw, 50.0]) {
                     let sl_x = cx + 14.0;
@@ -3047,6 +3094,76 @@ impl TouchUi {
                 }
                 if inside([cx, body_y + 134.0 + step * 3.0, cw, row_h]) {
                     return Some(InGameMenuAction::ToggleOverlayShowControlsInMenus);
+                }
+            }
+            _ => {
+                // Tab 8: Internet Music Player, Fast-Forward, Volume, Playlists & Vanilla Toggle
+                let seek_r = [cx + 12.0, body_y + 58.0, (cw - 24.0).max(40.0), 18.0];
+                if inside(seek_r) {
+                    let t = ((p[0] - seek_r[0]) / seek_r[2]).clamp(0.0, 1.0);
+                    return Some(InGameMenuAction::MusicSeekFrac(t));
+                }
+                let gap = 6.0;
+                let bw = ((cw - 24.0 - gap * 3.0) / 4.0).max(40.0);
+                let btn_y = body_y + 84.0;
+                for (bi, act) in [
+                    InGameMenuAction::MusicPrev,
+                    InGameMenuAction::MusicTogglePause,
+                    InGameMenuAction::MusicSeekBy(10_000),
+                    InGameMenuAction::MusicNext,
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let bx = cx + 12.0 + bi as f32 * (bw + gap);
+                    if inside([bx, btn_y, bw, 30.0]) {
+                        return Some(act);
+                    }
+                }
+
+                let vol_y = body_y + 132.0;
+                if inside([cx, vol_y, 72.0, 48.0]) {
+                    return Some(InGameMenuAction::MusicToggleMute);
+                }
+                if inside([cx + 78.0, vol_y, cw - 78.0, 48.0]) {
+                    let sl_x = cx + 92.0;
+                    let sl_w = (cw - 106.0).max(40.0);
+                    let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
+                    return Some(InGameMenuAction::MusicSetVolume(t));
+                }
+                if inside([cx, body_y + 188.0, cw, 46.0]) {
+                    return Some(InGameMenuAction::MusicToggleVanilla);
+                }
+
+                let playlists = crate::internet_music::playlists();
+                let pl_start_y = body_y + 260.0;
+                for (pi, _) in playlists.iter().enumerate() {
+                    let ry = pl_start_y + pi as f32 * 42.0;
+                    let play_r = [cx + cw - 78.0, ry + 5.0, 68.0, 28.0];
+                    if inside(play_r) {
+                        self.music_selected_playlist = pi;
+                        return Some(InGameMenuAction::MusicPlayPlaylist(pi));
+                    }
+                    if inside([cx, ry, cw, 38.0]) {
+                        self.music_selected_playlist = pi;
+                        return Some(InGameMenuAction::MusicSelectPlaylist(pi));
+                    }
+                }
+
+                let sel_idx = if playlists.is_empty() {
+                    0
+                } else {
+                    self.music_selected_playlist.min(playlists.len() - 1)
+                };
+                let tracks_header_y = pl_start_y + playlists.len().max(1) as f32 * 42.0 + 10.0;
+                let tracks_start_y = tracks_header_y + 20.0;
+                if let Some(pl) = playlists.get(sel_idx) {
+                    for (ti, _) in pl.tracks.iter().enumerate() {
+                        let ty = tracks_start_y + ti as f32 * 38.0;
+                        if inside([cx, ty, cw, 34.0]) {
+                            return Some(InGameMenuAction::MusicPlayPlaylistTrack(sel_idx, ti));
+                        }
+                    }
                 }
             }
         }
@@ -3255,8 +3372,8 @@ impl TouchUi {
             "Customize HUD",
         );
 
-        // 8 Category Tabs in Sidebar (Volt Graphics rounded plates + crisp active outline)
-        let tabs: [(Icon, &str); 8] = [
+        // 9 Category Tabs in Sidebar (Volt Graphics rounded plates + crisp active outline)
+        let tabs: [(Icon, &str); 9] = [
             (Icon::HorizonLogo, "Recommended"),
             (Icon::Gamepad, "Controls"),
             (Icon::Crosshair, "Aiming"),
@@ -3265,6 +3382,7 @@ impl TouchUi {
             (Icon::Monitor, "Record"),
             (Icon::Play, "Replay"),
             (Icon::Settings, "Overlay"),
+            (Icon::Music, "Music"),
         ];
         for (ti, (ic, lbl)) in tabs.iter().enumerate() {
             let active = self.hub_tab == ti as u8;
@@ -3334,6 +3452,19 @@ impl TouchUi {
 
         // Scrollable Right Content Panel with scissor clip and tab transition slide
         let tab_slide = (1.0 - tab_ease) * 14.0;
+        let music_playlists = if self.hub_tab == 8 {
+            crate::internet_music::playlists()
+        } else {
+            Vec::new()
+        };
+        let music_sel_idx = if music_playlists.is_empty() {
+            0
+        } else {
+            self.music_selected_playlist.min(music_playlists.len() - 1)
+        };
+        let music_sel_tracks = music_playlists
+            .get(music_sel_idx)
+            .map_or(0, |p| p.tracks.len());
         let content_height = match self.hub_tab {
             0 => 446.0,
             1 => 368.0,
@@ -3342,7 +3473,14 @@ impl TouchUi {
             4 => 340.0,
             5 => 488.0,
             6 => 340.0,
-            _ => 364.0,
+            7 => 364.0,
+            _ => {
+                260.0
+                    + (music_playlists.len().max(1) as f32) * 42.0
+                    + 32.0
+                    + (music_sel_tracks.max(1) as f32) * 38.0
+                    + 16.0
+            }
         };
         let max_scroll = (content_height - body_h).max(0.0);
         self.hub_max_scroll.set(max_scroll);
@@ -4578,7 +4716,7 @@ impl TouchUi {
             6 => {
                 replay_hud::draw_control_hub_replay_tab(&mut ui, cx, cw, body_y);
             }
-            _ => {
+            7 => {
                 // Tab 7: Overlay Menu — size, opacity & visibility rules for the V+ button.
                 ui.text(
                     Face::SemiBold,
@@ -4710,6 +4848,304 @@ impl TouchUi {
                     Some(settings.overlay_show_controls_in_menus),
                     None,
                 );
+            }
+            _ => {
+                // Tab 8: Internet Music Player (Now Playing, Fast-Forward, Volume, Playlists & Vanilla Toggle)
+                use crate::internet_music::{self, format_duration, format_ms};
+                let snap = internet_music::snapshot();
+                let vanilla_off = internet_music::is_vanilla_music_disabled();
+
+                ui.text(Face::SemiBold, 10.2, cx, body_y, muted_c, "NOW PLAYING");
+                let np_y = body_y + 18.0;
+                ui.rounded(cx, np_y, cw, 106.0, 12.0, card_bg);
+                ui.border(cx, np_y, cw, 106.0, 12.0, accent);
+
+                let np_title = if snap.has_track() {
+                    snap.current_title.as_str()
+                } else {
+                    "No song playing"
+                };
+                let np_sub = if snap.has_track() {
+                    if snap.buffering {
+                        "Buffering audio stream...".to_owned()
+                    } else if !snap.active_playlist.is_empty() {
+                        format!("{}  •  Playlist: {}", snap.current_artist, snap.active_playlist)
+                    } else {
+                        snap.current_artist.clone()
+                    }
+                } else {
+                    "Pick a playlist below or browse in Launcher -> Musics".to_owned()
+                };
+                let time_txt = if snap.duration_ms > 0 {
+                    format!("{} / {}", format_ms(snap.position_ms), format_ms(snap.duration_ms))
+                } else {
+                    format_ms(snap.position_ms)
+                };
+                let np_t_fit = ellipsis(np_title, ((cw - 115.0) / 5.6).max(10.0) as usize);
+                let np_s_fit = ellipsis(&np_sub, ((cw - 32.0) / 4.8).max(12.0) as usize);
+                ui.icon(Icon::Music, cx + 12.0, np_y + 10.0, 15.0, accent_hi);
+                ui.text(Face::SemiBold, 11.4, cx + 32.0, np_y + 8.0, text_c, &np_t_fit);
+                ui.text(Face::Medium, 9.2, cx + cw - 86.0, np_y + 10.0, muted_c, &time_txt);
+                ui.text(Face::Regular, 9.2, cx + 12.0, np_y + 27.0, muted_c, &np_s_fit);
+
+                // Seek Bar
+                let seek_x = cx + 12.0;
+                let seek_w = (cw - 24.0).max(40.0);
+                let seek_y = np_y + 46.0;
+                let seek_frac = if snap.duration_ms > 0 {
+                    (snap.position_ms as f32 / snap.duration_ms as f32).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                ui.rounded(seek_x, seek_y, seek_w, 6.0, 3.0, sidebar_bg);
+                if seek_frac > 0.0 {
+                    ui.rounded(seek_x, seek_y, (seek_w * seek_frac).max(6.0), 6.0, 3.0, accent);
+                }
+
+                // Prev | Play/Pause | Fast Fwd +10s | Next
+                let gap = 6.0;
+                let bw = ((cw - 24.0 - gap * 3.0) / 4.0).max(40.0);
+                let btn_y = np_y + 66.0;
+                let play_lbl = if snap.playing { "Pause" } else { "Play" };
+                for (bi, (lbl, hi)) in [
+                    ("Prev", false),
+                    (play_lbl, true),
+                    ("Fwd +10s", false),
+                    ("Next", false),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let bx = cx + 12.0 + bi as f32 * (bw + gap);
+                    ui.rounded(
+                        bx,
+                        btn_y,
+                        bw,
+                        30.0,
+                        8.0,
+                        if hi { accent } else { card_sel },
+                    );
+                    ui.border(bx, btn_y, bw, 30.0, 8.0, accent);
+                    ui.centered_fit(
+                        Face::SemiBold,
+                        9.8,
+                        [bx, btn_y, bw, 30.0],
+                        if hi { accent_fg } else { text_c },
+                        lbl,
+                    );
+                }
+
+                // Volume Button + Slider
+                let vol_y = body_y + 132.0;
+                ui.rounded(
+                    cx,
+                    vol_y,
+                    72.0,
+                    48.0,
+                    11.0,
+                    if snap.muted { card_sel } else { card_bg },
+                );
+                ui.border(
+                    cx,
+                    vol_y,
+                    72.0,
+                    48.0,
+                    11.0,
+                    if snap.muted { accent } else { border_c },
+                );
+                ui.centered_fit(
+                    Face::SemiBold,
+                    9.8,
+                    [cx, vol_y, 72.0, 48.0],
+                    if snap.muted { accent_hi } else { text_c },
+                    if snap.muted { "Unmute" } else { "Mute" },
+                );
+
+                let vol_card_x = cx + 78.0;
+                let vol_card_w = (cw - 78.0).max(80.0);
+                ui.rounded(vol_card_x, vol_y, vol_card_w, 48.0, 11.0, card_bg);
+                ui.border(vol_card_x, vol_y, vol_card_w, 48.0, 11.0, border_c);
+                ui.text(
+                    Face::SemiBold,
+                    10.4,
+                    vol_card_x + 14.0,
+                    vol_y + 6.0,
+                    text_c,
+                    "Music Volume",
+                );
+                let vol_pct = if snap.muted {
+                    "Muted".to_owned()
+                } else {
+                    format!("{:.0}%", snap.volume.clamp(0.0, 1.0) * 100.0)
+                };
+                ui.rounded(
+                    vol_card_x + vol_card_w - 56.0,
+                    vol_y + 6.0,
+                    46.0,
+                    18.0,
+                    6.0,
+                    card_sel,
+                );
+                ui.border(
+                    vol_card_x + vol_card_w - 56.0,
+                    vol_y + 6.0,
+                    46.0,
+                    18.0,
+                    6.0,
+                    accent,
+                );
+                ui.centered_fit(
+                    Face::SemiBold,
+                    9.0,
+                    [vol_card_x + vol_card_w - 56.0, vol_y + 6.0, 46.0, 18.0],
+                    accent_hi,
+                    &vol_pct,
+                );
+                let sl_x = cx + 92.0;
+                let sl_w = (cw - 106.0).max(40.0);
+                let v_sl_y = vol_y + 32.0;
+                let vf = snap.volume.clamp(0.0, 1.0);
+                ui.rounded(sl_x, v_sl_y, sl_w, 6.0, 3.0, sidebar_bg);
+                ui.rounded(sl_x, v_sl_y, (sl_w * vf).max(6.0), 6.0, 3.0, accent);
+                let v_thumb = sl_x + sl_w * vf;
+                ui.rounded(v_thumb - 7.0, v_sl_y - 4.0, 14.0, 14.0, 7.0, accent_hi);
+                ui.border(v_thumb - 7.0, v_sl_y - 4.0, 14.0, 14.0, 7.0, text_c);
+
+                // Toggle Off Vanilla Minecraft Background Music
+                draw_toggle_row(
+                    &mut ui,
+                    body_y + 188.0,
+                    "Turn Off Vanilla Background Music",
+                    "Mute Minecraft's built-in music while listening to your songs",
+                    Some(vanilla_off),
+                    None,
+                );
+
+                // Choose Playlist
+                ui.text(Face::SemiBold, 10.2, cx, body_y + 242.0, muted_c, "PLAYLISTS");
+                let pl_start_y = body_y + 260.0;
+                if music_playlists.is_empty() {
+                    ui.text(
+                        Face::Regular,
+                        9.6,
+                        cx,
+                        pl_start_y + 6.0,
+                        muted_c,
+                        "No playlists yet.",
+                    );
+                }
+                for (pi, pl) in music_playlists.iter().enumerate() {
+                    let ry = pl_start_y + pi as f32 * 42.0;
+                    let selected = pi == music_sel_idx;
+                    let playing_pl = snap.has_track() && snap.active_playlist == pl.name;
+                    ui.rounded(
+                        cx,
+                        ry,
+                        cw,
+                        38.0,
+                        10.0,
+                        if selected { card_sel } else { card_bg },
+                    );
+                    ui.border(
+                        cx,
+                        ry,
+                        cw,
+                        38.0,
+                        10.0,
+                        if selected || playing_pl { accent } else { border_c },
+                    );
+                    let p_name = ellipsis(&pl.name, ((cw - 140.0) / 5.4).max(8.0) as usize);
+                    ui.text(Face::SemiBold, 10.4, cx + 12.0, ry + 6.0, text_c, &p_name);
+                    ui.text(
+                        Face::Regular,
+                        8.8,
+                        cx + 12.0,
+                        ry + 21.0,
+                        muted_c,
+                        &format!("{} songs", pl.tracks.len()),
+                    );
+                    let play_r = [cx + cw - 78.0, ry + 5.0, 68.0, 28.0];
+                    ui.rounded(
+                        play_r[0],
+                        play_r[1],
+                        play_r[2],
+                        play_r[3],
+                        8.0,
+                        if playing_pl { accent } else { sidebar_bg },
+                    );
+                    ui.border(play_r[0], play_r[1], play_r[2], play_r[3], 8.0, accent);
+                    ui.centered_fit(
+                        Face::SemiBold,
+                        9.4,
+                        play_r,
+                        if playing_pl { accent_fg } else { text_c },
+                        if playing_pl { "Active" } else { "Play" },
+                    );
+                }
+
+                // Check Songs in Selected Playlist
+                let tracks_hdr_y = pl_start_y + music_playlists.len().max(1) as f32 * 42.0 + 10.0;
+                let sel_pl_name = music_playlists
+                    .get(music_sel_idx)
+                    .map_or("Playlist", |p| p.name.as_str());
+                ui.text(
+                    Face::SemiBold,
+                    10.2,
+                    cx,
+                    tracks_hdr_y,
+                    muted_c,
+                    &format!("SONGS IN \"{}\"", sel_pl_name.to_uppercase()),
+                );
+                let tracks_start_y = tracks_hdr_y + 20.0;
+                if let Some(pl) = music_playlists.get(music_sel_idx) {
+                    if pl.tracks.is_empty() {
+                        ui.text(
+                            Face::Regular,
+                            9.6,
+                            cx,
+                            tracks_start_y + 4.0,
+                            muted_c,
+                            "Empty playlist. Tap + beside songs in Launcher -> Musics to add.",
+                        );
+                    }
+                    for (ti, tr) in pl.tracks.iter().enumerate() {
+                        let ty = tracks_start_y + ti as f32 * 38.0;
+                        let is_cur = snap.has_track() && snap.current_url == tr.stream_url;
+                        ui.rounded(
+                            cx,
+                            ty,
+                            cw,
+                            34.0,
+                            9.0,
+                            if is_cur { card_sel } else { card_bg },
+                        );
+                        ui.border(
+                            cx,
+                            ty,
+                            cw,
+                            34.0,
+                            9.0,
+                            if is_cur { accent } else { border_c },
+                        );
+                        let t_fit = ellipsis(&tr.title, ((cw - 92.0) / 5.2).max(8.0) as usize);
+                        ui.text(Face::Medium, 9.8, cx + 10.0, ty + 5.0, text_c, &t_fit);
+                        ui.text(
+                            Face::Regular,
+                            8.4,
+                            cx + 10.0,
+                            ty + 18.0,
+                            muted_c,
+                            &ellipsis(&tr.artist, ((cw - 92.0) / 4.6).max(8.0) as usize),
+                        );
+                        ui.centered_fit(
+                            Face::Medium,
+                            9.0,
+                            [cx + cw - 54.0, ty + 6.0, 44.0, 22.0],
+                            muted_c,
+                            &format_duration(tr.duration_secs),
+                        );
+                    }
+                }
             }
         }
 

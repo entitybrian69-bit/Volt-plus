@@ -14,6 +14,12 @@ impl Game<'_> {
         if self.options.split_guest {
             return;
         }
+        if horizon_client::internet_music::is_vanilla_music_disabled() {
+            if self.music.current_instance().is_some() {
+                self.music.stop_playing(None, &mut self.audio);
+            }
+            return;
+        }
         let (music, volume) = self.situational_music();
         // Options.musicFrequency's listener: MusicManager.setMinutesBetweenSongs.
         let frequency = MusicFrequency::parse(&self.settings.file.name("musicFrequency"));
@@ -44,6 +50,9 @@ impl Game<'_> {
     }
     /// `Options.getFinalSoundSourceVolume(SoundSource.MUSIC)`.
     fn final_music_volume(&self) -> f32 {
+        if horizon_client::internet_music::is_vanilla_music_disabled() {
+            return 0.0;
+        }
         self.settings.master_volume * self.settings.volumes[1]
     }
     /// `ToastManager.setMusicToastDisplayState`: Pause and Pause and Toast make
