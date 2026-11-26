@@ -50,11 +50,12 @@ pub(super) fn agent(url: &str) -> ureq::Agent {
     let spec = crate::proxy::spec_for(url);
     horizon_port_pack::net::keep("browser", spec.as_deref(), |proxy| {
         let builder = ureq::AgentBuilder::new()
+            .resolver(horizon_port_pack::net::PreferIpv4Resolver)
             .user_agent(&format!(
                 "horizon-rust/horizon horizon-launcher/{} (github.com/horizon-rust/horizon)",
                 crate::backend::VERSION
             ))
-            .timeout_connect(std::time::Duration::from_secs(15))
+            .timeout_connect(std::time::Duration::from_secs(10))
             .timeout_read(std::time::Duration::from_secs(60));
         match proxy {
             Some(proxy) => builder.proxy(proxy).build(),

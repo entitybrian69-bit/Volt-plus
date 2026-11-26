@@ -875,6 +875,84 @@ fn page_icon(page: Page) -> Icon {
     }
 }
 
+fn catalog_fallback_badge(id: &str, default_icon: Icon) -> (Icon, u32, u32) {
+    use horizon_client::ui_theme::color;
+    let lower = id.to_ascii_lowercase();
+    if lower == "zoom" || lower.contains("zoom") {
+        return (
+            Icon::Search,
+            color::with_alpha(color::hex(0x6366F1, 255), 0.28),
+            color::hex(0xA5B4FC, 255),
+        );
+    }
+    if lower == "minimap" || lower.contains("map") || lower.contains("coords") {
+        return (
+            Icon::Crosshair,
+            color::with_alpha(color::hex(0x0EA5E9, 255), 0.28),
+            color::hex(0x7DD3FC, 255),
+        );
+    }
+    if lower == "recipes" || lower.contains("recipe") || lower.contains("rei") || lower.contains("emi") || lower.contains("jei") {
+        return (
+            Icon::FileText,
+            color::with_alpha(color::hex(0x6366F1, 255), 0.26),
+            color::hex(0xC4B5FD, 255),
+        );
+    }
+    if lower == "smartf3" || lower.contains("f3") || lower.contains("debug") {
+        return (
+            Icon::Terminal,
+            color::with_alpha(color::hex(0x10B981, 255), 0.26),
+            color::hex(0x6EE7B7, 255),
+        );
+    }
+    if lower.contains("wrench") || lower.contains("config") || lower.contains("tweak") || lower.contains("menu") {
+        return (
+            Icon::Gear,
+            color::with_alpha(color::hex(0xF59E0B, 255), 0.24),
+            color::hex(0xFCD34D, 255),
+        );
+    }
+    if lower.contains("fps") || lower.contains("hud") || lower.contains("sodium") || lower.contains("lithium") || lower.contains("ferrite") {
+        return (
+            Icon::Monitor,
+            color::with_alpha(color::hex(0x3B82F6, 255), 0.25),
+            color::hex(0x93C5FD, 255),
+        );
+    }
+    if lower.contains("keystroke") || lower.contains("sprint") || lower.contains("sneak") {
+        return (
+            Icon::Gamepad,
+            color::with_alpha(color::hex(0x8B5CF6, 255), 0.25),
+            color::hex(0xDDD6FE, 255),
+        );
+    }
+    if lower.contains("mouse") || lower.contains("scroll") {
+        return (
+            Icon::Mouse,
+            color::with_alpha(color::hex(0xEC4899, 255), 0.24),
+            color::hex(0xF9A8D4, 255),
+        );
+    }
+    if lower.contains("apple") || lower.contains("potion") || lower.contains("effect") || lower.contains("jade") {
+        return (
+            Icon::Flask,
+            color::with_alpha(color::hex(0x14B8A6, 255), 0.25),
+            color::hex(0x5EEAD4, 255),
+        );
+    }
+    let hash = id
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    const PALETTE: [u32; 6] = [0x6366F1, 0x0EA5E9, 0x10B981, 0xF59E0B, 0x8B5CF6, 0xEC4899];
+    let rgb = PALETTE[(hash as usize) % PALETTE.len()];
+    (
+        default_icon,
+        color::with_alpha(color::hex(rgb, 255), 0.24),
+        color::hex(rgb, 255),
+    )
+}
+
 fn icon_action_button(
     ui: &mut Ui,
     targets: &mut Vec<([f32; 4], Action)>,
@@ -1820,20 +1898,22 @@ impl Launcher {
                     false
                 };
                 if !drawn_icon {
+                    let (badge_icon, badge_bg, badge_fg) =
+                        catalog_fallback_badge(id, fallback_icon);
                     ui.rounded(
                         content_x + 10.0,
                         y + 10.0,
                         44.0,
                         44.0,
                         12.0,
-                        my3_accent_soft(),
+                        badge_bg,
                     );
                     ui.icon(
-                        fallback_icon,
+                        badge_icon,
                         content_x + 21.0,
                         y + 21.0,
                         22.0,
-                        my3_accent(),
+                        badge_fg,
                     );
                 }
 
@@ -1914,20 +1994,22 @@ impl Launcher {
                     false
                 };
                 if !drawn_icon {
+                    let (badge_icon, badge_bg, badge_fg) =
+                        catalog_fallback_badge(&p.id, fallback_icon);
                     ui.rounded(
                         content_x + 10.0,
                         y + 10.0,
                         44.0,
                         44.0,
                         12.0,
-                        my3_accent_soft(),
+                        badge_bg,
                     );
                     ui.icon(
-                        fallback_icon,
+                        badge_icon,
                         content_x + 21.0,
                         y + 21.0,
                         22.0,
-                        my3_accent(),
+                        badge_fg,
                     );
                 }
 
@@ -8055,7 +8137,9 @@ impl Launcher {
                         summary: (*desc).to_owned(),
                         author: "Horizon Built-in".into(),
                         downloads: 0,
-                        icon: None,
+                        icon: Some(format!(
+                            "https://horizon-rust.github.io/horizon-mods/icons/{id}.png"
+                        )),
                         page: String::new(),
                         kind: crate::browser::Kind::Mod,
                         license: "MIT / Apache-2.0".into(),

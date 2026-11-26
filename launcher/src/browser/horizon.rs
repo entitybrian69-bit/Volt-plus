@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 
 /// Where the registry publishes its index (GitHub Pages of horizon-rust/horizon-mods).
 pub const INDEX_URL: &str = "https://horizon-rust.github.io/horizon-mods/index.json";
+/// Legacy mirror kept as fallback if the primary GitHub Pages host cannot be reached.
+pub const MIRROR_INDEX_URL: &str = "https://ludovic111.github.io/horizon-mods/index.json";
 /// The registry's pages on the website, `<SITE>/<id>`.
 const SITE: &str = "https://playhorizon.dev/mods";
 /// The report form of a project.
@@ -108,29 +110,35 @@ pub fn index() -> Result<Arc<Index>, String> {
     Ok(index)
 }
 
-fn fetch_index() -> Result<(Index, String), String> {
+fn fetch_remote_index(at: &str) -> Result<(Index, String), String> {
     use std::io::Read;
-    let at = location();
-    let text = if at.starts_with("https://") {
-        let response = download::agent(&at).get(&at).call().map_err(|e| match e {
-            ureq::Error::Status(code, _) => format!("The mod registry answered {code}."),
-            ureq::Error::Transport(t) => format!("The mod registry can't be reached: {t}"),
-        })?;
-        let mut text = String::new();
-        response
-            .into_reader()
-            .take(MAX_INDEX)
-            .read_to_string(&mut text)
-            .map_err(|e| e.to_string())?;
-        text
-    } else {
-        fs::read_to_string(&at).map_err(|e| format!("{at}: {e}"))?
-    };
-    let index = match local() {
-        true => Index::parse_local(&text)?,
-        false => Index::parse(&text)?,
-    };
+    let response = download::agent(at).get(at).call().map_err(|e| match e {
+        ureq::Error::Status(code, _) => format!("The mod registry answered {code}."),
+        ureq::Error::Transport(t) => format!("The mod registry can't be reached: {t}"),
+    })?;
+    let mut text = String::new();
+    response
+        .into_reader()
+        .take(MAX_INDEX)
+        .read_to_string(&mut text)
+        .map_err(|e| e.to_string())?;
+    let index = Index::parse(&text)?;
     Ok((index, text))
+}
+
+fn fetch_index() -> Result<(Index, String), String> {
+    let at = location();
+    if at.starts_with("https://") {
+        match fetch_remote_index(&at) {
+            Ok(ok) => Ok(ok),
+            Err(err) if at == INDEX_URL => fetch_remote_index(MIRROR_INDEX_URL).or(Err(err)),
+            Err(err) => Err(err),
+        }
+    } else {
+        let text = fs::read_to_string(&at).map_err(|e| format!("{at}: {e}"))?;
+        let index = Index::parse_local(&text)?;
+        Ok((index, text))
+    }
 }
 
 /// A project's ratings: 1 to 5 stars, their mean and how many.

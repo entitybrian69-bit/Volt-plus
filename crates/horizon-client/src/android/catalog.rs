@@ -1853,12 +1853,17 @@ impl Catalog {
             .any(|(source, id)| *source == project.source && *id == project.id)
             || (project.kind == Kind::Mod
                 && self.local.iter().any(|item| {
+                    let clean_id = horizon_client::jar_transpiler::sanitize_mod_id(&project.id);
+                    let clean_slug = horizon_client::jar_transpiler::sanitize_mod_id(&project.slug);
                     item.kind == horizon_client::content_files::Kind::Mods
                         && (item.file == format!("{}.hmod", project.id)
+                            || item.file == format!("{clean_slug}.hmod")
                             || item.file == format!("{}.jar", project.slug)
                             || item.file == format!("horizon-mods/{}", project.id)
                             || item.file == format!("horizon-mods/{}", project.slug)
-                            || item.file == format!("horizon-native-mods/{}.hnmod", project.id))
+                            || item.file == format!("horizon-native-mods/{}.hnmod", project.id)
+                            || item.file == format!("horizon-native-mods/{clean_id}.hnmod")
+                            || item.file == format!("horizon-native-mods/{clean_slug}.hnmod"))
                 }))
             || (project.kind == Kind::Shader
                 && self.local.iter().any(|item| {
@@ -2054,7 +2059,22 @@ impl Catalog {
             if visible && self.page.is_catalog() && !self.busy() {
                 match result {
                     Ok(items) => {
+                        let offline_mods_only = self.page == Page::Mods
+                            && self.query.trim().is_empty()
+                            && items.len() <= 64
+                            && items.iter().all(|p| {
+                                p.source == browser::SourceId::Horizon
+                                    && p.loaders.iter().any(|l| l == "hnmod")
+                            });
                         self.show_results(items);
+                        if offline_mods_only {
+                            self.searches.evict(&(
+                                self.page,
+                                browser::SourceId::Horizon,
+                                String::new(),
+                                0,
+                            ));
+                        }
                         self.fetch_icons(home);
                     }
                     Err(error) => self.status = error,
@@ -2139,9 +2159,22 @@ impl Catalog {
                 browser::images::FAST_ICON,
             ) {
                 self.icons.insert(id.clone(), (w, h, rgba));
-                if let Some(s) = summary {
+                if source != browser::SourceId::Horizon
+                    && let Some(s) = summary
+                {
                     self.enriched_summaries.insert(id, s);
                 }
+                continue;
+            }
+            if let Some(mirror_url) = direct_url.as_deref().and_then(horizon_icon_mirror_url)
+                && let Some((w, h, rgba, _)) = browser::images::load_cached_rgba_by_id(
+                    home,
+                    &id,
+                    Some(&mirror_url),
+                    browser::images::FAST_ICON,
+                )
+            {
+                self.icons.insert(id.clone(), (w, h, rgba));
                 continue;
             }
             tasks.push((id, title, direct_url, kind, source));
@@ -2203,24 +2236,42 @@ impl Catalog {
                                     let _ = tx.send((id.clone(), w, h, rgba, None));
                                     continue;
                                 }
+                                if let Some(mirror_url) = horizon_icon_mirror_url(url)
+                                    && let Ok((w, h, rgba)) = browser::images::fetch_rgba_fast(
+                                        home,
+                                        id,
+                                        &mirror_url,
+                                        browser::images::FAST_ICON,
+                                        None,
+                                    )
+                                {
+                                    let _ = tx.send((id.clone(), w, h, rgba, None));
+                                    continue;
+                                }
                             }
 
-                            // Fallback to Modrinth search by title for PFP & rich summary (not CurseForge)
-                            if *source != browser::SourceId::CurseForge
+                            // Fallback to exact-match Modrinth lookup only for non-CurseForge items
+                            // that are not Horizon's own bundled/native catalog mods.
+                            let skip_modrinth_fallback = *source == browser::SourceId::CurseForge
+                                || is_horizon_builtin_or_catalog_mod(id);
+                            if !skip_modrinth_fallback
                                 && let Some(hit) = lookup_modrinth_by_name(title, *kind)
                             {
                                 icon_url = hit.icon;
-                                if !hit.summary.trim().is_empty() {
+                                if *source != browser::SourceId::Horizon
+                                    && !hit.summary.trim().is_empty()
+                                {
                                     found_summary = Some(hit.summary);
                                 }
                             }
                             if let Some(url) = icon_url
-                                && let Ok((w, h, rgba)) = browser::images::fetch_rgba_fast(
+                                && let Ok((w, h, rgba)) = browser::images::fetch_rgba_fast_with_alias(
                                     home,
                                     id,
                                     &url,
                                     browser::images::FAST_ICON,
                                     found_summary.as_deref(),
+                                    *source != browser::SourceId::Horizon,
                                 )
                             {
                                 let _ = tx.send((id.clone(), w, h, rgba, found_summary));
@@ -2293,6 +2344,7 @@ impl Catalog {
             let mut gallery = Vec::new();
             let mut icon_url = project.icon.clone();
 
+            let mut horizon_has_details = false;
             if let Some(source) = browser::source(project.source) {
                 if let Ok(v) = source.versions(&project)
                     && !v.is_empty()
@@ -2302,6 +2354,7 @@ impl Catalog {
                 if let Ok(d) = source.details(&project) {
                     if !d.body.trim().is_empty() {
                         description = clean_markdown_body(&d.body);
+                        horizon_has_details = project.source == browser::SourceId::Horizon;
                     }
                     if !d.authors.is_empty() {
                         author = d.authors.join(", ");
@@ -2316,11 +2369,13 @@ impl Catalog {
                 }
             }
 
-            // For Horizon list items (or bundled mods), search Modrinth by the project's name
-            // to enrich with Modrinth's full description, PFP icon, and gallery screenshots!
-            if project.source == browser::SourceId::Horizon
-                || gallery.is_empty()
-                || icon_url.is_none()
+            // Enrich with exact-match Modrinth details when gallery/icon/details are missing,
+            // without overwriting existing Horizon bundled or Registry descriptions.
+            let is_builtin_or_catalog = is_horizon_builtin_or_catalog_mod(&project.id);
+            if !is_builtin_or_catalog
+                && (project.source == browser::SourceId::Horizon
+                    || gallery.is_empty()
+                    || icon_url.is_none())
             {
                 if let Some(m_hit) = lookup_modrinth_by_name(&project.title, project.kind) {
                     if icon_url.is_none() {
@@ -2336,7 +2391,7 @@ impl Catalog {
                         license = m_hit.license.clone();
                     }
                     if let Ok(m_details) = browser::modrinth::Modrinth.details(&m_hit) {
-                        if !m_details.body.trim().is_empty() {
+                        if !horizon_has_details && !m_details.body.trim().is_empty() {
                             let body_clean = clean_markdown_body(&m_details.body);
                             if project.source == browser::SourceId::Horizon {
                                 let caps = browser::horizon::trust_and_capabilities(&project.id);
@@ -2364,7 +2419,7 @@ impl Catalog {
                         if gallery.is_empty() {
                             gallery = m_details.gallery;
                         }
-                    } else if description.len() < m_hit.summary.len() {
+                    } else if !horizon_has_details && description.len() < m_hit.summary.len() {
                         description = m_hit.summary.clone();
                     }
                     if versions.is_empty()
@@ -2385,12 +2440,18 @@ impl Catalog {
                 versions,
             });
 
-            if need_icon
-                && let Some(url) = icon_url
-                && let Ok(path) = browser::images::fetch(&home, &url, browser::images::ROW)
-                && let Ok((w, h, rgba)) = horizon_client::hud::decode(&path)
-            {
-                let _ = tx.send(ModalUpdate::Icon(project.id.clone(), w, h, rgba));
+            if need_icon && let Some(url) = icon_url {
+                let fetched = browser::images::fetch(&home, &url, browser::images::ROW).or_else(
+                    |err| match horizon_icon_mirror_url(&url) {
+                        Some(mirror) => browser::images::fetch(&home, &mirror, browser::images::ROW),
+                        None => Err(err),
+                    },
+                );
+                if let Ok(path) = fetched
+                    && let Ok((w, h, rgba)) = horizon_client::hud::decode(&path)
+                {
+                    let _ = tx.send(ModalUpdate::Icon(project.id.clone(), w, h, rgba));
+                }
             }
 
             for (idx, img) in gallery.into_iter().take(3).enumerate() {
@@ -2516,7 +2577,7 @@ impl Catalog {
                 browser::modrinth::Modrinth.search(&query)
             } else if page == Page::Shaders {
                 query.offset = 0;
-                query.limit = 200;
+                query.limit = 500;
                 let mut combined = browser::horizon::Registry.search(&query).unwrap_or_default();
                 for builtin in crate::shader_catalog::horizon_builtin_shader_projects(&text) {
                     if !combined.iter().any(|p| p.id == builtin.id) {
@@ -2526,8 +2587,18 @@ impl Catalog {
                 Ok(combined)
             } else {
                 query.offset = 0;
-                query.limit = 200;
-                let mut combined = browser::horizon::Registry.search(&query).unwrap_or_default();
+                query.limit = 500;
+                let mut combined = Vec::new();
+                for p in browser::horizon::Registry.search(&query).unwrap_or_default() {
+                    if !horizon_client::mod_list::ANDROID_BUNDLED
+                        .iter()
+                        .any(|(bid, _, _)| *bid == p.id)
+                        && !combined.iter().any(|existing: &Project| existing.id == p.id)
+                    {
+                        combined.push(p);
+                    }
+                }
+                let registry_empty = combined.is_empty();
                 let words: Vec<String> = text
                     .split_whitespace()
                     .map(|w| w.to_lowercase())
@@ -2559,6 +2630,60 @@ impl Catalog {
                         });
                     }
                 }
+                // When the Horizon Registry host is unreachable or returns empty on a device,
+                // populate the catalog from Modrinth (all compatible mods are auto-ported via
+                // horizon-port-pack on install) so every device gets the full ~260–290+ catalog
+                // instead of falling back to only 64 built-in/offline entries.
+                if registry_empty {
+                    let mut seen_keys: std::collections::HashSet<String> = combined
+                        .iter()
+                        .flat_map(|p| {
+                            [
+                                normalize_mod_key(&p.id),
+                                normalize_mod_key(&p.slug),
+                                normalize_mod_key(&p.title),
+                            ]
+                        })
+                        .chain(horizon_client::mod_list::ANDROID_BUNDLED.iter().flat_map(
+                            |(id, title, _)| [normalize_mod_key(id), normalize_mod_key(title)],
+                        ))
+                        .collect();
+                    let target_modrinth = if text.trim().is_empty() { 230 } else { 100 };
+                    let mut mr_offset = 0usize;
+                    while mr_offset < target_modrinth {
+                        let mut mr_query = Query::new(&text, Kind::Mod);
+                        mr_query.everything = true;
+                        mr_query.offset = mr_offset;
+                        mr_query.limit = 100.min(target_modrinth - mr_offset);
+                        match browser::modrinth::Modrinth.search(&mr_query) {
+                            Ok(hits) if !hits.is_empty() => {
+                                let batch_len = hits.len();
+                                for hit in hits {
+                                    let keys = [
+                                        normalize_mod_key(&hit.id),
+                                        normalize_mod_key(&hit.slug),
+                                        normalize_mod_key(&hit.title),
+                                    ];
+                                    if keys.iter().any(|k| !k.is_empty() && seen_keys.contains(k))
+                                    {
+                                        continue;
+                                    }
+                                    for k in keys {
+                                        if !k.is_empty() {
+                                            seen_keys.insert(k);
+                                        }
+                                    }
+                                    combined.push(hit);
+                                }
+                                if batch_len < mr_query.limit {
+                                    break;
+                                }
+                                mr_offset += batch_len;
+                            }
+                            _ => break,
+                        }
+                    }
+                }
                 Ok(combined)
             };
             let _ = tx.send(result);
@@ -2578,6 +2703,7 @@ impl Catalog {
             use std::io::Read;
             let mut bytes = Vec::new();
             ureq::AgentBuilder::new()
+                .resolver(horizon_port_pack::net::PreferIpv4Resolver)
                 .https_only(true)
                 .timeout_connect(std::time::Duration::from_secs(20))
                 .timeout_read(std::time::Duration::from_secs(90))
@@ -3752,23 +3878,44 @@ fn resolve_and_port_modrinth_deps_recursive(
     }
 }
 
+fn normalize_mod_key(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+fn horizon_icon_mirror_url(url: &str) -> Option<String> {
+    url.strip_prefix("https://horizon-rust.github.io/horizon-mods/")
+        .map(|rest| format!("https://ludovic111.github.io/horizon-mods/{rest}"))
+}
+
+fn is_horizon_builtin_or_catalog_mod(id: &str) -> bool {
+    horizon_client::mod_list::ANDROID_BUNDLED
+        .iter()
+        .any(|(bid, _, _)| *bid == id)
+        || horizon_client::jar_transpiler::all_horizon_catalog_mods()
+            .into_iter()
+            .any(|(cid, _, _, _)| cid == id)
+}
+
 fn lookup_modrinth_by_name(title: &str, kind: Kind) -> Option<Project> {
     let clean_title = title.split('(').next().unwrap_or(title).trim();
+    let target_key = normalize_mod_key(clean_title);
+    if target_key.is_empty() {
+        return None;
+    }
     let mut query = Query::new(clean_title, kind);
     query.everything = true;
-    query.limit = 5;
+    query.limit = 8;
     let hits = if kind == Kind::Shader {
         browser::modrinth::search_shader_packs(&query).ok()?
     } else {
         browser::modrinth::Modrinth.search(&query).ok()?
     };
-    let lower = clean_title.to_lowercase();
-    hits.iter()
-        .find(|p| {
-            p.title.to_lowercase() == lower || p.slug.to_lowercase() == lower.replace(' ', "-")
-        })
-        .cloned()
-        .or_else(|| hits.into_iter().next())
+    hits.into_iter().find(|p| {
+        normalize_mod_key(&p.title) == target_key || normalize_mod_key(&p.slug) == target_key
+    })
 }
 
 fn clean_markdown_body(raw: &str) -> String {

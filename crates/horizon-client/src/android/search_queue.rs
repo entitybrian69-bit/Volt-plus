@@ -53,6 +53,9 @@ impl<K: Clone + PartialEq, V: Clone> Queue<K, V> {
     pub fn cancel_interest(&mut self) {
         self.wanted = None;
     }
+    pub fn evict(&mut self, key: &K) {
+        self.cache.retain(|(k, _, _)| k != key);
+    }
 }
 
 #[cfg(test)]

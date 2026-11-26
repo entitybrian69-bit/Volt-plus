@@ -53,8 +53,8 @@ pub fn meta_cache_path(home: &Path, id: &str) -> PathBuf {
     dir(home).join(format!("id-{}.meta", safe_cache_id(id)))
 }
 
-/// Synchronously loads a cached RGBA icon (and optional cached summary) from disk by `id` or `url`
-/// in <1ms without any network I/O.
+/// Synchronously loads a cached RGBA icon (and optional cached summary) from disk by `url` (if
+/// provided) or `id` in <1ms without any network I/O.
 pub fn load_cached_rgba_by_id(
     home: &Path,
     id: &str,
@@ -65,14 +65,16 @@ pub fn load_cached_rgba_by_id(
         .ok()
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty());
-    let candidate = id_cache_path(home, id, size);
-    let file_path = if candidate.is_file() {
-        Some(candidate)
-    } else if let Some(u) = url {
+    let file_path = if let Some(u) = url {
         cached(home, u, size).or_else(|| cached(home, u, ROW))
     } else {
-        let row_cand = id_cache_path(home, id, ROW);
-        row_cand.is_file().then_some(row_cand)
+        let candidate = id_cache_path(home, id, size);
+        if candidate.is_file() {
+            Some(candidate)
+        } else {
+            let row_cand = id_cache_path(home, id, ROW);
+            row_cand.is_file().then_some(row_cand)
+        }
     }?;
     let decoded = image::open(&file_path).ok()?.into_rgba8();
     let (w, h) = (decoded.width(), decoded.height());
@@ -88,6 +90,18 @@ pub fn fetch_rgba_fast(
     url: &str,
     size: u32,
     summary: Option<&str>,
+) -> Result<(u32, u32, Vec<u8>), String> {
+    fetch_rgba_fast_with_alias(home, id, url, size, summary, true)
+}
+
+/// Same as [`fetch_rgba_fast`], controlling whether `id_cache_path` is updated.
+pub fn fetch_rgba_fast_with_alias(
+    home: &Path,
+    id: &str,
+    url: &str,
+    size: u32,
+    summary: Option<&str>,
+    write_id_alias: bool,
 ) -> Result<(u32, u32, Vec<u8>), String> {
     if let Some(s) = summary.filter(|s| !s.trim().is_empty()) {
         let folder = dir(home);
@@ -162,8 +176,10 @@ pub fn fetch_rgba_fast(
     if scaled.save_with_format(&part, image::ImageFormat::Png).is_ok() {
         let _ = fs::rename(&part, &target);
         let _ = fs::write(validators(&target), tags);
-        let id_target = id_cache_path(home, id, size);
-        let _ = fs::copy(&target, &id_target);
+        if write_id_alias {
+            let id_target = id_cache_path(home, id, size);
+            let _ = fs::copy(&target, &id_target);
+        }
     }
     let rgba_img = scaled.into_rgba8();
     Ok((rgba_img.width(), rgba_img.height(), rgba_img.into_raw()))

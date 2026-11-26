@@ -46,11 +46,25 @@ fn spec_for(url: &str) -> Option<String> {
         .or_else(|| env_for(scheme_of(url).unwrap_or("https")))
 }
 
+/// Orders resolved IPv4 addresses ahead of IPv6 so dual-stack Android networks with broken or
+/// blackholed IPv6 connect cleanly instead of timing out before trying IPv4, while still keeping
+/// IPv6 addresses immediately after for IPv6-only networks.
+pub struct PreferIpv4Resolver;
+
+impl ureq::Resolver for PreferIpv4Resolver {
+    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        use std::net::ToSocketAddrs;
+        let mut addrs: Vec<std::net::SocketAddr> = netloc.to_socket_addrs()?.collect();
+        addrs.sort_by_key(|addr| !addr.is_ipv4());
+        Ok(addrs)
+    }
+}
+
 /// An agent for downloading `url`: through the proxy when one is set, unless `url` is a host that
 /// must be reached directly.
 pub fn agent(url: &str) -> ureq::Agent {
     keep("port-pack", spec_for(url).as_deref(), |proxy| {
-        let builder = ureq::AgentBuilder::new();
+        let builder = ureq::AgentBuilder::new().resolver(PreferIpv4Resolver);
         match proxy {
             Some(proxy) => builder.proxy(proxy).build(),
             None => builder.build(),
