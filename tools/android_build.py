@@ -104,20 +104,23 @@ def main():
     parser.add_argument('--rust-only', action='store_true', help='Build the Rust host without touching shared APK staging')
     parser.add_argument('--release-candidate', action='store_true', help='Build a non-debuggable candidate and audit privacy; this does not authorize redistribution of bundled game resources')
     parser.add_argument('--public', action='store_true', help='Distribution APK: generated tables only; original resources download from Mojang')
+    parser.add_argument('--debug-apk', action='store_true', help='Debuggable side-by-side testing copy of the Volt Plus APK (vp.net.voltplus.debug / Volt Plus Debug)')
     parser.add_argument('--release-version-code', type=int, help='Version code for the standard package (must exceed the installed version)')
     parser.add_argument('--dev-build', help='Public, non-debuggable dev channel label (separate .dev package)')
     parser.add_argument('--dev-version-code', type=int, help='Monotonically increasing dev channel version code')
-    parser.add_argument('--profile', choices=['release', 'fast', 'dev'], help='Public/candidate builds default to release (ThinLTO); local builds default to optimized fast')
+    parser.add_argument('--profile', choices=['release', 'fast', 'dev'], help='Public/candidate builds default to release (ThinLTO); local and debug builds default to optimized fast')
     parser.add_argument('--gradle', type=Path, help='Gradle 8.14 executable (otherwise discover the cached distribution)')
     parser.add_argument('--check', action='store_true', help='Only type-check the Android target')
     parser.add_argument('--clippy', action='store_true', help='Run Android Clippy with warnings denied')
     parser.add_argument('--bootstrap', type=Path, help=argparse.SUPPRESS)  # Old scripts: no longer used.
     args = parser.parse_args()
+    if args.debug_apk and (args.public or args.release_candidate or args.release_version_code is not None):
+        parser.error('--debug-apk cannot be combined with --public, --release-candidate, or --release-version-code')
     if args.release_version_code is not None and (args.dev_build is not None or not args.public or not 1 <= args.release_version_code <= 2100000000):
         parser.error('--release-version-code requires --public, cannot be combined with --dev-build, and must be in 1..2100000000')
     if args.dev_build is not None:
-        if not args.public or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]{0,63}', args.dev_build):
-            parser.error('--dev-build requires --public and a short alphanumeric/dot/dash label')
+        if not (args.public or args.debug_apk) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]{0,63}', args.dev_build):
+            parser.error('--dev-build requires --public or --debug-apk and a short alphanumeric/dot/dash label')
         if args.dev_version_code is None or not 1 <= args.dev_version_code <= 2100000000:
             parser.error('--dev-build requires --dev-version-code in 1..2100000000')
     elif args.dev_version_code is not None:
@@ -130,6 +133,7 @@ def main():
             parser.error('--public cannot reuse a native library from a different build mode')
     if args.release_candidate and args.profile == 'dev':
         parser.error('--release-candidate requires an optimized release or fast profile')
+    public_tables = args.public or args.debug_apk
     suffix = '.exe' if os.name == 'nt' else ''
     for name, value in [('ndk-version', args.ndk_version), ('build-tools-version', args.build_tools_version)]:
         if value is not None and not re.fullmatch(r'\d+(?:\.\d+)+', value):
@@ -159,7 +163,7 @@ def main():
     environment[f'AR_{triple}'] = str(ndk / 'bin' / ('llvm-ar' + suffix))
     environment[f'CARGO_TARGET_{triple.upper()}_LINKER'] = str(clang)
     environment['CARGO_PROFILE_DEV_DEBUG'] = '0'
-    environment['HORIZON_ANDROID_PUBLIC'] = '1' if args.public else '0'
+    environment['HORIZON_ANDROID_PUBLIC'] = '1' if public_tables else '0'
     try:
         environment['HORIZON_ANDROID_BUILD_COMMIT'] = subprocess.check_output(
             ['git', 'rev-parse', '--short=12', 'HEAD'], cwd=ROOT,
@@ -198,7 +202,8 @@ def main():
         if not library.is_file():
             raise FileNotFoundError(library)
         shutil.copyfile(library, staging / name)
-        run([ndk / 'bin' / ('llvm-strip' + suffix), '--strip-unneeded', staging / name])
+        if args.profile != 'dev':
+            run([ndk / 'bin' / ('llvm-strip' + suffix), '--strip-unneeded', staging / name])
         if args.profile == 'release':
             save_crash_symbols(library, staging / name, args.abi,
                                ndk / 'bin' / ('llvm-objcopy' + suffix),
@@ -207,12 +212,12 @@ def main():
     assets.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(ROOT / 'LICENSE', assets / 'LICENSE.txt')
     shutil.copyfile(ROOT / 'THIRD_PARTY_NOTICES.md', assets / 'THIRD_PARTY_NOTICES.md')
-    shutil.copyfile(engine_data(args.public), assets / 'engine-data.zip')
+    shutil.copyfile(engine_data(public_tables), assets / 'engine-data.zip')
     controls = ROOT / '.local/android/bedrock-controls.zip'
-    if not args.public and not controls.is_file():
+    if not public_tables and not controls.is_file():
         import sys
         run([sys.executable, ROOT / 'tools/android_bedrock_controls.py'], cwd=ROOT)
-    if args.public:
+    if public_tables:
         (assets / 'bedrock-controls.zip').unlink(missing_ok=True)
     else:
         shutil.copyfile(controls, assets / 'bedrock-controls.zip')
@@ -227,12 +232,17 @@ def main():
         gradle = candidates[0]
     environment['ANDROID_HOME'] = str(args.sdk)
     variant = 'release' if args.release_candidate else 'debug'
-    dev_properties = (['-PappId=dev.horizon.android.dev', '-PdevBuild=' + args.dev_build,
-                       '-PdevVersionCode=' + str(args.dev_version_code)] if args.dev_build else [])
+    if args.debug_apk:
+        dev_properties = ['-PappId=vp.net.voltplus.debug', '-PappLabel=Volt Plus Debug']
+        if args.dev_build:
+            dev_properties += ['-PdevBuild=' + args.dev_build, '-PdevVersionCode=' + str(args.dev_version_code)]
+    else:
+        dev_properties = (['-PappId=dev.horizon.android.dev', '-PdevBuild=' + args.dev_build,
+                           '-PdevVersionCode=' + str(args.dev_version_code)] if args.dev_build else [])
     release_properties = (['-PreleaseVersionCode=' + str(args.release_version_code)]
                           if args.release_version_code is not None else [])
     run([gradle, '--no-daemon', '-p', ROOT / 'packaging/android', '-Pabi=' + args.abi, '-PminSdk=' + str(min_sdk), *dev_properties, *release_properties, 'assemble' + variant.title()], cwd=ROOT, env=environment)
-    apk = output / ('horizon-android-public.apk' if args.public else 'horizon-android-release.apk' if args.release_candidate else 'horizon-android.apk')
+    apk = output / ('horizon-android-public.apk' if args.public else 'volt-plus-debug.apk' if args.debug_apk else 'horizon-android-release.apk' if args.release_candidate else 'horizon-android.apk')
     shutil.copyfile(ROOT / f'.local/android/gradle-build/outputs/apk/{variant}/HorizonAndroid-{variant}.apk', apk)
     # Invoke the signing JAR directly so Windows does not need a batch-file shell.
     signer = [args.java_home / 'bin' / ('java' + suffix), '-jar', tools / 'lib/apksigner.jar']
@@ -240,6 +250,14 @@ def main():
     if args.release_candidate:
         import sys
         run([sys.executable, ROOT / 'tools/check_android_release.py', apk, '--aapt2', tools / ('aapt2' + suffix), *(['--public'] if args.public else []), *(['--app-id', 'dev.horizon.android.dev'] if args.dev_build else [])], cwd=ROOT)
+    elif args.debug_apk:
+        import sys
+        sys.path.insert(0, str(ROOT / 'tools'))
+        import check_android_release as audit_mod
+        report = audit_mod.audit(apk, tools / ('aapt2' + suffix), public=True, app_id='vp.net.voltplus.debug')
+        non_debug_findings = [f for f in report['findings'] if f.get('kind') != 'debuggable']
+        if not report['debuggable'] or non_debug_findings:
+            raise SystemExit(f'Debug APK failed payload/debuggable verification: {report}')
     print(f'APK: {apk}', flush=True)
 
 

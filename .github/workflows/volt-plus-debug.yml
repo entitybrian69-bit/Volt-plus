@@ -1,0 +1,281 @@
+name: Volt Plus Debug APK
+run-name: Volt Plus Debug · ${{ github.sha }}
+
+on:
+  push:
+    branches: [android, arena/16c8aaea-volt-plus]
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'research-lock.json'
+      - 'packaging/android/**'
+      - 'tools/**'
+      - 'mods/**'
+      - 'third_party/**'
+      - '.github/workflows/volt-plus-debug.yml'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES.md'
+  workflow_dispatch:
+    inputs:
+      all_abis:
+        description: Also build x86 and x86_64
+        type: boolean
+        default: false
+      profile:
+        description: Rust build profile (fast = playable FPS + debuggable APK, dev = unoptimized debug)
+        type: choice
+        options: [fast, dev]
+        default: fast
+
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: volt-plus-debug-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Only trusted branches can use the CI signing identity; never PRs.
+    if: (github.ref == 'refs/heads/android' || github.ref == 'refs/heads/arena/16c8aaea-volt-plus') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: ${{ fromJSON(inputs.all_abis && '["arm64-v8a","armeabi-v7a","x86","x86_64"]' || '["arm64-v8a","armeabi-v7a"]') }}
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/.local/ci-target
+      HORIZON_TELEMETRY_URL: 'off'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - name: Restore the debug APK signing identity
+        env:
+          DEV_KEYSTORE: ${{ secrets.ANDROID_DEV_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          dev = ''.join(os.environ.get('DEV_KEYSTORE', '').split())
+          release = ''.join(os.environ.get('RELEASE_KEYSTORE', '').split())
+          if dev:
+              value, password, alias, key_password = dev, 'android', 'androiddebugkey', 'android'
+          elif release:
+              value = release
+              password = os.environ['RELEASE_KEYSTORE_PASSWORD']
+              alias = os.environ['RELEASE_KEY_ALIAS']
+              key_password = os.environ.get('RELEASE_KEY_PASSWORD', '') or password
+          else:
+              raise SystemExit('Missing ANDROID_DEV_KEYSTORE_BASE64 or ANDROID_KEYSTORE_BASE64 secret')
+          path = Path('.local/android/ci.keystore')
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_bytes(base64.b64decode(value, validate=True))
+          path.chmod(0o600)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+              env.write(f'HORIZON_ANDROID_KEYSTORE={path.resolve()}\n')
+              env.write(f'HORIZON_ANDROID_KEYSTORE_PASSWORD={password}\n')
+              env.write(f'HORIZON_ANDROID_KEY_ALIAS={alias}\n')
+              env.write(f'HORIZON_ANDROID_KEY_PASSWORD={key_password}\n')
+          PY
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          gradle-version: '8.14'
+      - name: Install Android toolchain
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager" ]]; then
+            sdkmanager=$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -n 1)
+          fi
+          test -x "$sdkmanager"
+          "$sdkmanager" --sdk_root="$ANDROID_HOME" 'platforms;android-35' 'build-tools;35.0.0' 'ndk;28.2.13676358'
+          rustup show
+          case "$ABI" in
+            arm64-v8a) target=aarch64-linux-android ;;
+            armeabi-v7a) target=armv7-linux-androideabi ;;
+            x86) target=i686-linux-android ;;
+            x86_64) target=x86_64-linux-android ;;
+          esac
+          rustup target add "$target"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .local/ci-target
+          key: android-debug-${{ runner.os }}-${{ matrix.abi }}-${{ inputs.profile || 'fast' }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'packaging/android/build.gradle') }}-${{ github.sha }}
+          restore-keys: |
+            android-debug-${{ runner.os }}-${{ matrix.abi }}-${{ inputs.profile || 'fast' }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'packaging/android/build.gradle') }}-
+            android-dev-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', 'packaging/android/build.gradle') }}-
+      - name: Check public source and packaging boundaries
+        run: |
+          python3 tools/check_public_tree.py
+          python3 -m unittest discover -s tests -p 'test_android_release_audit.py'
+      - name: Prepare private engine inputs from official downloads
+        run: |
+          set -o pipefail
+          python3 tools/android_prepare.py --java-home "$JAVA_HOME" 2>&1 | tee "$RUNNER_TEMP/volt-debug-build.log"
+      - name: Build Volt Plus Debug testing APK
+        env:
+          ABI: ${{ matrix.abi }}
+          PROFILE: ${{ inputs.profile || 'fast' }}
+        run: |
+          set -o pipefail
+          python3 tools/android_build.py --abi "$ABI" --debug-apk --profile "$PROFILE" \
+            --sdk "$ANDROID_HOME" --java-home "${JAVA_HOME_17_X64:-$JAVA_HOME}" --gradle "$(command -v gradle)" \
+            --ndk-version 28.2.13676358 --build-tools-version 35.0.0 \
+            --dev-build "${GITHUB_RUN_NUMBER}.${GITHUB_SHA:0:12}" \
+            --dev-version-code "$((1000 + GITHUB_RUN_NUMBER))" 2>&1 | tee "$RUNNER_TEMP/volt-debug-build.log"
+      - name: Collect debug APK and public metadata
+        env:
+          ABI: ${{ matrix.abi }}
+          PROFILE: ${{ inputs.profile || 'fast' }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          out = Path('dist')
+          out.mkdir()
+          sha, abi = os.environ['GITHUB_SHA'], os.environ['ABI']
+          name = f'Volt-Plus-Debug.{os.environ["GITHUB_RUN_NUMBER"]}.{sha[:12]}-{abi}.apk'
+          apk = out / name
+          shutil.copyfile(Path('.local/android/apk') / abi / 'volt-plus-debug.apk', apk)
+          (out / 'SHA256SUMS.txt').write_text(f'{hashlib.sha256(apk.read_bytes()).hexdigest()}  {name}\n')
+          for source, dest in [('LICENSE', 'LICENSE.txt'), ('THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_NOTICES.md')]:
+              shutil.copyfile(source, out / dest)
+          (out / 'BUILD.json').write_text(json.dumps({
+              'commit': sha, 'abi': abi, 'profile': os.environ['PROFILE'],
+              'debuggable': True, 'package': 'vp.net.voltplus.debug', 'label': 'Volt Plus Debug',
+              'experimental': True,
+              'run': f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
+          }, indent=2) + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(
+                  f'### Volt Plus Debug APK: {abi}\n\n'
+                  f'- Package: `vp.net.voltplus.debug` (`Volt Plus Debug`, debuggable)\n'
+                  f'- Commit: `{sha}` (`{os.environ["PROFILE"]}` profile)\n\n'
+                  'Installs side-by-side with the main `Volt Plus` app for isolated testing.\n'
+              )
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: volt-plus-debug-${{ github.run_number }}-${{ matrix.abi }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove signing key
+        if: always()
+        run: rm -f .local/android/ci.keystore .local/android/debug.keystore
+
+  universal:
+    needs: build
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          persist-credentials: false
+      - name: Restore the debug APK signing identity
+        env:
+          DEV_KEYSTORE: ${{ secrets.ANDROID_DEV_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          dev = ''.join(os.environ.get('DEV_KEYSTORE', '').split())
+          release = ''.join(os.environ.get('RELEASE_KEYSTORE', '').split())
+          if dev:
+              value, password, alias, key_password = dev, 'android', 'androiddebugkey', 'android'
+          elif release:
+              value = release
+              password = os.environ['RELEASE_KEYSTORE_PASSWORD']
+              alias = os.environ['RELEASE_KEY_ALIAS']
+              key_password = os.environ.get('RELEASE_KEY_PASSWORD', '') or password
+          else:
+              raise SystemExit('Missing ANDROID_DEV_KEYSTORE_BASE64 or ANDROID_KEYSTORE_BASE64 secret')
+          path = Path('.local/android/ci.keystore')
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_bytes(base64.b64decode(value, validate=True))
+          path.chmod(0o600)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as env:
+              env.write(f'HORIZON_ANDROID_KEYSTORE={path.resolve()}\n')
+              env.write(f'HORIZON_ANDROID_KEYSTORE_PASSWORD={password}\n')
+              env.write(f'HORIZON_ANDROID_KEY_ALIAS={alias}\n')
+              env.write(f'HORIZON_ANDROID_KEY_PASSWORD={key_password}\n')
+          PY
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Install Android build tools
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$sdkmanager" ]]; then
+            sdkmanager=$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -n 1)
+          fi
+          test -x "$sdkmanager"
+          "$sdkmanager" --sdk_root="$ANDROID_HOME" 'build-tools;35.0.0'
+      - name: Download both debug architecture builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --pattern 'volt-plus-debug-*-arm*' --dir apks --repo "$GITHUB_REPOSITORY"
+      - name: Merge into universal debug APK and sign
+        run: |
+          arm64=$(find apks -path '*arm64-v8a*' -name '*.apk' | head -n 1)
+          armv7=$(find apks -path '*armeabi-v7a*' -name '*.apk' | head -n 1)
+          test -n "$arm64" && test -n "$armv7"
+          mkdir -p dist
+          python3 tools/universal_apk.py --arm64 "$arm64" --armv7 "$armv7" \
+            --out "dist/Volt-Plus-Debug.${GITHUB_RUN_NUMBER}.${GITHUB_SHA:0:12}-universal.apk" \
+            --build-tools "$ANDROID_HOME/build-tools/35.0.0" --sign
+      - name: Checksums, notices and summary
+        env:
+          PROFILE: ${{ inputs.profile || 'fast' }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+          out = Path('dist')
+          apk = next(out.glob('*universal.apk'))
+          digest = hashlib.sha256(apk.read_bytes()).hexdigest()
+          (out / 'SHA256SUMS.txt').write_text(f'{digest}  {apk.name}\n')
+          for source, dest in [('LICENSE', 'LICENSE.txt'), ('THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_NOTICES.md')]:
+              shutil.copyfile(source, out / dest)
+          (out / 'BUILD.json').write_text(json.dumps({
+              'commit': os.environ['GITHUB_SHA'], 'abi': 'universal', 'profile': os.environ['PROFILE'],
+              'debuggable': True, 'package': 'vp.net.voltplus.debug', 'label': 'Volt Plus Debug',
+              'experimental': True, 'sha256': digest,
+              'run': f'https://github.com/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
+          }, indent=2) + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(f'### Volt Plus Debug APK: universal\n\n`{apk.name}` — {apk.stat().st_size:,} bytes\n\nSHA-256: `{digest}`\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: volt-plus-debug-${{ github.run_number }}-universal
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove signing key
+        if: always()
+        run: rm -f .local/android/ci.keystore .local/android/debug.keystore

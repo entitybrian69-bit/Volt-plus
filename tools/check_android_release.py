@@ -112,7 +112,7 @@ def main():
     parser.add_argument('--aapt2', required=True, type=Path)
     parser.add_argument('--report', type=Path)
     parser.add_argument('--public', action='store_true')
-    parser.add_argument('--app-id', choices=['vp.net.voltplus', 'com.goydevv.horizon', 'com.goydevv.horizon.dev', 'dev.horizon.android', 'dev.horizon.android.dev'], default='vp.net.voltplus')
+    parser.add_argument('--app-id', choices=['vp.net.voltplus', 'vp.net.voltplus.debug', 'com.goydevv.horizon', 'com.goydevv.horizon.dev', 'dev.horizon.android', 'dev.horizon.android.dev'], default='vp.net.voltplus')
     args = parser.parse_args()
     report = audit(args.apk, args.aapt2, args.public, args.app_id)
     if args.report:

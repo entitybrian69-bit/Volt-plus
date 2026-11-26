@@ -13,10 +13,11 @@ android {
     compileSdk 35
     defaultConfig {
         applicationId providers.gradleProperty('appId').getOrElse('vp.net.voltplus')
+        manifestPlaceholders = [appLabel: providers.gradleProperty('appLabel').getOrElse('Volt Plus')]
         minSdk providers.gradleProperty('minSdk').getOrElse('26').toInteger()
         targetSdk 35
         versionCode providers.gradleProperty('releaseVersionCode').orElse(providers.gradleProperty('devVersionCode')).getOrElse('30').toInteger()
-        versionName '1.0.1' + (providers.gradleProperty('devVersionCode').isPresent() ? '-dev.' + providers.gradleProperty('devBuild').get() : '')
+        versionName '1.0.1' + (providers.gradleProperty('devVersionCode').isPresent() ? (providers.gradleProperty('appId').getOrNull()?.endsWith('.debug') ? '-debug.' : '-dev.') + providers.gradleProperty('devBuild').get() : '')
         ndk { abiFilters providers.gradleProperty('abi').get() }
     }
     signingConfigs {
@@ -37,8 +38,12 @@ android {
     }
     buildTypes {
         debug {
-            signingConfig signingConfigs.development
-            versionNameSuffix '-dev.' + providers.gradleProperty('devBuild').getOrElse('local')
+            debuggable true
+            jniDebuggable true
+            signingConfig hasReleaseKey ? signingConfigs.releaseKey : signingConfigs.development
+            if (!providers.gradleProperty('devVersionCode').isPresent()) {
+                versionNameSuffix '-debug.' + providers.gradleProperty('devBuild').getOrElse('local')
+            }
             if (providers.gradleProperty('useDevSuffix').isPresent()) { applicationIdSuffix '.dev' }
         }
         release {
