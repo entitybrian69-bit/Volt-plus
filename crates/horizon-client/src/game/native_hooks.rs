@@ -11143,8 +11143,10 @@ impl Game<'_> {
         #[cfg(feature = "mods")]
         let wasm_running = |id: &str| -> bool {
             self.mods.mods.entries().iter().any(|e| {
-                e.run.is_some()
-                    && e.manifest.as_ref().is_some_and(|m| m.id == id)
+                matches!(
+                    e.status,
+                    horizon_mods::Status::Running | horizon_mods::Status::Elsewhere
+                ) && e.manifest.as_ref().is_some_and(|m| m.id == id)
             })
         };
         #[cfg(not(feature = "mods"))]
