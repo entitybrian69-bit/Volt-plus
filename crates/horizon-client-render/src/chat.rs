@@ -265,6 +265,11 @@ pub struct Chat {
     /// `ChatComponent.messageDeletionQueue`: deletions of messages still
     /// too new to replace, with the tick from which they may be.
     deletions: Vec<(Box<Signature>, u64)>,
+    /// Volt+ Extras Chat Tweaks (timestamps, compact duplicates, keep history).
+    pub volt_chat: crate::volt_extras_cfg::ChatTweaksConfig,
+    last_plain: String,
+    last_repeat: u32,
+    last_line_count: usize,
 }
 impl Chat {
     pub fn lines_per_page(&self, focused: bool) -> usize {
@@ -355,7 +360,7 @@ impl Chat {
             focused,
         );
     }
-    fn push_message(&mut self, font: &crate::font::Font, message: Message, focused: bool) {
+    fn push_message(&mut self, font: &crate::font::Font, mut message: Message, focused: bool) {
         if !self.abilities.shows(message.source) {
             return;
         }
@@ -365,9 +370,61 @@ impl Chat {
         if self.log {
             println!("[CHAT] {plain}");
         }
+        let max_msgs = if self.volt_chat.enabled && self.volt_chat.keep_history {
+            250
+        } else {
+            100
+        };
+        let mut compacted = false;
+        if self.volt_chat.enabled
+            && self.volt_chat.compact_duplicates
+            && !plain.is_empty()
+            && !self.messages.is_empty()
+            && plain == self.last_plain
+        {
+            self.last_repeat += 1;
+            let drop_n = self.last_line_count.min(self.lines.len());
+            if drop_n > 0 {
+                self.lines.drain(..drop_n);
+            }
+            self.messages.remove(0);
+            compacted = true;
+        } else {
+            self.last_plain = plain;
+            self.last_repeat = 1;
+        }
+        if self.volt_chat.enabled && self.volt_chat.timestamps {
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let day_secs = secs % 86400;
+            let h24 = (day_secs / 3600) as u32;
+            let m = ((day_secs % 3600) / 60) as u32;
+            let stamp = if self.volt_chat.use_24h {
+                format!("[{h24:02}:{m:02}] ")
+            } else {
+                let h12 = match h24 % 12 {
+                    0 => 12,
+                    v => v,
+                };
+                let ampm = if h24 < 12 { "AM" } else { "PM" };
+                format!("[{h12:02}:{m:02} {ampm}] ")
+            };
+            message.content = Text::empty()
+                .append(Text::literal(&stamp).with_color(text::GRAY))
+                .append(message.content);
+        }
+        if compacted {
+            let suffix = format!(" [x{}]", self.last_repeat);
+            message.content = message
+                .content
+                .append(Text::literal(&suffix).with_color(text::GRAY));
+        }
+        let before_lines = self.lines.len();
         self.add_lines(font, &message, focused);
+        self.last_line_count = self.lines.len().saturating_sub(before_lines).max(1);
         self.messages.insert(0, message);
-        self.messages.truncate(100);
+        self.messages.truncate(max_msgs);
         self.received += 1;
     }
     fn add_lines(&mut self, font: &crate::font::Font, message: &Message, focused: bool) {
@@ -393,7 +450,12 @@ impl Chat {
                 },
             );
         }
-        self.lines.truncate(100);
+        let max_lines = if self.volt_chat.enabled && self.volt_chat.keep_history {
+            250
+        } else {
+            100
+        };
+        self.lines.truncate(max_lines);
     }
     /// What a message's lines wrap (ComponentRenderUtils.wrapComponents):
     /// without Chat Colors its `§` codes are stripped (stripColor); with

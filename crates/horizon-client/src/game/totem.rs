@@ -87,6 +87,7 @@ impl Game<'_> {
                 .entity_event(host.host_entity, TOTEM_EVENT, body.at);
         }
         self.totem_event(body, true);
+        self.volt_on_totem_pop(0, true);
     }
     /// Entity event 35 from a server, for this client's own player or an
     /// entity it draws.
@@ -107,6 +108,7 @@ impl Game<'_> {
         };
         if let Some(body) = body {
             self.totem_event(body, own);
+            self.volt_on_totem_pop(id, own);
         }
     }
     /// `ClientPacketListener.handleEntityEvent` 35: the totem particles (a

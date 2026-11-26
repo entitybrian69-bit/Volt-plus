@@ -6863,6 +6863,7 @@ impl Game<'_> {
         self.tick_debug_keys()?;
         self.tick_debug_charts();
         self.tick_tutorial();
+        self.volt_extras_tick();
         if self.screen == Screen::Creative {
             self.refresh_creative_tabs();
             // CreativeModeInventoryScreen.containerTick: a player without
@@ -7292,6 +7293,7 @@ impl Game<'_> {
                 self.death_focus = None;
                 self.capture(false);
                 self.ui.death_time = 0;
+                self.volt_on_player_death();
             }
         } else if dead {
             // LivingEntity.tickDeath: 20 ticks after dying the player is
@@ -11304,6 +11306,12 @@ impl Game<'_> {
             None => horizon_client::mobs::Damage::of(horizon_client::mobs::DamageKind::Generic),
         };
         let landed = self.hurt_by_player(index, amount, source);
+        if landed {
+            let m = &self.mobs[index];
+            let mid = m.id;
+            let mpos = [m.position.x, m.position.y + m.kind.eye_height, m.position.z];
+            self.volt_on_attack_hit(Some(mid), Some(mpos));
+        }
         if landed && old_health > 0.0 && !self.mobs[index].alive() {
             self.native_kill_event(index);
         }
@@ -12247,8 +12255,6 @@ impl Game<'_> {
             title.skip_multiplayer_warning = self.settings.file.bool("skipMultiplayerWarning");
         }
         self.capture(false);
-        #[cfg(target_os = "android")]
-        horizon_client::android_runtime::return_to_launcher();
         Ok(())
     }
     /// Let go of every entity of the level (saved first): the next world

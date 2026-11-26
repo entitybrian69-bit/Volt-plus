@@ -2702,12 +2702,15 @@ impl Game<'_> {
         self.native_tooltip_component(stack, &mut component);
         let component = tooltip_component_size(component);
         let appleskin_comp = self.appleskin_tooltip_size(stack);
+        let shulker_comp = self.shulker_peek_tooltip_size(stack);
         let extra = bundle_extra
             + component.map_or(0.0, |size| size[1] + 2.0)
-            + appleskin_comp.map_or(0.0, |size| size[1] + 2.0);
+            + appleskin_comp.map_or(0.0, |size| size[1] + 2.0)
+            + shulker_comp.map_or(0.0, |size| size[1] + 2.0);
         let min_width = (if probe.is_some() { 96.0_f32 } else { 0.0 })
             .max(component.map_or(0.0, |size| size[0]))
-            .max(appleskin_comp.map_or(0.0, |size| size[0]));
+            .max(appleskin_comp.map_or(0.0, |size| size[0]))
+            .max(shulker_comp.map_or(0.0, |size| size[0]));
         let atlas = &self.gui.atlas;
         let (x, y, w, h) = Self::tooltip_geometry(
             atlas,
@@ -2739,6 +2742,15 @@ impl Game<'_> {
                 stack,
                 batch,
                 [x, y + text_h + bundle_extra + comp_extra + 2.0],
+                size,
+            );
+        }
+        let apple_extra = appleskin_comp.map_or(0.0, |size| size[1] + 2.0);
+        if let Some(size) = shulker_comp {
+            self.shulker_peek_tooltip_draw(
+                stack,
+                batch,
+                [x, y + text_h + bundle_extra + comp_extra + apple_extra + 2.0],
                 size,
             );
         }

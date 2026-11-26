@@ -30,6 +30,7 @@ pub mod dynamic_light;
 pub mod effects;
 pub mod environment;
 pub mod extras;
+pub mod volt_extras_cfg;
 pub mod fast_hash;
 pub mod file_lock;
 pub mod fog;

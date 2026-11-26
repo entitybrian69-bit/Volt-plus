@@ -48,6 +48,9 @@ impl SampleLogger {
     pub fn reset(&mut self) {
         self.samples.clear();
     }
+    pub fn latest(&self) -> Option<i64> {
+        self.samples.back().map(|s| s[0])
+    }
     fn get(&self, index: usize, dimension: usize) -> i64 {
         self.samples[index][dimension]
     }

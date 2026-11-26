@@ -246,6 +246,14 @@ impl Game<'_> {
             self.view.detached = true;
             return Some((pos, yaw, pitch));
         }
+        if self.extras.volt.freecam_active {
+            self.view.detached = true;
+            return Some((
+                glam::DVec3::from_array(self.extras.volt.freecam_pos),
+                self.extras.volt.freecam_yaw,
+                self.extras.volt.freecam_pitch,
+            ));
+        }
         // Minecraft.cameraEntity: a server's spectator camera on a mob or
         // another player.
         let (entity, descending) = match self.camera_mob() {
@@ -292,6 +300,13 @@ impl Game<'_> {
             (!hit.miss).then_some([hit.hit.location.x, hit.hit.location.y, hit.hit.location.z])
         });
         self.view = view;
+        if self.extras.volt.freelook_active {
+            return Some((
+                glam::DVec3::from_array(view.position),
+                self.extras.volt.freelook_yaw,
+                self.extras.volt.freelook_pitch,
+            ));
+        }
         Some((
             glam::DVec3::from_array(view.position),
             view.y_rot,

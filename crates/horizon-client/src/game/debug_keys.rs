@@ -896,7 +896,11 @@ impl Game<'_> {
         let mut g = Gizmos::default();
         self.bounding_box_gizmos(camera, &mut g);
         self.debug_renderer_gizmos(&mut g);
-        if self.debug_entry("chunk_borders")
+        self.volt_extras_gizmos(alpha, camera, &mut g);
+        let volt_ch = &self.settings.extras.volt.chunk_hitboxes;
+        let show_chunks = self.debug_entry("chunk_borders")
+            || (volt_ch.enabled && volt_ch.chunk_borders && !(volt_ch.hide_in_f1 && self.ui.hide_gui));
+        if show_chunks
             && let Some(p) = &self.player
         {
             let block = [
@@ -907,7 +911,9 @@ impl Game<'_> {
             let min_y = self.world.bottom_y();
             g.chunk_borders(block, min_y, min_y + self.world.layout().height() - 1);
         }
-        if !self.debug_entry("entity_hitboxes") {
+        let show_hitboxes = self.debug_entry("entity_hitboxes")
+            || (volt_ch.enabled && volt_ch.entity_hitboxes && !(volt_ch.hide_in_f1 && self.ui.hide_gui));
+        if !show_hitboxes {
             return g;
         }
         let lerp = |a: f64, b: f64| a + f64::from(alpha) * (b - a);

@@ -317,11 +317,19 @@ impl Game<'_> {
     pub(super) fn open_sign_editor(&mut self, pos: (i32, i32, i32), front: bool) {
         // Minecraft.setScreen: the editor already open is removed first.
         self.close_sign_editor();
-        let lines = match self.world.block_entities.get(&pos) {
+        let mut lines = match self.world.block_entities.get(&pos) {
             Some(BlockEntity::Sign(sign)) if front => sign.front.lines.clone(),
             Some(BlockEntity::Sign(sign)) => sign.back.lines.clone(),
             _ => Default::default(),
         };
+        let scfg = &self.settings.extras.volt.sign_stand_helper;
+        if scfg.enabled
+            && scfg.quick_paste_button
+            && lines.iter().all(|l| l.is_empty())
+            && self.extras.volt.last_sign_lines.iter().any(|l| !l.is_empty())
+        {
+            lines = self.extras.volt.last_sign_lines.clone();
+        }
         self.sign_edit = Some(SignEditor {
             pos,
             front,
@@ -363,6 +371,12 @@ impl Game<'_> {
     /// and sends it to its guests (`sendBlockUpdated`).
     pub(super) fn close_sign_editor(&mut self) {
         if let Some(edit) = self.sign_edit.take() {
+            if self.settings.extras.volt.sign_stand_helper.enabled
+                && self.settings.extras.volt.sign_stand_helper.auto_copy_last_sign
+                && edit.lines.iter().any(|l| !l.is_empty())
+            {
+                self.extras.volt.last_sign_lines = edit.lines.clone();
+            }
             #[cfg(target_os = "android")]
             crate::platform::hide();
             if self.remote.is_some() {

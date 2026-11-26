@@ -325,15 +325,30 @@ impl Game<'_> {
     }
 
     pub(super) fn replay_sky_overrides(&self, day_time: i64, rain: f32, thunder: f32) -> (i64, f32, f32) {
-        let Some(r) = self.replay.as_ref() else {
+        if let Some(r) = self.replay.as_ref() {
+            let t = r.time_override.unwrap_or(day_time);
+            let (rn, th) = match r.weather_override {
+                None => (rain, thunder),
+                Some(WeatherOverride::Clear) => (0.0, 0.0),
+                Some(WeatherOverride::Rain) => (1.0, 0.0),
+                Some(WeatherOverride::Thunder) => (1.0, 1.0),
+            };
+            return (t, rn, th);
+        }
+        let cs = &self.settings.extras.volt.clear_skies;
+        if !cs.enabled {
             return (day_time, rain, thunder);
+        }
+        let t = match cs.time_override {
+            horizon_client::extras::TimeMood::Default => day_time,
+            horizon_client::extras::TimeMood::Noon => 6000,
+            horizon_client::extras::TimeMood::Sunset => 12500,
+            horizon_client::extras::TimeMood::Midnight => 18000,
         };
-        let t = r.time_override.unwrap_or(day_time);
-        let (rn, th) = match r.weather_override {
-            None => (rain, thunder),
-            Some(WeatherOverride::Clear) => (0.0, 0.0),
-            Some(WeatherOverride::Rain) => (1.0, 0.0),
-            Some(WeatherOverride::Thunder) => (1.0, 1.0),
+        let (rn, th) = if cs.hide_rain_snow {
+            (0.0, 0.0)
+        } else {
+            (rain, thunder)
         };
         (t, rn, th)
     }

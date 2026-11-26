@@ -1181,11 +1181,8 @@ impl Game<'_> {
         if single_player && reason.is_none() {
             self.title = Some(title);
             self.capture(false);
-            #[cfg(target_os = "android")]
-            horizon_client::android_runtime::return_to_launcher();
             return Ok(());
         }
-        let explicit_disconnect = reason.is_none();
         title.mode = horizon_client::title::Mode::Multiplayer(match reason {
             Some(reason) => horizon_client::multiplayer::Screen::Disconnected {
                 reason,
@@ -1195,10 +1192,6 @@ impl Game<'_> {
         });
         self.title = Some(title);
         self.capture(false);
-        #[cfg(target_os = "android")]
-        if explicit_disconnect {
-            horizon_client::android_runtime::return_to_launcher();
-        }
         Ok(())
     }
     /// `Hud.onDisconnected`, from `Minecraft.disconnect` and `clearClientLevel`
@@ -4320,6 +4313,7 @@ impl Game<'_> {
                     self.ui.death_time = 0;
                     self.ui.death_confirm = None;
                     self.capture(false);
+                    self.volt_on_player_death();
                 }
             }
             C::PlayerCombatKill(p) => {
@@ -4341,6 +4335,7 @@ impl Game<'_> {
                         self.ui.death_time = 0;
                         self.ui.death_confirm = None;
                         self.capture(false);
+                        self.volt_on_player_death();
                     } else {
                         self.respawn_player()?;
                     }
@@ -5853,6 +5848,8 @@ impl Game<'_> {
         }
         self.tick_remote_level()?;
         // Client mods tick on any server, single player's own included.
+        self.crystal_opt_tick();
+        self.tick_shield_status();
         self.tick_mods();
         self.native_net.to_server = 0;
         self.native_tick();
@@ -8524,10 +8521,15 @@ impl Game<'_> {
         } else if let Some((i, distance)) = self.mob_hit()
             && self.before_block(distance)
         {
-            self.send(S::Attack(play::Attack {
-                id: self.mobs[i].id as i32,
-            }));
+            let mid = self.mobs[i].id;
+            let mpos = [
+                self.mobs[i].position.x,
+                self.mobs[i].position.y + self.mobs[i].kind.eye_height,
+                self.mobs[i].position.z,
+            ];
+            self.send(S::Attack(play::Attack { id: mid as i32 }));
             self.remote_player_attack(i);
+            self.volt_on_attack_hit(Some(mid), Some(mpos));
             self.reset_attack_strength();
         } else if !self.entity_targeted()
             && let Some(hit) = self.pick()

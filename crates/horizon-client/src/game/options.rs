@@ -532,8 +532,13 @@ impl Game<'_> {
         self.apply_fullscreen();
         let s = &self.settings;
         if let Some(r) = self.renderer.as_mut() {
-            r.gamma = s.gamma;
-            r.fullbright = s.extras.fullbright;
+            r.gamma = if s.extras.volt.fullbright.enabled {
+                s.gamma
+                    .max((s.extras.volt.fullbright.gamma_pct as f32 / 100.0).clamp(1.0, 15.0))
+            } else {
+                s.gamma
+            };
+            r.fullbright = s.extras.fullbright || s.extras.volt.fullbright.enabled;
             r.improved_transparency = s.improved_transparency;
             let effective_present = if !s.vsync
                 && s.horizon.present_mode == horizon_client::graphics::PresentMode::Fifo

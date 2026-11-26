@@ -140,6 +140,20 @@ impl Game<'_> {
         if !self.settings.horizon.fog {
             horizon_client::fog::clear_distance_fog(&mut fog, &input);
         }
+        let skies = &self.settings.extras.volt.clear_skies;
+        if skies.enabled {
+            if skies.clear_water_fog && fog_type == FogType::Water {
+                (fog.environmental_start, fog.environmental_end) = (64.0, 256.0);
+                (fog.render_distance_start, fog.render_distance_end) = (64.0, 256.0);
+            }
+            if skies.clear_nether_fog && self.dim == Dim::Nether && fog_type == FogType::Atmospheric {
+                (fog.environmental_start, fog.environmental_end) = (1e9, 2e9);
+                (fog.render_distance_start, fog.render_distance_end) = (1e9, 2e9);
+            }
+            if skies.clear_terrain_fog {
+                horizon_client::fog::clear_distance_fog(&mut fog, &input);
+            }
+        }
         fog
     }
     /// `FogRenderer.computeFogColor`'s night vision brightenFactor:
@@ -266,6 +280,10 @@ impl Game<'_> {
         // Hud.extractCameraOverlays; the spyglass scope (and its easing) is
         // drawn on the HUD by draw_spyglass.
         let fx = &self.screen_fx;
+        let pvp = &self.settings.extras.volt.pvp_visuals;
+        let hide_pumpkin = pvp.enabled && pvp.hide_pumpkin;
+        let hide_portal = pvp.enabled && pvp.hide_portal_overlay;
+        let hide_fire = pvp.enabled && pvp.low_fire_pct == 0;
         let overlays = hud_overlays::CameraOverlays {
             vignette: self.settings.vignette.then_some((
                 fx.vignette_brightness,
@@ -275,7 +293,7 @@ impl Game<'_> {
             scoping: self.scoping(),
             game_time_delta: 0.0,
             equipment: match &self.armor[0] {
-                Some(stack) if &*stack.item == "minecraft:carved_pumpkin" => {
+                Some(stack) if !hide_pumpkin && &*stack.item == "minecraft:carved_pumpkin" => {
                     vec!["misc/pumpkinblur".to_owned()]
                 }
                 _ => Vec::new(),
@@ -283,7 +301,11 @@ impl Game<'_> {
             ticks_frozen: p.ticks_frozen,
             percent_frozen: p.percent_frozen(),
             partial,
-            portal: [fx.o_portal, fx.portal],
+            portal: if hide_portal {
+                [0.0, 0.0]
+            } else {
+                [fx.o_portal, fx.portal]
+            },
             nausea: self.nausea_blend(partial),
             screen_effect_scale: self.screen_effect_scale(),
         };
@@ -297,7 +319,8 @@ impl Game<'_> {
             partial,
             block_overlay,
             water,
-            on_fire: self.camera_type.first_person()
+            on_fire: !hide_fire
+                && self.camera_type.first_person()
                 && !self.spectator()
                 && self.player.as_ref().is_some_and(|p| p.fire_ticks > 0),
             gui_overlays: &gui_overlays,

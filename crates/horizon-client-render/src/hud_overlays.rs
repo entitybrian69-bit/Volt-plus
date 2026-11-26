@@ -643,6 +643,19 @@ pub fn sidebar(
     background: u32,
     header: u32,
 ) -> Vec<GuiDraw> {
+    sidebar_with_options(w, h, board, objective, font, background, header, false)
+}
+
+pub fn sidebar_with_options(
+    w: i32,
+    h: i32,
+    board: &crate::scoreboard::Scoreboard,
+    objective: &crate::scoreboard::Objective,
+    font: &Font,
+    background: u32,
+    header: u32,
+    hide_numbers: bool,
+) -> Vec<GuiDraw> {
     use crate::scoreboard::NumberFormat;
     let format = objective.format_or_default(NumberFormat::sidebar_default());
     let mut entries: Vec<_> = board
@@ -667,9 +680,13 @@ pub fn sidebar(
                 None => e.owner_name(),
             }
             .resolve_legacy();
-            let score = e.format_value(&format).resolve_legacy();
-            let score_width = width(font, &score);
-            (name, score, score_width)
+            if hide_numbers {
+                (name, Text::empty(), 0)
+            } else {
+                let score = e.format_value(&format).resolve_legacy();
+                let score_width = width(font, &score);
+                (name, score, score_width)
+            }
         })
         .collect();
     let title = objective.display_text().resolve_legacy();

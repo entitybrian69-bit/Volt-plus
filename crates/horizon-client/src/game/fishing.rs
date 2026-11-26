@@ -38,7 +38,7 @@ pub(super) struct Hook {
     state: State,
     life: i32,
     on_ground: bool,
-    nibble: i32,
+    pub(super) nibble: i32,
     time_until_lured: i32,
     time_until_hooked: i32,
     fish_angle: f32,

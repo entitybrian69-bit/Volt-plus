@@ -714,11 +714,16 @@ impl Game<'_> {
 
     /// `Hud.extractScoreboardSidebar` / `displayScoreboardSidebar`.
     pub(super) fn draw_scoreboard(&self, batch: &mut HudBatch) {
+        let sb_cfg = &self.settings.extras.volt.scoreboard_tweaks;
+        if sb_cfg.enabled && sb_cfg.hide_scoreboard {
+            return;
+        }
         let board = &self.score.board;
         let Some(objective) = self.sidebar_objective() else {
             return;
         };
-        let draws = hud_overlays::sidebar(
+        let hide_nums = sb_cfg.enabled && sb_cfg.hide_numbers;
+        let draws = hud_overlays::sidebar_with_options(
             batch.width as i32,
             batch.height as i32,
             board,
@@ -726,6 +731,7 @@ impl Game<'_> {
             &self.gui.atlas.font,
             self.settings.text_background(0.3),
             self.settings.text_background(0.4),
+            hide_nums,
         );
         hud_layout::paint(batch, &self.gui.atlas, &draws);
     }

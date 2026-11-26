@@ -144,10 +144,23 @@ impl Game<'_> {
         let Some(p) = self.player.as_ref() else {
             return glam::Mat4::IDENTITY;
         };
+        let pvp = &self.settings.extras.volt.pvp_visuals;
+        let mut tilt = self.settings.file.double("damageTiltStrength");
+        let mut view_bobbing = self.settings.view_bobbing;
+        let mut hurt_time = p.health.hurt_animation_time as f32 - partial;
+        if pvp.enabled {
+            tilt *= f64::from(pvp.hurt_cam_pct) / 100.0;
+            if pvp.hurt_cam_pct == 0 {
+                hurt_time = 0.0;
+            }
+            if pvp.reduced_bobbing {
+                view_bobbing = false;
+            }
+        }
         let hurt = &p.health.hurt;
         let state = BobState {
             living: Some(HurtBob {
-                hurt_time: p.health.hurt_animation_time as f32 - partial,
+                hurt_time,
                 hurt_duration: hurt.hurt_duration,
                 hurt_dir: p.health.hurt_dir,
                 death_time: self.death_time().map(|t| t as f32 + partial),
@@ -157,8 +170,7 @@ impl Game<'_> {
                 self.avatar.interpolated_bob(partial),
             )),
         };
-        let tilt = self.settings.file.double("damageTiltStrength");
-        glam::Mat4::from_cols_array(&bob_matrix(&state, tilt, self.settings.view_bobbing).m)
+        glam::Mat4::from_cols_array(&bob_matrix(&state, tilt, view_bobbing).m)
             * self.native_shake_matrix(partial)
     }
     /// `AbstractClientPlayer.tick` and `aiStep` (`ClientAvatarState.tick`,

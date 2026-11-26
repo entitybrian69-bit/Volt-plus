@@ -1368,6 +1368,11 @@ impl Game<'_> {
                 InGameMenuAction::UpdateVoltExtras(volt) => {
                     self.settings.extras.volt = volt;
                     self.settings.extras.save(std::path::Path::new("."));
+                    self.apply_ui_settings();
+                }
+                InGameMenuAction::VoltQuickAction(act) => {
+                    self.volt_extras_quick_action(act);
+                    self.settings.extras.save(std::path::Path::new("."));
                 }
             }
             return Ok(true);

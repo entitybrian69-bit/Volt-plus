@@ -23,7 +23,9 @@ impl Game<'_> {
             _ => (false, false),
         };
         let at = camera.to_array().map(|v| v.floor() as i32);
-        self.entity_culler = (self.settings.horizon.entity_culling
+        let cull_on = self.settings.horizon.entity_culling
+            || self.settings.extras.volt.entity_culling.enabled;
+        self.entity_culler = (cull_on
             // Packs can replace an opaque block's model or texture.
             && self.settings.resource_packs.iter().all(|id| id == "vanilla")
             && self.player.is_some()

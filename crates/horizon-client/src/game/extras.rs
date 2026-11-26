@@ -26,6 +26,8 @@ pub(super) struct ExtrasState {
     minimap_dim: Option<Dim>,
     /// Auto-reconnect's attempts at the current server.
     reconnect: Tracker,
+    /// Runtime state for all 52 built-in Volt+ Extras mods.
+    pub(super) volt: super::volt_extras::VoltRuntimeState,
 }
 /// CPU time the minimap's tiles may take per frame.
 const MINIMAP_BUDGET: Duration = Duration::from_micros(300);
@@ -221,6 +223,16 @@ impl Game<'_> {
     /// A mod's zoom in effect (`render.set-zoom`): (factor, smooth, turning
     /// scale); none is 1.
     fn zoom_now(&self) -> (f32, bool, f64) {
+        let vz = &self.settings.extras.volt.zoom;
+        if vz.enabled && vz.active {
+            let factor = f32::from(vz.zoom_level.clamp(2, 10));
+            let turn = if vz.scale_sensitivity {
+                1.0 / f64::from(factor)
+            } else {
+                1.0
+            };
+            return (factor, vz.smooth, turn);
+        }
         if let Some(z) = self.native_zoom_now() {
             return (z.factor, z.smooth, f64::from(z.turn));
         }

@@ -190,8 +190,14 @@ impl BlockEntities {
         self.pending.remove(pos);
     }
 
+    pub fn get(&self, pos: &Pos) -> Option<&BlockEntity> {
+        self.map.get(pos)
+    }
     pub fn get_mut(&mut self, pos: &Pos) -> Option<&mut BlockEntity> {
         self.map.get_mut(pos)
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&Pos, &BlockEntity)> {
+        self.map.iter()
     }
     pub fn iter_mut(&mut self) -> impl Iterator<Item = (&Pos, &mut BlockEntity)> {
         self.map.iter_mut()

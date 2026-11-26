@@ -244,6 +244,8 @@ pub struct Audio {
     pub stopped: std::collections::BTreeMap<String, u32>,
     /// The volume sliders' `SoundPreviewHandler`.
     preview: crate::sound_preview::SoundPreview,
+    /// Selective sound muffling settings (Volt+ Extras Extreme Sound Muffler).
+    pub muffle: crate::volt_extras_cfg::SoundMufflerConfig,
     /// `SoundEngine.lastSeenDevices`: the system default output last seen.
     #[cfg(feature = "audio")]
     default_seen: Option<String>,
@@ -941,6 +943,7 @@ impl Audio {
             heard: Default::default(),
             stopped: Default::default(),
             preview: Default::default(),
+            muffle: Default::default(),
             #[cfg(feature = "audio")]
             default_seen: None,
             #[cfg(feature = "audio")]
@@ -1297,6 +1300,25 @@ impl Audio {
             (distance_sqr.sqrt() / 40.0 * 20.0) as i32,
         );
     }
+    fn muffle_scale(&self, event: &str) -> f32 {
+        let cfg = &self.muffle;
+        if !cfg.enabled {
+            return 1.0;
+        }
+        let muted = (cfg.mute_portals
+            && (event.contains("block.portal") || event.contains("block.end_portal")))
+            || (cfg.mute_ghasts && event.contains("entity.ghast"))
+            || (cfg.mute_weather
+                && (event.contains("weather.rain") || event.contains("entity.lightning")))
+            || (cfg.mute_pistons && event.contains("block.piston"))
+            || (cfg.mute_minecarts && event.contains("entity.minecart"))
+            || (cfg.mute_villagers && event.contains("entity.villager"));
+        if muted {
+            (100 - cfg.muffle_pct.min(100)) as f32 / 100.0
+        } else {
+            1.0
+        }
+    }
     /// `play` at a world position, starting `ticks` sound-engine ticks (20 a
     /// second) from now: `SoundEngine.playDelayed`.
     pub fn play_after(&mut self, event: &str, at: [f64; 3], volume: f32, pitch: f32, ticks: i32) {
@@ -1307,11 +1329,21 @@ impl Audio {
         *self.heard.entry(event.to_owned()).or_default() += 1;
         self.sync_volumes();
         let event = crate::sound_events::normalize(event);
+        let scale = self.muffle_scale(&event);
+        if scale <= 0.001 {
+            return;
+        }
         let source = self
             .source_override
             .unwrap_or_else(|| crate::settings::sound_source(&event));
-        let instance =
-            SoundInstance::at(&event, source, volume, pitch, LegacyRandom::new(seed), at);
+        let instance = SoundInstance::at(
+            &event,
+            source,
+            volume * scale,
+            pitch,
+            LegacyRandom::new(seed),
+            at,
+        );
         let id = self.engine.add(instance, false);
         self.engine.play_delayed(id, ticks);
     }
@@ -1362,6 +1394,11 @@ impl Audio {
         }
         self.sync_volumes();
         let event = crate::sound_events::normalize(event);
+        let scale = self.muffle_scale(&event);
+        if scale <= 0.001 {
+            return;
+        }
+        let volume = volume * scale;
         let source = self
             .source_override
             .unwrap_or_else(|| crate::settings::sound_source(&event));

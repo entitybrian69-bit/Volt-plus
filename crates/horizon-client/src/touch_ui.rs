@@ -68,10 +68,12 @@ pub struct TouchUi {
     pub music_search_tab: bool,
     /// Whether the in-game Music search field is currently focused for Android OSK input.
     pub music_editing_search: bool,
-    /// Built-in Volt+ Extras mods state (AppleSkin, Crystal Optimizer, Shield Status, Uku's HUD).
+    /// Built-in Volt+ Extras mods state (all 52 built-in client mods).
     pub volt_extras: crate::extras::VoltExtras,
-    /// Which Volt+ Extras mod (`0..=3`) is currently opened for per-mod configuration (`None` = list).
+    /// Which Volt+ Extras mod (`0..52`) is currently opened for per-mod configuration (`None` = list).
     pub volt_extras_config_mod: Option<u8>,
+    /// Active Volt+ Extras category filter tab (`0=All, 1=PvP, 2=HUD, 3=Camera, 4=World, 5=Utility`).
+    pub volt_extras_cat: u8,
     /// Step state for the Floating Menu "Send Custom Input" picker modal.
     pub custom_input_picker: crate::touch::PickerStep,
     /// Horizontal scroll offset for the Floating Menu custom keyboard picker.
@@ -142,6 +144,7 @@ impl Default for TouchUi {
             music_editing_search: false,
             volt_extras: crate::extras::VoltExtras::default(),
             volt_extras_config_mod: None,
+            volt_extras_cat: 0,
             custom_input_picker: crate::touch::PickerStep::None,
             custom_kb_scroll_x: 0.0,
             custom_kb_drag: None,
@@ -269,52 +272,11 @@ pub enum InGameMenuAction {
     MusicPlaySearchResult(usize),
     MusicDownloadSearchResult(usize),
     UpdateVoltExtras(crate::extras::VoltExtras),
+    VoltQuickAction(crate::extras::VoltQuickAction),
 }
 
-fn volt_extras_modrinth_icon_url(slug: &str) -> Option<String> {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-
-    static CACHE: OnceLock<Mutex<HashMap<&'static str, String>>> = OnceLock::new();
-    static STARTED: OnceLock<()> = OnceLock::new();
-    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if STARTED.set(()).is_ok() {
-        let slugs: [(&'static str, &'static str); 4] = [
-            ("appleskin", "https://api.modrinth.com/v2/project/EsAfCjCV"),
-            (
-                "crystal_optimizer",
-                "https://api.modrinth.com/v2/project/marlows-crystal-optimizer",
-            ),
-            (
-                "shield_status",
-                "https://api.modrinth.com/v2/project/shield-statuses",
-            ),
-            (
-                "uku_hud",
-                "https://api.modrinth.com/v2/project/ukus-armor-hud",
-            ),
-        ];
-        std::thread::spawn(move || {
-            let agent = ureq::AgentBuilder::new()
-                .timeout(std::time::Duration::from_secs(8))
-                .build();
-            for (key, url) in slugs {
-                if let Ok(resp) = agent
-                    .get(url)
-                    .set("User-Agent", "VoltPlus/1.0 (https://github.com/entitybrian69-bit/volt-plus)")
-                    .call()
-                    && let Ok(val) = resp.into_json::<serde_json::Value>()
-                    && let Some(icon_url) = val.get("icon_url").and_then(|v| v.as_str())
-                    && icon_url.starts_with("https://")
-                {
-                    if let Ok(mut guard) = cache.lock() {
-                        guard.insert(key, icon_url.to_owned());
-                    }
-                }
-            }
-        });
-    }
-    cache.lock().ok().and_then(|g| g.get(slug).cloned())
+fn volt_extras_modrinth_icon_url(key: &'static str) -> Option<String> {
+    crate::volt_extras_ui::modrinth_icon_url(key)
 }
 
 impl TouchUi {
@@ -1987,7 +1949,7 @@ fn hub_metrics(w: f32, h: f32) -> (f32, f32, f32, f32, f32, f32, f32, f32, f32) 
     let dh = (h - 12.0).clamp(276.0, 424.0);
     let dx = (w - dw) * 0.5;
     let dy = (h - dh) * 0.5;
-    let side_w = (dw * 0.255).clamp(118.0, 152.0);
+    let side_w = (dw * 0.275).clamp(128.0, 162.0);
     let cx = dx + side_w + 16.0;
     let cw = dw - side_w - 32.0;
     let body_top = dy + 54.0;
@@ -2005,14 +1967,14 @@ struct HubSidebarRects {
 
 fn hub_sidebar_rects(dx: f32, dy: f32, dw: f32, dh: f32, side_w: f32) -> HubSidebarRects {
     let pad = 10.0;
-    let inner_w = (side_w - pad * 2.0).max(80.0);
-    let quick_studio = [dx + pad, dy + 46.0, inner_w, 24.0];
+    let inner_w = (side_w - pad * 2.0).max(88.0);
+    let quick_studio = [dx + pad, dy + 44.0, inner_w, 25.0];
     let done_h = 30.0;
     let done_y = dy + dh - pad - done_h;
-    let tabs_top = quick_studio[1] + quick_studio[3] + 8.0;
-    let tabs_avail = (done_y - 8.0 - tabs_top).max(120.0);
-    let gap = 3.0;
-    let tab_h = ((tabs_avail - gap * 9.0) / 10.0).clamp(12.0, 20.0);
+    let tabs_top = quick_studio[1] + quick_studio[3] + 7.0;
+    let tabs_avail = (done_y - 7.0 - tabs_top).max(120.0);
+    let gap = 4.0;
+    let tab_h = ((tabs_avail - gap * 9.0) / 10.0).clamp(14.0, 30.0);
     let mut tabs = [[0.0f32; 4]; 10];
     for (i, slot) in tabs.iter_mut().enumerate() {
         *slot = [
@@ -3355,12 +3317,8 @@ impl TouchUi {
                     let back_btn = [cx, body_y, (cw - 60.0).max(120.0), 32.0];
                     let master_sw = [cx + cw - 52.0, body_y + 5.0, 40.0, 22.0];
                     if inside(master_sw) {
-                        match mod_idx {
-                            0 => self.volt_extras.appleskin.enabled = !self.volt_extras.appleskin.enabled,
-                            1 => self.volt_extras.crystal_optimizer.enabled = !self.volt_extras.crystal_optimizer.enabled,
-                            2 => self.volt_extras.shield_status.enabled = !self.volt_extras.shield_status.enabled,
-                            _ => self.volt_extras.uku_hud.enabled = !self.volt_extras.uku_hud.enabled,
-                        }
+                        let cur = crate::extras::volt_mod_enabled(&self.volt_extras, mod_idx);
+                        crate::extras::set_volt_mod_enabled(&mut self.volt_extras, mod_idx, !cur);
                         return Some(InGameMenuAction::UpdateVoltExtras(self.volt_extras.clone()));
                     }
                     if inside(back_btn) {
@@ -3368,79 +3326,51 @@ impl TouchUi {
                         self.hub_scroll = 0.0;
                         return Some(InGameMenuAction::Close);
                     }
-                    let row_count = match mod_idx {
-                        0 => 7usize,
-                        1 => 4usize,
-                        2 => 5usize,
-                        _ => 11usize,
-                    };
-                    for r in 0..row_count {
+                    let rows = crate::volt_extras_ui::mod_setting_rows(&self.volt_extras, mod_idx);
+                    for r in 0..rows.len() {
                         let ry = body_y + 42.0 + r as f32 * 54.0;
                         if inside([cx, ry, cw, 46.0]) {
-                            match (mod_idx, r) {
-                                (0, 0) => self.volt_extras.appleskin.show_saturation_overlay = !self.volt_extras.appleskin.show_saturation_overlay,
-                                (0, 1) => self.volt_extras.appleskin.show_exhaustion_underlay = !self.volt_extras.appleskin.show_exhaustion_underlay,
-                                (0, 2) => self.volt_extras.appleskin.show_held_food_preview = !self.volt_extras.appleskin.show_held_food_preview,
-                                (0, 3) => self.volt_extras.appleskin.show_health_regen_overlay = !self.volt_extras.appleskin.show_health_regen_overlay,
-                                (0, 4) => self.volt_extras.appleskin.show_food_tooltip = !self.volt_extras.appleskin.show_food_tooltip,
-                                (0, 5) => self.volt_extras.appleskin.always_show_tooltip = !self.volt_extras.appleskin.always_show_tooltip,
-                                (0, 6) => self.volt_extras.appleskin.show_debug_stats = !self.volt_extras.appleskin.show_debug_stats,
-                                (1, 0) => self.volt_extras.crystal_optimizer.instant_break = !self.volt_extras.crystal_optimizer.instant_break,
-                                (1, 1) => self.volt_extras.crystal_optimizer.respect_weakness = !self.volt_extras.crystal_optimizer.respect_weakness,
-                                (1, 2) => self.volt_extras.crystal_optimizer.fast_place = !self.volt_extras.crystal_optimizer.fast_place,
-                                (1, 3) => {
-                                    self.volt_extras.crystal_optimizer.timeout_ms = match self.volt_extras.crystal_optimizer.timeout_ms {
-                                        250 => 500,
-                                        500 => 1000,
-                                        _ => 250,
-                                    };
-                                }
-                                (2, 0) => self.volt_extras.shield_status.enabled_color = self.volt_extras.shield_status.enabled_color.next_enabled(),
-                                (2, 1) => self.volt_extras.shield_status.disabled_color = self.volt_extras.shield_status.disabled_color.next_disabled(),
-                                (2, 2) => self.volt_extras.shield_status.interpolate_colors = !self.volt_extras.shield_status.interpolate_colors,
-                                (2, 3) => self.volt_extras.shield_status.display_mode = self.volt_extras.shield_status.display_mode.next(),
-                                (2, 4) => self.volt_extras.shield_status.disable_sound = !self.volt_extras.shield_status.disable_sound,
-                                (3, 0) => self.volt_extras.uku_hud.armor_enabled = !self.volt_extras.uku_hud.armor_enabled,
-                                (3, 1) => self.volt_extras.uku_hud.potion_enabled = !self.volt_extras.uku_hud.potion_enabled,
-                                (3, 2) => self.volt_extras.uku_hud.armor_anchor = self.volt_extras.uku_hud.armor_anchor.next(),
-                                (3, 3) => self.volt_extras.uku_hud.armor_side = self.volt_extras.uku_hud.armor_side.next(),
-                                (3, 4) => self.volt_extras.uku_hud.box_style = self.volt_extras.uku_hud.box_style.next(),
-                                (3, 5) => self.volt_extras.uku_hud.durability_display = self.volt_extras.uku_hud.durability_display.next(),
-                                (3, 6) => self.volt_extras.uku_hud.show_offhand = !self.volt_extras.uku_hud.show_offhand,
-                                (3, 7) => self.volt_extras.uku_hud.hide_empty = !self.volt_extras.uku_hud.hide_empty,
-                                (3, 8) => {
-                                    self.volt_extras.uku_hud.low_durability_pct = match self.volt_extras.uku_hud.low_durability_pct {
-                                        15 => 25,
-                                        25 => 10,
-                                        10 => 0,
-                                        _ => 15,
-                                    };
-                                }
-                                (3, 9) => self.volt_extras.uku_hud.potion_anchor = self.volt_extras.uku_hud.potion_anchor.next(),
-                                (3, 10) => self.volt_extras.uku_hud.potion_compact = !self.volt_extras.uku_hud.potion_compact,
-                                _ => {}
+                            if let Some(act) = crate::volt_extras_ui::click_mod_setting_row(
+                                &mut self.volt_extras,
+                                mod_idx,
+                                r,
+                            ) {
+                                return Some(InGameMenuAction::VoltQuickAction(act));
                             }
                             return Some(InGameMenuAction::UpdateVoltExtras(self.volt_extras.clone()));
                         }
                     }
                 } else {
-                    let list_y = body_y + 34.0;
-                    for i in 0..4u8 {
-                        let ry = list_y + i as f32 * 70.0;
+                    // Category filter pills (6 tabs: All, PvP, HUD, Camera, World, Utility)
+                    let cat_y = body_y + 30.0;
+                    let cat_gap = 4.0;
+                    let cat_w = ((cw - cat_gap * 5.0) / 6.0).max(36.0);
+                    for ci in 0..6u8 {
+                        let bx = cx + ci as f32 * (cat_w + cat_gap);
+                        if inside([bx, cat_y, cat_w, 22.0]) {
+                            self.volt_extras_cat = ci;
+                            self.hub_scroll = 0.0;
+                            return Some(InGameMenuAction::Close);
+                        }
+                    }
+                    let filtered = crate::volt_extras_ui::filtered_mod_indices(self.volt_extras_cat);
+                    let list_y = body_y + 60.0;
+                    for (pos_i, &mod_idx) in filtered.iter().enumerate() {
+                        let ry = list_y + pos_i as f32 * 68.0;
                         let cfg_r = [cx + cw - 124.0, ry + 16.0, 64.0, 28.0];
                         let sw_r = [cx + cw - 54.0, ry + 11.0, 48.0, 40.0];
                         if inside(cfg_r) {
-                            self.volt_extras_config_mod = Some(i);
+                            self.volt_extras_config_mod = Some(mod_idx);
                             self.hub_scroll = 0.0;
                             return Some(InGameMenuAction::Close);
                         }
                         if inside(sw_r) || inside([cx, ry, cw, 62.0]) {
-                            match i {
-                                0 => self.volt_extras.appleskin.enabled = !self.volt_extras.appleskin.enabled,
-                                1 => self.volt_extras.crystal_optimizer.enabled = !self.volt_extras.crystal_optimizer.enabled,
-                                2 => self.volt_extras.shield_status.enabled = !self.volt_extras.shield_status.enabled,
-                                _ => self.volt_extras.uku_hud.enabled = !self.volt_extras.uku_hud.enabled,
-                            }
+                            let cur = crate::extras::volt_mod_enabled(&self.volt_extras, mod_idx);
+                            crate::extras::set_volt_mod_enabled(
+                                &mut self.volt_extras,
+                                mod_idx,
+                                !cur,
+                            );
                             return Some(InGameMenuAction::UpdateVoltExtras(self.volt_extras.clone()));
                         }
                     }
@@ -3767,11 +3697,14 @@ impl TouchUi {
             6 => 340.0,
             7 => 364.0,
             9 => match self.volt_extras_config_mod {
-                None => 326.0,
-                Some(0) => 436.0,
-                Some(1) => 274.0,
-                Some(2) => 328.0,
-                _ => 652.0,
+                None => {
+                    let n = crate::volt_extras_ui::filtered_mod_indices(self.volt_extras_cat).len();
+                    70.0 + (n as f32) * 68.0
+                }
+                Some(idx) => {
+                    let rows = crate::volt_extras_ui::mod_setting_rows(&self.volt_extras, idx).len();
+                    50.0 + (rows as f32) * 54.0
+                }
             },
             _ if self.music_search_tab => {
                 284.0 + 76.0 + (music_search_snap.results.len().max(1) as f32) * 50.0 + 48.0
@@ -5808,229 +5741,54 @@ impl TouchUi {
             }
             9 => {
                 let draw_volt_mod_emblem = |ui: &mut Ui<'_>, idx: u8, ix: f32, iy: f32| {
-                let icon_url = match idx {
-                    0 => volt_extras_modrinth_icon_url("appleskin"),
-                    1 => volt_extras_modrinth_icon_url("crystal_optimizer"),
-                    2 => volt_extras_modrinth_icon_url("shield_status"),
-                    _ => volt_extras_modrinth_icon_url("uku_hud"),
-                };
-                let cache_id = match idx {
-                    0 => "volt_extras_appleskin",
-                    1 => "volt_extras_crystal_optimizer",
-                    2 => "volt_extras_shield_status",
-                    _ => "volt_extras_uku_hud",
-                };
-                let drawn = if let Some((iw, ih, rgba_bytes)) =
-                    crate::internet_music::get_or_request_icon(cache_id, icon_url.as_deref())
-                {
-                    ui.image(cache_id, iw, ih, &rgba_bytes, ix, iy, 40.0, 40.0)
-                } else {
-                    false
-                };
-                if !drawn {
-                    let glyph_txt = match idx {
-                        0 => "AS",
-                        1 => "CO",
-                        2 => "SS",
-                        _ => "UH",
+                    let meta = &crate::extras::VOLT_MODS[usize::from(idx).min(crate::extras::VOLT_MOD_COUNT - 1)];
+                    let icon_url = volt_extras_modrinth_icon_url(meta.key);
+                    let cache_id = format!("volt_extras_{}", meta.key);
+                    let drawn = if let Some((iw, ih, rgba_bytes)) =
+                        crate::internet_music::get_or_request_icon(&cache_id, icon_url.as_deref())
+                    {
+                        ui.image(&cache_id, iw, ih, &rgba_bytes, ix, iy, 40.0, 40.0)
+                    } else {
+                        false
                     };
-                    ui.rounded(ix, iy, 40.0, 40.0, 9.0, sidebar_bg);
-                    ui.border(ix, iy, 40.0, 40.0, 9.0, accent);
-                    ui.centered_fit(
+                    if !drawn {
+                        ui.rounded(ix, iy, 40.0, 40.0, 9.0, sidebar_bg);
+                        ui.border(ix, iy, 40.0, 40.0, 9.0, accent);
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            13.0,
+                            [ix, iy, 40.0, 40.0],
+                            text_c,
+                            meta.badge,
+                        );
+                    }
+                };
+
+                if let Some(mod_idx) = self.volt_extras_config_mod {
+                    let meta = &crate::extras::VOLT_MODS[usize::from(mod_idx).min(crate::extras::VOLT_MOD_COUNT - 1)];
+                    let enabled = crate::extras::volt_mod_enabled(&self.volt_extras, mod_idx);
+                    let back_w = (cw - 60.0).max(120.0);
+                    ui.rounded(cx, body_y, back_w, 32.0, 9.0, card_bg);
+                    ui.border(cx, body_y, back_w, 32.0, 9.0, border_c);
+                    ui.icon(Icon::ArrowLeft, cx + 10.0, body_y + 9.0, 14.0, accent_hi);
+                    ui.text_clipped(
                         Face::SemiBold,
-                        13.0,
-                        [ix, iy, 40.0, 40.0],
+                        10.4,
+                        cx + 30.0,
+                        body_y + 9.0,
+                        (back_w - 38.0).max(40.0),
                         text_c,
-                        glyph_txt,
+                        &format!("Back  •  {}", meta.title),
                     );
-                }
-            };
-
-            if let Some(mod_idx) = self.volt_extras_config_mod {
-                let (mod_name, enabled) = match mod_idx {
-                    0 => ("AppleSkin", self.volt_extras.appleskin.enabled),
-                    1 => (
-                        "Marlow's Crystal Optimizer",
-                        self.volt_extras.crystal_optimizer.enabled,
-                    ),
-                    2 => ("Shield Status", self.volt_extras.shield_status.enabled),
-                    _ => (
-                        "Uku's Armor & Potion HUD",
-                        self.volt_extras.uku_hud.enabled,
-                    ),
-                };
-                let back_w = (cw - 60.0).max(120.0);
-                ui.rounded(cx, body_y, back_w, 32.0, 9.0, card_bg);
-                ui.border(cx, body_y, back_w, 32.0, 9.0, border_c);
-                ui.icon(Icon::ArrowLeft, cx + 10.0, body_y + 9.0, 14.0, accent_hi);
-                ui.text(
-                    Face::SemiBold,
-                    10.4,
-                    cx + 30.0,
-                    body_y + 9.0,
-                    text_c,
-                    &format!("Back  •  {mod_name}"),
-                );
-                let sw_x = cx + cw - 52.0;
-                let sw_y = body_y + 5.0;
-                ui.rounded(
-                    sw_x,
-                    sw_y,
-                    40.0,
-                    22.0,
-                    11.0,
-                    if enabled { accent } else { well_bg },
-                );
-                ui.border(
-                    sw_x,
-                    sw_y,
-                    40.0,
-                    22.0,
-                    11.0,
-                    if enabled { accent_hi } else { border_c },
-                );
-                ui.rounded(
-                    if enabled { sw_x + 21.0 } else { sw_x + 3.0 },
-                    sw_y + 3.0,
-                    16.0,
-                    16.0,
-                    8.0,
-                    accent_fg,
-                );
-
-                let rows: Vec<(&str, &str, Option<bool>, Option<String>)> = match mod_idx {
-                    0 => {
-                        let c = &self.volt_extras.appleskin;
-                        vec![
-                            ("Saturation Overlay", "Gold outlines over hunger drumsticks", Some(c.show_saturation_overlay), None),
-                            ("Exhaustion Underlay", "Translucent drain progress behind hunger bar", Some(c.show_exhaustion_underlay), None),
-                            ("Held Food Preview", "Flashing hunger & saturation gain while holding food", Some(c.show_held_food_preview), None),
-                            ("Health Regen Overlay", "Predicted heart regen from eating held food", Some(c.show_health_regen_overlay), None),
-                            ("Food Value Tooltips", "Show hunger & saturation icons in item tooltips", Some(c.show_food_tooltip), None),
-                            ("Always Show Tooltip", "Show food values even without holding Shift", Some(c.always_show_tooltip), None),
-                            ("F3 Debug Food Stats", "Display saturation & exhaustion on debug screen", Some(c.show_debug_stats), None),
-                        ]
-                    }
-                    1 => {
-                        let c = &self.volt_extras.crystal_optimizer;
-                        vec![
-                            ("Instant Client Crystal Break", "Remove attacked End Crystals client-side immediately", Some(c.instant_break), None),
-                            ("Respect Weakness Effect", "Skip client removal when Weakness prevents damage", Some(c.respect_weakness), None),
-                            ("Fast Crystal & Obsidian Place", "Clear use delay while holding crystals or obsidian", Some(c.fast_place), None),
-                            ("Sync Restore Timeout", "Restore crystal if server does not confirm break", None, Some(format!("{} ms", c.timeout_ms))),
-                        ]
-                    }
-                    2 => {
-                        let c = &self.volt_extras.shield_status;
-                        vec![
-                            ("Enabled Color", "Color when shield is ready to block", None, Some(c.enabled_color.label().to_owned())),
-                            ("Disabled Color", "Color right after an axe disables the shield", None, Some(c.disabled_color.label().to_owned())),
-                            ("Interpolate Cooldown Color", "Smoothly blend disabled -> enabled during 5s recovery", Some(c.interpolate_colors), None),
-                            ("Display Mode", "Where Shield Status tint & indicator appear", None, Some(c.display_mode.label().to_owned())),
-                            ("Disable Sound Alert", "Play audio cue when shield gets axe-disabled", Some(c.disable_sound), None),
-                        ]
-                    }
-                    _ => {
-                        let c = &self.volt_extras.uku_hud;
-                        let low_txt = if c.low_durability_pct == 0 {
-                            "Off".to_owned()
-                        } else {
-                            format!("{}%", c.low_durability_pct)
-                        };
-                        vec![
-                            ("Show Armor HUD", "Render equipped armor & durability overlay", Some(c.armor_enabled), None),
-                            ("Show Potion HUD", "Render Uku's custom potion timer cards", Some(c.potion_enabled), None),
-                            ("Armor Anchor", "Screen region for the Armor HUD panel", None, Some(c.armor_anchor.label().to_owned())),
-                            ("Armor Side", "Left or right placement relative to anchor", None, Some(c.armor_side.label().to_owned())),
-                            ("Panel Style", "Hotbar slice, rounded, flat, or minimal background", None, Some(c.box_style.label().to_owned())),
-                            ("Durability Display", "Show bar, numeric value, percentage, or off", None, Some(c.durability_display.label().to_owned())),
-                            ("Show Offhand Slot", "Include offhand item in the Armor HUD", Some(c.show_offhand), None),
-                            ("Hide Empty Slots", "Skip armor slots with no item equipped", Some(c.hide_empty), None),
-                            ("Low Durability Alert", "Red highlight threshold for damaged armor", None, Some(low_txt)),
-                            ("Potion HUD Position", "Corner anchor for active effect timers", None, Some(c.potion_anchor.label().to_owned())),
-                            ("Compact Potion Cards", "Slimmer icon + MM:SS cards for tight screens", Some(c.potion_compact), None),
-                        ]
-                    }
-                };
-                for (r, (title, sub, toggle_opt, badge_opt)) in rows.into_iter().enumerate() {
-                    let ry = body_y + 42.0 + r as f32 * 54.0;
-                    draw_toggle_row(&mut ui, ry, title, sub, toggle_opt, badge_opt.as_deref());
-                }
-            } else {
-                ui.text(Face::SemiBold, 10.2, cx, body_y, muted_c, "VOLT+ EXTRAS");
-                ui.text(
-                    Face::Regular,
-                    8.8,
-                    cx,
-                    body_y + 15.0,
-                    muted_c,
-                    "Built-in client mods (all off by default — tap Configure to customize)",
-                );
-                let cards: [(u8, &str, &str, bool); 4] = [
-                    (
-                        0,
-                        "AppleSkin",
-                        "Saturation outlines, exhaustion bar, food & regen preview, tooltips",
-                        self.volt_extras.appleskin.enabled,
-                    ),
-                    (
-                        1,
-                        "Marlow's Crystal Optimizer",
-                        "Instant client-side crystal clearing & fast crystal/obsidian placement",
-                        self.volt_extras.crystal_optimizer.enabled,
-                    ),
-                    (
-                        2,
-                        "Shield Status",
-                        "Live ready/disabled color indicator, cooldown bar & timer",
-                        self.volt_extras.shield_status.enabled,
-                    ),
-                    (
-                        3,
-                        "Uku's Armor & Potion HUD",
-                        "Customizable armor durability panel & timed potion cards",
-                        self.volt_extras.uku_hud.enabled,
-                    ),
-                ];
-                let list_y = body_y + 34.0;
-                for (idx, title, sub, on) in cards {
-                    let ry = list_y + idx as f32 * 70.0;
-                    ui.rounded(
-                        cx,
-                        ry,
-                        cw,
-                        62.0,
-                        12.0,
-                        if on { card_sel } else { card_bg },
-                    );
-                    ui.border(
-                        cx,
-                        ry,
-                        cw,
-                        62.0,
-                        12.0,
-                        if on { accent } else { border_c },
-                    );
-                    draw_volt_mod_emblem(&mut ui, idx, cx + 10.0, ry + 11.0);
-                    let cfg_r = [cx + cw - 124.0, ry + 16.0, 64.0, 28.0];
-                    let text_x = cx + 58.0;
-                    let max_text_w = (cfg_r[0] - text_x - 8.0).max(40.0);
-                    ui.text_clipped(Face::SemiBold, 10.8, text_x, ry + 11.0, max_text_w, text_c, title);
-                    ui.text_clipped(Face::Regular, 8.6, text_x, ry + 30.0, max_text_w, muted_c, sub);
-
-                    ui.rounded(cfg_r[0], cfg_r[1], cfg_r[2], cfg_r[3], 8.0, sidebar_bg);
-                    ui.border(cfg_r[0], cfg_r[1], cfg_r[2], cfg_r[3], 8.0, border_c);
-                    ui.centered_fit(Face::Medium, 9.0, cfg_r, text_c, "Configure");
-
                     let sw_x = cx + cw - 52.0;
-                    let sw_y = ry + 19.0;
+                    let sw_y = body_y + 5.0;
                     ui.rounded(
                         sw_x,
                         sw_y,
                         40.0,
                         22.0,
                         11.0,
-                        if on { accent } else { well_bg },
+                        if enabled { accent } else { well_bg },
                     );
                     ui.border(
                         sw_x,
@@ -6038,18 +5796,118 @@ impl TouchUi {
                         40.0,
                         22.0,
                         11.0,
-                        if on { accent_hi } else { border_c },
+                        if enabled { accent_hi } else { border_c },
                     );
                     ui.rounded(
-                        if on { sw_x + 21.0 } else { sw_x + 3.0 },
+                        if enabled { sw_x + 21.0 } else { sw_x + 3.0 },
                         sw_y + 3.0,
                         16.0,
                         16.0,
                         8.0,
                         accent_fg,
                     );
+
+                    let rows = crate::volt_extras_ui::mod_setting_rows(&self.volt_extras, mod_idx);
+                    for (r, row) in rows.into_iter().enumerate() {
+                        let ry = body_y + 42.0 + r as f32 * 54.0;
+                        if ry + 48.0 < body_top || ry > body_top + body_h {
+                            continue;
+                        }
+                        draw_toggle_row(
+                            &mut ui,
+                            ry,
+                            row.title,
+                            row.sub,
+                            row.toggle,
+                            row.badge.as_deref(),
+                        );
+                    }
+                } else {
+                    let active_cnt = crate::volt_extras_ui::active_mod_count(&self.volt_extras);
+                    ui.text(
+                        Face::SemiBold,
+                        10.2,
+                        cx,
+                        body_y,
+                        muted_c,
+                        &format!("VOLT+ EXTRAS  •  {active_cnt} / {} ACTIVE", crate::extras::VOLT_MOD_COUNT),
+                    );
+                    ui.text(
+                        Face::Regular,
+                        8.6,
+                        cx,
+                        body_y + 14.0,
+                        muted_c,
+                        "52 built-in client mods (all off by default — tap Configure to customize)",
+                    );
+
+                    let cat_y = body_y + 30.0;
+                    let cat_gap = 4.0;
+                    let cat_w = ((cw - cat_gap * 5.0) / 6.0).max(36.0);
+                    for (ci, cat) in crate::extras::VoltModCategory::TABS.iter().enumerate() {
+                        let bx = cx + ci as f32 * (cat_w + cat_gap);
+                        let sel = self.volt_extras_cat == ci as u8;
+                        ui.rounded(bx, cat_y, cat_w, 22.0, 7.0, if sel { accent } else { card_bg });
+                        ui.border(bx, cat_y, cat_w, 22.0, 7.0, if sel { accent_hi } else { border_c });
+                        ui.centered_fit(
+                            if sel { Face::SemiBold } else { Face::Medium },
+                            8.6,
+                            [bx, cat_y, cat_w, 22.0],
+                            if sel { accent_fg } else { text_c },
+                            cat.label(),
+                        );
+                    }
+
+                    let filtered = crate::volt_extras_ui::filtered_mod_indices(self.volt_extras_cat);
+                    let list_y = body_y + 60.0;
+                    for (pos_i, &mod_idx) in filtered.iter().enumerate() {
+                        let ry = list_y + pos_i as f32 * 68.0;
+                        if ry + 64.0 < body_top || ry > body_top + body_h {
+                            continue;
+                        }
+                        let meta = &crate::extras::VOLT_MODS[usize::from(mod_idx)];
+                        let on = crate::extras::volt_mod_enabled(&self.volt_extras, mod_idx);
+                        ui.rounded(cx, ry, cw, 62.0, 12.0, if on { card_sel } else { card_bg });
+                        ui.border(cx, ry, cw, 62.0, 12.0, if on { accent } else { border_c });
+                        draw_volt_mod_emblem(&mut ui, mod_idx, cx + 10.0, ry + 11.0);
+                        let cfg_r = [cx + cw - 124.0, ry + 16.0, 64.0, 28.0];
+                        let text_x = cx + 58.0;
+                        let max_text_w = (cfg_r[0] - text_x - 8.0).max(40.0);
+                        ui.text_clipped(Face::SemiBold, 10.4, text_x, ry + 10.0, max_text_w, text_c, meta.title);
+                        ui.text_clipped(Face::Regular, 8.4, text_x, ry + 29.0, max_text_w, muted_c, meta.summary);
+
+                        ui.rounded(cfg_r[0], cfg_r[1], cfg_r[2], cfg_r[3], 8.0, sidebar_bg);
+                        ui.border(cfg_r[0], cfg_r[1], cfg_r[2], cfg_r[3], 8.0, border_c);
+                        ui.centered_fit(Face::Medium, 9.0, cfg_r, text_c, "Configure");
+
+                        let sw_x = cx + cw - 52.0;
+                        let sw_y = ry + 19.0;
+                        ui.rounded(
+                            sw_x,
+                            sw_y,
+                            40.0,
+                            22.0,
+                            11.0,
+                            if on { accent } else { well_bg },
+                        );
+                        ui.border(
+                            sw_x,
+                            sw_y,
+                            40.0,
+                            22.0,
+                            11.0,
+                            if on { accent_hi } else { border_c },
+                        );
+                        ui.rounded(
+                            if on { sw_x + 21.0 } else { sw_x + 3.0 },
+                            sw_y + 3.0,
+                            16.0,
+                            16.0,
+                            8.0,
+                            accent_fg,
+                        );
+                    }
                 }
-            }
             }
             _ => {}
         }

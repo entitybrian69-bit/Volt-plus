@@ -2472,9 +2472,16 @@ impl Game<'_> {
     /// `BossHealthOverlay.extractRenderState`: whatever `publish_boss_bars`
     /// (or a server's packets) put on this client's overlay.
     pub(super) fn draw_boss_bars(&self, batch: &mut HudBatch) {
-        let bars = self
+        let sb_cfg = &self.settings.extras.volt.scoreboard_tweaks;
+        if sb_cfg.enabled && sb_cfg.hide_bossbars {
+            return;
+        }
+        let mut bars = self
             .boss_overlay
             .bars(horizon_client::boss_overlay::now_millis());
+        if sb_cfg.enabled && sb_cfg.compact_bossbars && bars.len() > 1 {
+            bars.truncate(1);
+        }
         let draws = hud_overlays::boss_overlay(
             batch.width as i32,
             batch.height as i32,

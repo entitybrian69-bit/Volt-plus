@@ -33,6 +33,7 @@ pub mod block_entity_item;
 pub mod block_pattern;
 pub mod block_transform;
 pub mod boss_overlay;
+pub mod volt_extras_ui;
 pub mod cauldron;
 pub mod chunk_io;
 pub mod clock;
