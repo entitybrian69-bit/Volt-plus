@@ -75,8 +75,30 @@ def merge(primary: Path, secondary: Path, out: Path) -> tuple[list[str], list[st
     return order, added
 
 
-def align_and_sign(apk: Path, build_tools: Path, keystore: str, password: str, alias: str, key_password: str) -> None:
-    """zipalign then apksigner, v1 + v2 + v3, so every Android version accepts it."""
+SCHEME_LABELS = {
+    "v1": "v1 scheme (JAR signing)",
+    "v2": "v2 scheme (APK Signature Scheme v2)",
+    "v3": "v3 scheme (APK Signature Scheme v3)",
+}
+
+
+def verify_signature_schemes(output: str, required: tuple[str, ...] = ("v1", "v2", "v3")) -> None:
+    for key in required:
+        label = SCHEME_LABELS[key]
+        if f"Verified using {label}: true" not in output:
+            raise SystemExit(f"universal APK is not {key} signed")
+
+
+def align_and_sign(
+    apk: Path,
+    build_tools: Path,
+    keystore: str,
+    password: str,
+    alias: str,
+    key_password: str,
+    required_schemes: tuple[str, ...] = ("v1", "v2", "v3"),
+) -> None:
+    """zipalign then apksigner, verifying the required APK signature schemes."""
     align = build_tools / "zipalign"
     wrapper = build_tools / "apksigner"
     signer = build_tools / "lib" / "apksigner.jar"
@@ -95,7 +117,7 @@ def align_and_sign(apk: Path, build_tools: Path, keystore: str, password: str, a
             "--ks-pass", f"env:HORIZON_ANDROID_KEYSTORE_PASSWORD",
             "--ks-key-alias", alias,
             "--key-pass", f"env:HORIZON_ANDROID_KEY_PASSWORD",
-            "--v1-signing-enabled", "true",
+            "--v1-signing-enabled", "true" if "v1" in required_schemes else "false",
             "--v2-signing-enabled", "true",
             "--v3-signing-enabled", "true",
             str(apk),
@@ -110,9 +132,7 @@ def align_and_sign(apk: Path, build_tools: Path, keystore: str, password: str, a
     # apksigner exits non-zero when any scheme it was asked for is missing.
     if verified.returncode != 0:
         raise SystemExit(f"universal APK did not verify: exit {verified.returncode}")
-    for scheme in ("v1 scheme (JAR signing)", "v2 scheme (APK Signature Scheme v2)", "v3 scheme (APK Signature Scheme v3)"):
-        if f"Verified using {scheme}: true" not in verified.stdout:
-            raise SystemExit(f"universal APK is not {scheme.split()[0]} signed")
+    verify_signature_schemes(verified.stdout, required_schemes)
 
 
 def main() -> int:
@@ -122,7 +142,15 @@ def main() -> int:
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--build-tools", type=Path)
     parser.add_argument("--sign", action="store_true", help="align and sign with the CI identity")
+    parser.add_argument(
+        "--schemes",
+        default="v1,v2,v3",
+        help="Comma-separated APK signature schemes to require (subset of v1,v2,v3; default v1,v2,v3)",
+    )
     options = parser.parse_args()
+    required_schemes = tuple(part.strip() for part in options.schemes.split(",") if part.strip())
+    if not required_schemes or any(s not in SCHEME_LABELS for s in required_schemes):
+        parser.error(f"--schemes must be a comma-separated subset of {','.join(SCHEME_LABELS)}")
     for apk in (options.arm64, options.armv7):
         if not apk.is_file():
             parser.error(f"{apk} does not exist")
@@ -148,6 +176,7 @@ def main() -> int:
             os.environ["HORIZON_ANDROID_KEYSTORE_PASSWORD"],
             os.environ["HORIZON_ANDROID_KEY_ALIAS"],
             os.environ.get("HORIZON_ANDROID_KEY_PASSWORD", ""),
+            required_schemes=required_schemes,
         )
     return 0
 

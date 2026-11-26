@@ -251,7 +251,7 @@ jobs:
           mkdir -p dist
           python3 tools/universal_apk.py --arm64 "$arm64" --armv7 "$armv7" \
             --out "dist/Volt-Plus-Debug.${GITHUB_RUN_NUMBER}.${GITHUB_SHA:0:12}-universal.apk" \
-            --build-tools "$ANDROID_HOME/build-tools/35.0.0" --sign 2>&1 | tee "$RUNNER_TEMP/universal.log"
+            --build-tools "$ANDROID_HOME/build-tools/35.0.0" --sign --schemes v2,v3 2>&1 | tee "$RUNNER_TEMP/universal.log"
       - name: Say why the universal debug APK failed
         if: failure()
         run: |

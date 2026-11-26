@@ -68,6 +68,17 @@ class UniversalApkTest(unittest.TestCase):
             universal_apk.merge(self.arm64, same_abi, self.out)
         self.assertFalse(self.out.exists())
 
+    def test_signature_scheme_verification(self):
+        v2_v3_only = (
+            "Verifies\n"
+            "Verified using v1 scheme (JAR signing): false\n"
+            "Verified using v2 scheme (APK Signature Scheme v2): true\n"
+            "Verified using v3 scheme (APK Signature Scheme v3): true\n"
+        )
+        with self.assertRaises(SystemExit):
+            universal_apk.verify_signature_schemes(v2_v3_only, ("v1", "v2", "v3"))
+        universal_apk.verify_signature_schemes(v2_v3_only, ("v2", "v3"))
+
 
 if __name__ == "__main__":
     unittest.main()
