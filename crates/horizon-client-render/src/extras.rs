@@ -56,6 +56,14 @@ impl Corner {
     pub fn left(self) -> bool {
         matches!(self, Corner::TopLeft | Corner::BottomLeft)
     }
+    pub fn next(self) -> Self {
+        match self {
+            Corner::TopLeft => Corner::TopRight,
+            Corner::TopRight => Corner::BottomRight,
+            Corner::BottomRight => Corner::BottomLeft,
+            Corner::BottomLeft => Corner::TopLeft,
+        }
+    }
 }
 
 pub use crate::volt_extras_cfg::*;

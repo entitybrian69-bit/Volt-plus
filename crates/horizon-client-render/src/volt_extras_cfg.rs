@@ -1,6 +1,6 @@
 //! Configuration structs, metadata, Modrinth project slugs, and persistence
 //! for all 52 built-in Volt+ Extras mods (every mod defaults to `enabled: false`).
-use super::Corner;
+use crate::extras::Corner;
 use std::fmt::Write as _;
 
 pub const VOLT_MOD_COUNT: usize = 52;
