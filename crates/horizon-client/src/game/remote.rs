@@ -8190,7 +8190,7 @@ impl Game<'_> {
     /// The rest of Minecraft.startUseItem once the main hand's target passed:
     /// the main hand's item, then the off hand's turn (its block, its item).
     /// The server does each packet's part with that packet's hand only.
-    fn remote_use_hands(&mut self) {
+    pub(super) fn remote_use_hands(&mut self) {
         #[cfg(target_os = "android")]
         if self.pad.touch_shield {
             let hand = if self

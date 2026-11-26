@@ -387,7 +387,7 @@ impl Game<'_> {
     }
 
     /// `Entity.pick(20, 0, false)` from the camera: the block outline hit.
-    fn debug_block_hit(&self) -> Option<[i32; 3]> {
+    pub(super) fn debug_block_hit(&self) -> Option<[i32; 3]> {
         let (origin, dir) = self.aim()?;
         Some(self.clip_ray(origin, dir, LOOKING_AT_RANGE)?.pos)
     }
@@ -482,7 +482,7 @@ impl Game<'_> {
 
     /// `Minecraft.crosshairPickEntity`'s type: the nearest entity under the
     /// crosshair before any block.
-    fn crosshair_entity_type(&self) -> Option<String> {
+    pub(super) fn crosshair_entity_type(&self) -> Option<String> {
         let mut best: Option<(f64, String)> = None;
         let mut offer = |hit: Option<(f64, String)>| {
             if let Some((distance, kind)) = hit

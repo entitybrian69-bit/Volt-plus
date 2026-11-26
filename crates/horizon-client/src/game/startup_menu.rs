@@ -2115,12 +2115,8 @@ impl Loading {
                     InGameMenuAction::UpdateVoltExtras(volt) => {
                         self.settings.extras.volt = volt;
                         self.save_menu_settings();
-                        self.apply_ui_settings();
                     }
-                    InGameMenuAction::VoltQuickAction(act) => {
-                        self.volt_extras_quick_action(act);
-                        self.save_menu_settings();
-                    }
+                    InGameMenuAction::VoltQuickAction(_) => {}
                     _ => {}
                 }
                 if touch.phase == TouchPhase::Started {

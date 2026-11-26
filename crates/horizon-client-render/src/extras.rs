@@ -393,6 +393,9 @@ impl Cps {
         self.forget(now);
         self.clicks.len()
     }
+    pub fn count(&self, now: f64) -> usize {
+        self.clicks.iter().filter(|&&t| now - t < 1.0).count()
+    }
 }
 
 /// The settings the Extras page shows, one per row.

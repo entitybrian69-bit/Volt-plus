@@ -899,7 +899,7 @@ impl Game<'_> {
                     &self.gui.atlas,
                     Text::literal(format!("[Volt+] {who} popped a Totem of Undying!")),
                     None,
-                    ChatSource::System,
+                    ChatSource::Client,
                     self.ticks,
                     self.screen == Screen::Chat,
                 );
@@ -955,7 +955,7 @@ impl Game<'_> {
                     &self.gui.atlas,
                     Text::literal(format!("You died at {x}, {y}, {z} ({:?})", self.dim)),
                     None,
-                    ChatSource::System,
+                    ChatSource::Client,
                     self.ticks,
                     self.screen == Screen::Chat,
                 );
@@ -1100,7 +1100,7 @@ impl Game<'_> {
                         &self.gui.atlas,
                         Text::literal(msg),
                         None,
-                        ChatSource::System,
+                        ChatSource::Client,
                         self.ticks,
                         self.screen == Screen::Chat,
                     );
@@ -1108,10 +1108,14 @@ impl Game<'_> {
                 }
             }
             VoltQuickAction::ToggleChunkBorders => {
-                self.gizmo_switches.chunk_borders = !self.gizmo_switches.chunk_borders;
+                self.settings.extras.volt.chunk_hitboxes.enabled = true;
+                self.settings.extras.volt.chunk_hitboxes.chunk_borders =
+                    !self.settings.extras.volt.chunk_hitboxes.chunk_borders;
             }
             VoltQuickAction::ToggleHitboxes => {
-                self.gizmo_switches.entity_hitboxes = !self.gizmo_switches.entity_hitboxes;
+                self.settings.extras.volt.chunk_hitboxes.enabled = true;
+                self.settings.extras.volt.chunk_hitboxes.entity_hitboxes =
+                    !self.settings.extras.volt.chunk_hitboxes.entity_hitboxes;
             }
         }
     }
@@ -1132,11 +1136,12 @@ impl Game<'_> {
         }
 
         // Auto-Sprint
+        let move_vec = self.pad_move();
         if self.settings.extras.volt.auto_sprint.enabled
             && let Some(p) = self.player.as_mut()
             && !p.shift_key_down
             && p.health.food.food > 6
-            && (self.keys.contains(&KeyCode::KeyW) || self.pad.touch.move_y < -0.2)
+            && (self.keys.contains(&KeyCode::KeyW) || move_vec.is_some_and(|[_, y]| y > 0.2))
         {
             p.sprinting = true;
         }
@@ -2041,10 +2046,11 @@ impl Game<'_> {
             let tw = HudBatch::text_width(atlas, lbl);
             batch.text(atlas, lbl, x + (w - tw) * 0.5, y + (h - 8.0) * 0.5, fg, !down);
         };
-        let w = self.keys.contains(&KeyCode::KeyW) || self.pad.touch.move_y < -0.2;
-        let a = self.keys.contains(&KeyCode::KeyA) || self.pad.touch.move_x < -0.2;
-        let s = self.keys.contains(&KeyCode::KeyS) || self.pad.touch.move_y > 0.2;
-        let d = self.keys.contains(&KeyCode::KeyD) || self.pad.touch.move_x > 0.2;
+        let mv = self.pad_move();
+        let w = self.keys.contains(&KeyCode::KeyW) || mv.is_some_and(|[_, y]| y > 0.2);
+        let a = self.keys.contains(&KeyCode::KeyA) || mv.is_some_and(|[x, _]| x < -0.2);
+        let s = self.keys.contains(&KeyCode::KeyS) || mv.is_some_and(|[_, y]| y < -0.2);
+        let d = self.keys.contains(&KeyCode::KeyD) || mv.is_some_and(|[x, _]| x > 0.2);
         key_box(batch, bx + 22.0, by, 20.0, 18.0, "W", w);
         key_box(batch, bx, by + 20.0, 20.0, 18.0, "A", a);
         key_box(batch, bx + 22.0, by + 20.0, 20.0, 18.0, "S", s);
@@ -2169,9 +2175,8 @@ impl Game<'_> {
                 let bx = p.position.x.floor() as i32;
                 let by = p.position.y.floor() as i32;
                 let bz = p.position.z.floor() as i32;
-                if let Some(chunk) = self.world.chunks.get(&(bx >> 4, bz >> 4))
-                    && let Some(biome) = self.res.biomes().list.get(chunk.biome(bx, by, bz) as usize)
-                {
+                if let Some(chunk) = self.world.chunks.get(&(bx >> 4, bz >> 4)) {
+                    let biome = self.res.biomes().get(chunk.biome(bx, by, bz));
                     lines.push(format!(
                         "Biome: {}",
                         biome.name.strip_prefix("minecraft:").unwrap_or(&biome.name)
@@ -2212,8 +2217,12 @@ impl Game<'_> {
         let fcfg = &self.settings.extras.volt.telemetry_hud;
         if fcfg.enabled {
             let mut parts: Vec<String> = Vec::new();
+            let reading = self.extras.fps.reading();
             if fcfg.show_fps {
-                parts.push(format!("{} FPS", self.extras.fps.fps().round() as i32));
+                parts.push(format!("{} FPS", reading.fps));
+            }
+            if fcfg.show_lows {
+                parts.push(format!("1%:{}", reading.low));
             }
             if fcfg.show_ping {
                 let ping = self.debug_charts.ping.latest().unwrap_or(0);
