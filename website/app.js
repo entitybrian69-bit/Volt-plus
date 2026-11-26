@@ -5,12 +5,19 @@
   const RELEASES_API = `https://api.github.com/repos/${REPO}/releases?per_page=20`;
   const DISALLOWED_RE = /(debug|dev|pre[-_.]?release|alpha|beta|rc\d*|nightly|snapshot|canary|unsigned)/i;
 
+  const WALLPAPERS = [
+    { name: 'Greenhouse', src: 'assets/media/greenhouse.mp4' },
+    { name: 'Sakura House', src: 'assets/media/sakura-house.mp4' },
+    { name: 'Cherry Sunrise', src: 'assets/media/cherry-sunrise.mp4' },
+    { name: 'Aurora', src: 'assets/media/aurora.mp4' }
+  ];
+
   const SCREENSHOTS = [
     {
       src: 'assets/screen-launcher.jpg',
       tag: '01 / 07 · PLAY DASHBOARD',
       title: 'Volt launcher plus Home',
-      desc: '3D skin preview, quick Vulkan/GLES renderer switcher, Touch layout selector, Gyroscope toggle, and Play Minecraft 26.3.'
+      desc: '3D skin preview, Vulkan/GLES renderer switcher, Touch layout selector, Gyroscope toggle, and instant Play.'
     },
     {
       src: 'assets/screen-mods.jpg',
@@ -50,10 +57,38 @@
     }
   ];
 
-  // ---------- 1. Scroll Progress & Bottom Launcher Dock Sync ----------
+  // ---------- 1. Background Wallpaper Switcher ----------
+  const bgVideo = document.getElementById('bgWallpaperVideo');
+  const bgSwitchBtn = document.getElementById('bgSwitchBtn');
+  const bgSwitchLabel = document.getElementById('bgSwitchLabel');
+  let wpIdx = 0;
+
+  if (bgVideo && bgSwitchBtn) {
+    bgSwitchBtn.addEventListener('click', () => {
+      wpIdx = (wpIdx + 1) % WALLPAPERS.length;
+      const next = WALLPAPERS[wpIdx];
+      bgVideo.classList.add('is-switching');
+      setTimeout(() => {
+        bgVideo.src = next.src;
+        bgVideo.play().catch(() => {});
+        bgVideo.classList.remove('is-switching');
+      }, 220);
+      if (bgSwitchLabel) bgSwitchLabel.textContent = `Background: ${next.name}`;
+    });
+  }
+
+  // ---------- 2. Scroll Progress & Sliding Bottom Dock Indicator ----------
   const scrollProgress = document.getElementById('scrollProgress');
-  const dockItems = Array.from(document.querySelectorAll('.dock-item'));
+  const dock = document.getElementById('launcherDock');
+  const dockIndicator = document.getElementById('dockIndicator');
+  const dockTabs = Array.from(document.querySelectorAll('.dock-tab'));
   const sectionIds = ['play', 'downloads', 'features', 'screenshots', 'owner', 'faq'];
+
+  function moveDockIndicator(tab) {
+    if (!dockIndicator || !tab || !dock) return;
+    dockIndicator.style.width = `${tab.offsetWidth}px`;
+    dockIndicator.style.transform = `translateX(${tab.offsetLeft}px)`;
+  }
 
   function onScroll() {
     const doc = document.documentElement;
@@ -68,16 +103,29 @@
         current = id;
       }
     }
-    dockItems.forEach((item) => {
-      item.classList.toggle('is-active', item.dataset.section === current);
+
+    let activeTab = dockTabs[0];
+    dockTabs.forEach((tab) => {
+      const active = tab.dataset.section === current;
+      tab.classList.toggle('is-active', active);
+      if (active) activeTab = tab;
     });
+    moveDockIndicator(activeTab);
   }
 
   window.addEventListener('scroll', onScroll, { passive: true });
-  onScroll();
+  window.addEventListener('resize', () => {
+    const active = dockTabs.find((t) => t.classList.contains('is-active')) || dockTabs[0];
+    moveDockIndicator(active);
+  });
+  document.fonts?.ready.then(() => {
+    const active = dockTabs.find((t) => t.classList.contains('is-active')) || dockTabs[0];
+    moveDockIndicator(active);
+  });
+  setTimeout(onScroll, 60);
 
-  // ---------- 2. Warm Sunlit Shader Dust Motes Canvas ----------
-  const canvas = document.getElementById('moteCanvas');
+  // ---------- 3. Warm Sunlit Shader Motes ----------
+  const canvas = document.getElementById('ambientMotes');
   if (canvas) {
     const ctx = canvas.getContext('2d');
     let width = 0;
@@ -92,15 +140,14 @@
       canvas.height = Math.floor(height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      const count = Math.min(52, Math.max(20, Math.floor((width * height) / 28000)));
+      const count = Math.min(44, Math.max(18, Math.floor((width * height) / 32000)));
       motes = Array.from({ length: count }, () => ({
         x: Math.random() * width,
         y: Math.random() * height,
-        vx: (Math.random() - 0.5) * 0.25,
-        vy: -Math.random() * 0.35 - 0.08,
-        r: Math.random() * 2.1 + 0.7,
-        alpha: Math.random() * 0.45 + 0.15,
-        warm: Math.random() < 0.65
+        vx: (Math.random() - 0.5) * 0.22,
+        vy: -Math.random() * 0.32 - 0.08,
+        r: Math.random() * 1.9 + 0.6,
+        alpha: Math.random() * 0.4 + 0.14
       }));
     }
 
@@ -115,9 +162,7 @@
 
         ctx.beginPath();
         ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
-        ctx.fillStyle = m.warm
-          ? `rgba(255, 244, 214, ${m.alpha.toFixed(2)})`
-          : `rgba(220, 232, 224, ${m.alpha.toFixed(2)})`;
+        ctx.fillStyle = `rgba(255, 245, 222, ${m.alpha.toFixed(2)})`;
         ctx.fill();
       }
       requestAnimationFrame(tickMotes);
@@ -128,7 +173,7 @@
     requestAnimationFrame(tickMotes);
   }
 
-  // ---------- 3. Scroll Reveal & Counters ----------
+  // ---------- 4. Scroll Reveal & Counters ----------
   const revealObserver = new IntersectionObserver(
     (entries) => {
       entries.forEach((entry) => {
@@ -153,7 +198,7 @@
         const suffix = el.dataset.suffix || '';
         const start = performance.now();
         function step(now) {
-          const t = Math.min(1, (now - start) / 950);
+          const t = Math.min(1, (now - start) / 900);
           const eased = 1 - Math.pow(1 - t, 3);
           el.textContent = `${Math.round(target * eased)}${suffix}`;
           if (t < 1) requestAnimationFrame(step);
@@ -167,14 +212,14 @@
 
   document.querySelectorAll('.stat-num[data-count]').forEach((el) => counterObserver.observe(el));
 
-  // ---------- 4. Subtle 3D Tilt on Glass Cards ----------
+  // ---------- 5. Subtle 3D Tilt on Surfaces ----------
   if (window.matchMedia('(pointer: fine)').matches) {
-    document.querySelectorAll('.tilt-card').forEach((card) => {
+    document.querySelectorAll('.tilt-surface').forEach((card) => {
       card.addEventListener('pointermove', (e) => {
         const rect = card.getBoundingClientRect();
         const px = (e.clientX - rect.left) / rect.width - 0.5;
         const py = (e.clientY - rect.top) / rect.height - 0.5;
-        card.style.transform = `perspective(1000px) rotateX(${(-py * 3.5).toFixed(2)}deg) rotateY(${(px * 4).toFixed(2)}deg) translateY(-2px)`;
+        card.style.transform = `perspective(1100px) rotateX(${(-py * 2.8).toFixed(2)}deg) rotateY(${(px * 3.4).toFixed(2)}deg) translateY(-2px)`;
       });
       card.addEventListener('pointerleave', () => {
         card.style.transform = '';
@@ -182,9 +227,9 @@
     });
   }
 
-  // ---------- 5. Kinetic Subtitle & Intro GIF Toggle ----------
+  // ---------- 6. Kinetic Subtitle & Intro Video Toggle ----------
   const kineticEl = document.getElementById('kineticWord');
-  const words = ['Vulkan Engine', '260 FPS Runtime', 'Shader Support', 'Touch Control Hub', 'Replay MP4 Export'];
+  const words = ['260 FPS', 'Vulkan Shaders', '260+ Mods', 'Replay MP4 Export', 'Control Hub'];
   let wordIndex = 0;
   if (kineticEl) {
     setInterval(() => {
@@ -193,7 +238,7 @@
         wordIndex = (wordIndex + 1) % words.length;
         kineticEl.textContent = words[wordIndex];
         kineticEl.classList.remove('is-switching');
-      }, 260);
+      }, 240);
     }, 2400);
   }
 
@@ -201,39 +246,40 @@
   const toggleIntroLabel = document.getElementById('toggleIntroLabel');
   const previewCaption = document.getElementById('previewCaption');
   const heroPreviewImg = document.getElementById('heroPreviewImg');
-  const heroIntroGif = document.getElementById('heroIntroGif');
+  const heroIntroVideo = document.getElementById('heroIntroVideo');
   let showingIntro = false;
-  if (toggleIntroBtn && heroPreviewImg && heroIntroGif) {
+  if (toggleIntroBtn && heroPreviewImg && heroIntroVideo) {
     toggleIntroBtn.addEventListener('click', () => {
       showingIntro = !showingIntro;
       heroPreviewImg.classList.toggle('is-active', !showingIntro);
-      heroIntroGif.classList.toggle('is-active', showingIntro);
+      heroIntroVideo.classList.toggle('is-active', showingIntro);
+      if (showingIntro) heroIntroVideo.play().catch(() => {});
       if (toggleIntroLabel) {
-        toggleIntroLabel.textContent = showingIntro ? 'Show Dashboard' : 'Play Intro GIF';
+        toggleIntroLabel.textContent = showingIntro ? 'Show Dashboard' : 'Watch Intro';
       }
       if (previewCaption) {
         previewCaption.textContent = showingIntro
-          ? '1080p60 First-Launch Intro Clip'
-          : `Live Launcher UI · ${currentReleaseState.tag}`;
+          ? 'Volt launcher plus · First-Start Intro'
+          : 'Volt launcher plus · Dashboard';
       }
     });
   }
 
-  // ---------- 6. Feature Category Filter Pills ----------
-  const filterPills = Array.from(document.querySelectorAll('.filter-pill'));
-  const featureCards = Array.from(document.querySelectorAll('.setting-card'));
-  filterPills.forEach((pill) => {
-    pill.addEventListener('click', () => {
-      const cat = pill.dataset.filter || 'all';
-      filterPills.forEach((p) => p.classList.toggle('is-active', p === pill));
-      featureCards.forEach((card) => {
-        const show = cat === 'all' || card.dataset.cat === cat;
-        card.classList.toggle('is-hidden', !show);
+  // ---------- 7. Feature Category Filter ----------
+  const filterBtns = Array.from(document.querySelectorAll('.filter-btn'));
+  const featureItems = Array.from(document.querySelectorAll('.feature-item'));
+  filterBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const cat = btn.dataset.filter || 'all';
+      filterBtns.forEach((b) => b.classList.toggle('is-active', b === btn));
+      featureItems.forEach((item) => {
+        const show = cat === 'all' || item.dataset.cat === cat;
+        item.classList.toggle('is-hidden', !show);
       });
     });
   });
 
-  // ---------- 7. Screenshots Carousel & Lightbox ----------
+  // ---------- 8. Screenshots Carousel & Lightbox ----------
   let slideIdx = 0;
   const mainImg = document.getElementById('carouselMainImg');
   const cTag = document.getElementById('carouselTag');
@@ -263,8 +309,8 @@
   thumbs.forEach((t) => t.addEventListener('click', () => setSlide(Number(t.dataset.index || 0))));
 
   let autoSlideTimer = setInterval(() => setSlide(slideIdx + 1), 5000);
-  document.querySelector('.spotlight-frame')?.addEventListener('pointerenter', () => clearInterval(autoSlideTimer));
-  document.querySelector('.spotlight-frame')?.addEventListener('pointerleave', () => {
+  document.querySelector('.spotlight-stage')?.addEventListener('pointerenter', () => clearInterval(autoSlideTimer));
+  document.querySelector('.spotlight-stage')?.addEventListener('pointerleave', () => {
     clearInterval(autoSlideTimer);
     autoSlideTimer = setInterval(() => setSlide(slideIdx + 1), 5000);
   });
@@ -298,7 +344,7 @@
   }
 
   document.getElementById('openLightboxBtn')?.addEventListener('click', () => openLightbox(slideIdx));
-  document.querySelectorAll('.shot-tile').forEach((card) => {
+  document.querySelectorAll('.shot-card').forEach((card) => {
     card.addEventListener('click', () => openLightbox(Number(card.dataset.index || 0)));
   });
   document.getElementById('lbClose')?.addEventListener('click', closeLightbox);
@@ -314,7 +360,7 @@
     if (e.key === 'ArrowRight') openLightbox(lbIdx + 1);
   });
 
-  // ---------- 8. FAQ & Release Notes Accordions ----------
+  // ---------- 9. FAQ & Release Notes Accordions ----------
   document.querySelectorAll('.faq-q').forEach((btn) => {
     btn.addEventListener('click', () => {
       const item = btn.closest('.faq-item');
@@ -332,7 +378,7 @@
     });
   }
 
-  // ---------- 9. Toast & Copy SHA-256 ----------
+  // ---------- 10. Toast & Copy SHA-256 ----------
   const toastEl = document.getElementById('downloadToast');
   const toastTitle = document.getElementById('toastTitle');
   const toastSub = document.getElementById('toastSub');
@@ -347,7 +393,7 @@
     toastTimer = setTimeout(() => toastEl.classList.remove('is-shown'), 4200);
   }
 
-  document.querySelectorAll('.copy-sha-btn').forEach((btn) => {
+  document.querySelectorAll('.copy-btn').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const target = document.getElementById(btn.dataset.copyTarget);
       const val = target?.textContent?.trim() || '';
@@ -355,20 +401,20 @@
       try {
         await navigator.clipboard.writeText(val);
         const orig = btn.textContent;
-        btn.textContent = 'Copied ✓';
-        setTimeout(() => { btn.textContent = orig; }, 1600);
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
       } catch (_) {}
     });
   });
 
-  // ---------- 10. Device Architecture Detection ----------
+  // ---------- 11. Device ABI Detection ----------
   let detectedAbi = 'arm64';
 
   async function detectDeviceAbi() {
     const tagEl = document.getElementById('deviceDetectTag');
     const ua = navigator.userAgent || '';
     let abi = 'arm64';
-    let label = 'Recommended: 64-bit (arm64-v8a)';
+    let label = 'Recommended: 64-bit';
 
     try {
       if (navigator.userAgentData?.getHighEntropyValues) {
@@ -388,7 +434,7 @@
         label = 'Detected: 64-bit ARM';
       } else if (!/android/i.test(ua)) {
         abi = 'universal';
-        label = 'Desktop · Universal / 64-bit Recommended';
+        label = 'Desktop · Universal / 64-bit';
       }
     } catch (_) {}
 
@@ -402,7 +448,7 @@
     updateHeroSmartButton();
   }
 
-  // ---------- 11. Auto-Updating Release-Only APK Resolver ----------
+  // ---------- 12. Release-Only Auto-Updating APK Sync ----------
   let currentReleaseState = {
     ready: false,
     version: '1.0.1',
@@ -452,8 +498,8 @@
     heroBtn.href = info.url;
     heroBtn.setAttribute('download', info.filename);
     heroBtn.dataset.abi = detectedAbi;
-    if (heroTitle) heroTitle.textContent = `${labelMap[detectedAbi]} (${currentReleaseState.tag})`;
-    if (heroSub) heroSub.textContent = `${info.sizeMb} · Direct Release APK · No GitHub Redirect`;
+    if (heroTitle) heroTitle.textContent = `${labelMap[detectedAbi]} · ${currentReleaseState.tag}`;
+    if (heroSub) heroSub.textContent = `${info.sizeMb} · Direct Release APK`;
   }
 
   function renderReleaseState() {
@@ -465,14 +511,14 @@
     const heroLabel = document.getElementById('heroReleaseLabel');
 
     if (badge) badge.textContent = `Latest Release: ${currentReleaseState.tag}`;
-    if (navSub) navSub.textContent = `${currentReleaseState.tag} · Release`;
+    if (navSub) navSub.textContent = `Android ${currentReleaseState.version}`;
     if (heroLabel) {
-      heroLabel.innerHTML = `<span class="live-dot"></span><span>Release ${currentReleaseState.tag}</span>`;
+      heroLabel.innerHTML = `<span class="live-dot"></span><span>Release ${currentReleaseState.tag} · No Debug · No Pre-release</span>`;
     }
     if (meta) {
       meta.textContent = currentReleaseState.publishedAt
-        ? `Published ${new Date(currentReleaseState.publishedAt).toLocaleDateString()} · Signed Release APKs (64-bit, 32-bit & Universal)`
-        : 'Automatically synced to the latest published stable Release — no debug, no pre-release, no GitHub redirects.';
+        ? `Published ${new Date(currentReleaseState.publishedAt).toLocaleDateString()} — direct APK downloads without opening GitHub.`
+        : 'Official Release builds only — tapping any Download button starts your .apk download immediately without opening GitHub.';
     }
     if (notesHeading) notesHeading.textContent = `Release Notes — ${currentReleaseState.tag}`;
     if (notesBody) notesBody.textContent = currentReleaseState.notes || 'Official signed Release build.';
