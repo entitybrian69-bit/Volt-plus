@@ -336,7 +336,7 @@ impl Package {
             let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
             let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
             let mut entry = |name: &str| -> Result<Option<Vec<u8>>, String> {
-                let f = match zip.by_name(name) {
+                let mut f = match zip.by_name(name) {
                     Ok(f) => f,
                     Err(zip::result::ZipError::FileNotFound) => return Ok(None),
                     Err(e) => return Err(format!("{name}: {e}")),
