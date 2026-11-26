@@ -150,7 +150,15 @@ jobs:
           log = Path(os.environ['RUNNER_TEMP']) / 'volt-debug-build.log'
           if log.is_file():
               lines = log.read_text(errors='replace').splitlines()
-              for line in lines[-60:]:
+              hits = [i for i, l in enumerate(lines) if 'error[' in l or l.lstrip().startswith('error:') or 'FAILURE:' in l or '.java:' in l]
+              out = []
+              for idx in hits[:4]:
+                  for j in range(max(0, idx), min(len(lines), idx + 6)):
+                      if lines[j] not in out:
+                          out.append(lines[j])
+              if not out:
+                  out = lines[-10:]
+              for line in out[:10]:
                   print(f'::error::{line}')
           PY
       - name: Collect debug APK and public metadata
