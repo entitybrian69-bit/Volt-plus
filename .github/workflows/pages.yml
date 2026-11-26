@@ -39,7 +39,6 @@ jobs:
           rm -rf _site
           mkdir -p _site/downloads _site/assets/media
           cp -r website/. _site/
-          cp wallpapers/greenhouse.mp4 wallpapers/sakura-house.mp4 wallpapers/cherry-sunrise.mp4 wallpapers/aurora.mp4 _site/assets/media/
           cp packaging/android/media/intro.mp4 _site/assets/media/intro.mp4
           touch _site/.nojekyll
 
