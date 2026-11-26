@@ -1210,51 +1210,51 @@ impl Game<'_> {
                     self.handle_replay_action(act)?;
                 }
                 InGameMenuAction::MusicTogglePause => {
-                    crate::internet_music::toggle_pause();
+                    horizon_client::internet_music::toggle_pause();
                     self.update_discord_presence();
                 }
                 InGameMenuAction::MusicNext => {
-                    crate::internet_music::next_track();
+                    horizon_client::internet_music::next_track();
                     self.update_discord_presence();
                 }
                 InGameMenuAction::MusicPrev => {
-                    crate::internet_music::prev_track();
+                    horizon_client::internet_music::prev_track();
                     self.update_discord_presence();
                 }
                 InGameMenuAction::MusicSeekBy(delta_ms) => {
-                    crate::internet_music::seek_by_ms(delta_ms);
+                    horizon_client::internet_music::seek_by_ms(delta_ms);
                 }
                 InGameMenuAction::MusicSeekFrac(frac) => {
-                    let snap = crate::internet_music::snapshot();
+                    let snap = horizon_client::internet_music::snapshot();
                     if snap.duration_ms > 0 {
                         let target = ((snap.duration_ms as f32) * frac.clamp(0.0, 1.0)) as u64;
-                        crate::internet_music::seek_to_ms(target);
+                        horizon_client::internet_music::seek_to_ms(target);
                     }
                 }
                 InGameMenuAction::MusicSetVolume(vol) => {
-                    crate::internet_music::set_volume(vol);
+                    horizon_client::internet_music::set_volume(vol);
                 }
                 InGameMenuAction::MusicToggleMute => {
-                    crate::internet_music::toggle_mute();
+                    horizon_client::internet_music::toggle_mute();
                 }
                 InGameMenuAction::MusicToggleVanilla => {
-                    let off = crate::internet_music::toggle_vanilla_music_disabled();
+                    let off = horizon_client::internet_music::toggle_vanilla_music_disabled();
                     if off {
                         self.music.stop_playing(None, &mut self.audio);
                     }
                 }
                 InGameMenuAction::MusicSelectPlaylist(_) => {}
                 InGameMenuAction::MusicPlayPlaylist(pi) => {
-                    let pls = crate::internet_music::playlists();
+                    let pls = horizon_client::internet_music::playlists();
                     if let Some(pl) = pls.get(pi) {
-                        crate::internet_music::play_playlist(&pl.name, 0);
+                        horizon_client::internet_music::play_playlist(&pl.name, 0);
                         self.update_discord_presence();
                     }
                 }
                 InGameMenuAction::MusicPlayPlaylistTrack(pi, ti) => {
-                    let pls = crate::internet_music::playlists();
+                    let pls = horizon_client::internet_music::playlists();
                     if let Some(pl) = pls.get(pi) {
-                        crate::internet_music::play_playlist(&pl.name, ti);
+                        horizon_client::internet_music::play_playlist(&pl.name, ti);
                         self.update_discord_presence();
                     }
                 }
