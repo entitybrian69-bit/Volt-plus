@@ -44,6 +44,27 @@ final class WallpaperPlayer {
         b.put(data).position(0); return b;
     }
 
+    static int[] probeSize(String path) {
+        android.media.MediaMetadataRetriever r = new android.media.MediaMetadataRetriever();
+        try {
+            r.setDataSource(path);
+            String ws = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
+            String hs = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
+            String rot = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+            int w = ws != null ? Integer.parseInt(ws) : 0;
+            int h = hs != null ? Integer.parseInt(hs) : 0;
+            int deg = rot != null ? Integer.parseInt(rot) : 0;
+            if ((deg == 90 || deg == 270) && w > 0 && h > 0) {
+                int tmp = w; w = h; h = tmp;
+            }
+            if (w > 0 && h > 0) return new int[] { w, h };
+        } catch (Throwable ignored) {
+        } finally {
+            try { r.release(); } catch (Throwable ignored) {}
+        }
+        return new int[] { 1280, 720 };
+    }
+
     void start(String path, int sourceWidth, int sourceHeight, int w, int h) {
         final int id;
         synchronized (lock) { id = ++generation; ready = false; status = "Preparing wallpaper..."; }
@@ -52,11 +73,18 @@ final class WallpaperPlayer {
             synchronized (lock) { if (id != generation) return; }
             try {
                 if (w <= 0 || h <= 0 || (long) w * h * 4 > 40_000_000L) throw new IllegalArgumentException("Unsupported video size");
+                int srcW = sourceWidth;
+                int srcH = sourceHeight;
+                if (srcW <= 0 || srcH <= 0) {
+                    int[] probed = probeSize(path);
+                    srcW = probed[0];
+                    srcH = probed[1];
+                }
                 width = w; height = h; lastFrameNanos = 0;
                 initGl();
                 surfaceTexture = new SurfaceTexture(texture);
                 // Decode the untouched source; GL samples to the physical display + overscan.
-                surfaceTexture.setDefaultBufferSize(sourceWidth, sourceHeight);
+                surfaceTexture.setDefaultBufferSize(srcW, srcH);
                 surface = new Surface(surfaceTexture);
                 surfaceTexture.setOnFrameAvailableListener(st -> frame(id), handler);
                 MediaPlayer m = new MediaPlayer();
@@ -65,6 +93,13 @@ final class WallpaperPlayer {
                 m.setSurface(surface);
                 m.setVolume(0f, 0f);
                 m.setLooping(true);
+                m.setOnVideoSizeChangedListener((p, vw, vh) -> {
+                    synchronized (lock) {
+                        if (id == generation && surfaceTexture != null && vw > 0 && vh > 0) {
+                            surfaceTexture.setDefaultBufferSize(vw, vh);
+                        }
+                    }
+                });
                 m.setOnPreparedListener(p -> {
                     synchronized (lock) { if (id != generation) return; status = ""; }
                     p.start();

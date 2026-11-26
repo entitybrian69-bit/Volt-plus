@@ -4042,6 +4042,10 @@ pub const THEME_BG_SWATCHES_LIGHT: [(u32, &str, &str); 6] = [
     (0xF4F5F7, "#F4F5F7", "Pure Alabaster"),
 ];
 
+fn default_ui_opacity() -> f32 {
+    1.0
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct LauncherThemeConfig {
@@ -4057,6 +4061,8 @@ pub struct LauncherThemeConfig {
     pub gradient_end_hex: String,
     pub gradient_mid_pos: f32,
     pub use_three_stops: bool,
+    #[serde(default = "default_ui_opacity")]
+    pub ui_opacity: f32,
 }
 
 impl Default for LauncherThemeConfig {
@@ -4074,6 +4080,7 @@ impl Default for LauncherThemeConfig {
             gradient_end_hex: "#0A120F".into(),
             gradient_mid_pos: 0.50,
             use_three_stops: true,
+            ui_opacity: 1.0,
         }
     }
 }
@@ -4172,6 +4179,7 @@ pub struct ResolvedTheme {
     pub text_muted: u32,
     pub success: u32,
     pub danger: u32,
+    pub ui_opacity: f32,
 }
 
 impl Default for ResolvedTheme {
@@ -4186,6 +4194,10 @@ impl LauncherThemeConfig {
             self.gradient_mid_pos = 0.50;
         }
         self.gradient_mid_pos = self.gradient_mid_pos.clamp(0.15, 0.85);
+        if !self.ui_opacity.is_finite() {
+            self.ui_opacity = 1.0;
+        }
+        self.ui_opacity = self.ui_opacity.clamp(0.10, 1.0);
         let (def_bg, def_surf, def_acc, def_gs, def_gm, def_ge, _) = self.preset.palette_rgb();
         if parse_hex_color(&self.custom_bg_hex).is_none() {
             self.custom_bg_hex = format_hex_color(def_bg);
@@ -4348,6 +4360,18 @@ impl LauncherThemeConfig {
             bg_rgb
         };
 
+        let ui_opacity = if self.ui_opacity.is_finite() {
+            self.ui_opacity.clamp(0.10, 1.0)
+        } else {
+            1.0
+        };
+        let scale_a = |base: u8, min_a: u8| -> u8 {
+            ((f32::from(base) * ui_opacity).round() as u32)
+                .clamp(u32::from(min_a), 255) as u8
+        };
+        let fg_a = ((255.0 * (0.45 + 0.55 * ui_opacity)).round() as u32).clamp(90, 255) as u8;
+        let soft_a = ((255.0 * 0.22 * ui_opacity).round() as u32).clamp(10, 255) as u8;
+
         ResolvedTheme {
             is_light,
             is_horizon: self.background_mode == BackgroundMode::Horizon,
@@ -4357,26 +4381,27 @@ impl LauncherThemeConfig {
             gradient_direction: self.gradient_direction,
             use_three_stops: self.use_three_stops,
             gradient_mid_pos: self.gradient_mid_pos.clamp(0.15, 0.85),
-            bg_solid: color::hex(solid_fallback_rgb, 255),
-            gradient_start: color::hex(gs_adj, 255),
-            gradient_mid: color::hex(gm_adj, 255),
-            gradient_end: color::hex(ge_adj, 255),
-            sidebar_bg: color::hex(sidebar_rgb, 244),
-            header_bg: color::hex(header_rgb, 244),
-            surface: color::hex(surf_rgb, 240),
-            surface_dim: color::hex(surf_dim_rgb, 244),
-            surface_bright: color::hex(surf_bright_rgb, 248),
-            surface_selected: color::hex(surf_sel_rgb, 252),
-            border: color::hex(border_rgb, 255),
-            border_strong: color::hex(border_strong_rgb, 255),
-            accent: color::hex(accent_rgb, 255),
-            accent_soft: color::with_alpha(color::hex(accent_rgb, 255), 0.22),
-            on_accent: color::hex(on_accent_rgb, 255),
-            accent_text: color::hex(on_accent_rgb, 255),
-            text_primary: color::hex(text_primary_rgb, 255),
-            text_muted: color::hex(text_muted_rgb, 255),
-            success: color::hex(if is_light { 0x15803D } else { 0x4ADE80 }, 255),
-            danger: color::hex(if is_light { 0xDC2626 } else { 0xF87171 }, 255),
+            bg_solid: color::hex(solid_fallback_rgb, scale_a(255, 16)),
+            gradient_start: color::hex(gs_adj, scale_a(255, 16)),
+            gradient_mid: color::hex(gm_adj, scale_a(255, 16)),
+            gradient_end: color::hex(ge_adj, scale_a(255, 16)),
+            sidebar_bg: color::hex(sidebar_rgb, scale_a(244, 16)),
+            header_bg: color::hex(header_rgb, scale_a(244, 16)),
+            surface: color::hex(surf_rgb, scale_a(240, 16)),
+            surface_dim: color::hex(surf_dim_rgb, scale_a(244, 16)),
+            surface_bright: color::hex(surf_bright_rgb, scale_a(248, 20)),
+            surface_selected: color::hex(surf_sel_rgb, scale_a(252, 24)),
+            border: color::hex(border_rgb, scale_a(255, 36)),
+            border_strong: color::hex(border_strong_rgb, scale_a(255, 64)),
+            accent: color::hex(accent_rgb, fg_a),
+            accent_soft: color::hex(accent_rgb, soft_a),
+            on_accent: color::hex(on_accent_rgb, fg_a),
+            accent_text: color::hex(on_accent_rgb, fg_a),
+            text_primary: color::hex(text_primary_rgb, fg_a),
+            text_muted: color::hex(text_muted_rgb, fg_a),
+            success: color::hex(if is_light { 0x15803D } else { 0x4ADE80 }, fg_a),
+            danger: color::hex(if is_light { 0xDC2626 } else { 0xF87171 }, fg_a),
+            ui_opacity,
         }
     }
 }

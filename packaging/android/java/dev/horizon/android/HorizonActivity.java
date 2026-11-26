@@ -32,6 +32,7 @@ public final class HorizonActivity extends android.app.NativeActivity {
         WallpaperPlayer.get().start(path, sourceWidth, sourceHeight, width, height);
     }
     public void stopWallpaper() { WallpaperPlayer.get().stop(); }
+    public int[] probeWallpaperSize(String path) { return WallpaperPlayer.probeSize(path); }
     public java.nio.ByteBuffer acquireWallpaperFrame() { return WallpaperPlayer.get().acquire(); }
     public void releaseWallpaperFrame() { WallpaperPlayer.get().releaseFrame(); }
     public String wallpaperStatus() { return WallpaperPlayer.get().status(); }

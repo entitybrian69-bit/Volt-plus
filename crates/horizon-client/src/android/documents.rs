@@ -898,7 +898,11 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
             .file_name()
             .and_then(|s| s.to_str())
             .is_some_and(|s| matches!(s, "horizon-mods" | "horizon-native-mods" | "mods"));
-        let copy_limit = if in_mods || request.kind == Kind::Mods {
+        let in_wallpapers = target_dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s == "custom-wallpapers");
+        let copy_limit = if in_mods || in_wallpapers || request.kind == Kind::Mods {
             None
         } else {
             Some(content_files::MAX_INPUT)

@@ -68,6 +68,15 @@ pub(super) struct Launcher {
     wallpaper_frame_size: [u32; 2],
     wallpaper_buffer: Vec<u8>,
     wallpaper_color: Option<[u8; 3]>,
+    custom_video_source_size: [u32; 2],
+    custom_photo_rgba: Option<(u32, u32, Vec<u8>)>,
+    custom_photo_dirty: bool,
+    custom_photo_loaded_path: Option<String>,
+    custom_photo_worker: Option<
+        mpsc::Receiver<std::result::Result<(String, u32, u32, Vec<u8>, Option<[u8; 3]>), String>>,
+    >,
+    awaiting_custom_wallpaper: bool,
+    custom_wallpaper_known: std::collections::HashSet<PathBuf>,
     targets: Vec<([f32; 4], pages::Action)>,
     list_targets: Vec<([f32; 4], pages::Action)>,
     list_view: Option<[f32; 3]>,
@@ -94,6 +103,72 @@ pub(super) struct Launcher {
 
 impl Launcher {
     fn start_wallpaper(&mut self) {
+        if let Some(rel) = self.catalog.config.custom_wallpaper_path.clone() {
+            let path = self.home.join(&rel);
+            if path.is_file() {
+                if self.catalog.config.custom_wallpaper_is_video {
+                    self.custom_photo_rgba = None;
+                    self.custom_photo_loaded_path = None;
+                    self.custom_photo_dirty = false;
+                    let src = crate::native_ime::wallpaper_probe_size(&path);
+                    self.custom_video_source_size = src;
+                    let viewport = self
+                        .renderer
+                        .as_ref()
+                        .map(|r| [r.config.width, r.config.height])
+                        .unwrap_or(src);
+                    self.wallpaper_frame_size = crate::wallpapers::frame_size(src, viewport);
+                    if let Err(e) =
+                        crate::native_ime::wallpaper_start(&path, src, self.wallpaper_frame_size)
+                    {
+                        self.wallpaper_status = format!("Video unavailable: {e}");
+                    }
+                    return;
+                } else {
+                    crate::native_ime::wallpaper_stop();
+                    self.wallpaper_has_frame = false;
+                    if self.custom_photo_loaded_path.as_deref() == Some(rel.as_str())
+                        && self.custom_photo_rgba.is_some()
+                    {
+                        self.custom_photo_dirty = true;
+                        return;
+                    }
+                    if self.custom_photo_worker.is_none() {
+                        let (tx, rx) = mpsc::channel();
+                        self.custom_photo_worker = Some(rx);
+                        let rel_bg = rel.clone();
+                        std::thread::spawn(move || {
+                            let res = image::open(&path)
+                                .map_err(|e| format!("Could not decode photo: {e}"))
+                                .map(|img| {
+                                    let max_dim = 2048u32;
+                                    let scaled =
+                                        if img.width() > max_dim || img.height() > max_dim {
+                                            img.resize(
+                                                max_dim,
+                                                max_dim,
+                                                image::imageops::FilterType::Triangle,
+                                            )
+                                        } else {
+                                            img
+                                        };
+                                    let rgba = scaled.to_rgba8();
+                                    let (w, h) = (rgba.width(), rgba.height());
+                                    let raw = rgba.into_raw();
+                                    let sample = crate::wallpapers::sample_color(&raw);
+                                    (rel_bg, w, h, raw, sample)
+                                });
+                            let _ = tx.send(res);
+                        });
+                    }
+                    return;
+                }
+            } else {
+                self.catalog.config.custom_wallpaper_path = None;
+                self.catalog.config.custom_wallpaper_is_video = false;
+                let _ = self.catalog.config.save(&self.home);
+            }
+        }
         let i = crate::wallpapers::effective_index(self.catalog.config.wallpaper_index);
         if i == crate::wallpapers::DEFAULT_INDEX
             && let Err(error) = crate::wallpapers::ensure_bundled_default(&self.home)
@@ -318,6 +393,13 @@ impl Launcher {
             wallpaper_frame_size: [0, 0],
             wallpaper_buffer: Vec::new(),
             wallpaper_color: None,
+            custom_video_source_size: [1280, 720],
+            custom_photo_rgba: None,
+            custom_photo_dirty: false,
+            custom_photo_loaded_path: None,
+            custom_photo_worker: None,
+            awaiting_custom_wallpaper: false,
+            custom_wallpaper_known: std::collections::HashSet::new(),
             targets: vec![],
             list_targets: vec![],
             list_view: None,
@@ -933,9 +1015,24 @@ impl ApplicationHandler for Launcher {
                 if let Some(r) = &mut self.renderer {
                     r.resize(size.width, size.height);
                 }
-                if let Some(item) = crate::wallpapers::WALLPAPERS.get(crate::wallpapers::effective_index(self.catalog.config.wallpaper_index)) {
-                    let viewport = self.renderer.as_ref().map(|r| [r.config.width, r.config.height])
-                        .unwrap_or([size.width, size.height]);
+                let viewport = self
+                    .renderer
+                    .as_ref()
+                    .map(|r| [r.config.width, r.config.height])
+                    .unwrap_or([size.width, size.height]);
+                if self.catalog.config.custom_wallpaper_path.is_some()
+                    && self.catalog.config.custom_wallpaper_is_video
+                {
+                    let target =
+                        crate::wallpapers::frame_size(self.custom_video_source_size, viewport);
+                    if size.width > 0 && size.height > 0 && target != self.wallpaper_frame_size {
+                        self.start_wallpaper();
+                    }
+                } else if self.catalog.config.custom_wallpaper_path.is_none()
+                    && let Some(item) = crate::wallpapers::WALLPAPERS.get(
+                        crate::wallpapers::effective_index(self.catalog.config.wallpaper_index),
+                    )
+                {
                     let target = crate::wallpapers::frame_size([item.width, item.height], viewport);
                     if size.width > 0 && size.height > 0 && target != self.wallpaper_frame_size {
                         self.start_wallpaper();

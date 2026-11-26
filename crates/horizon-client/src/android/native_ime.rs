@@ -1056,6 +1056,43 @@ pub fn wallpaper_frame(expected: usize, recycled: &mut Vec<u8>) -> Option<Vec<u8
     match result { Ok(frame) => frame, Err(_) => { let _ = env.exception_clear(); None } }
 }
 
+pub fn wallpaper_probe_size(path: &std::path::Path) -> [u32; 2] {
+    let Some(ui) = UI.get() else {
+        return [1280, 720];
+    };
+    let Ok(mut env) = ui.vm.attach_current_thread() else {
+        return [1280, 720];
+    };
+    let result = env.with_local_frame(8, |env| -> jni::errors::Result<[u32; 2]> {
+        let path = JObject::from(env.new_string(path.to_string_lossy().as_ref())?);
+        let arr_obj = env
+            .call_method(
+                &ui.activity,
+                "probeWallpaperSize",
+                "(Ljava/lang/String;)[I",
+                &[JValue::Object(&path)],
+            )?
+            .l()?;
+        if arr_obj.is_null() {
+            return Ok([1280, 720]);
+        }
+        let arr = jni::objects::JIntArray::from(arr_obj);
+        let mut out = [1280i32, 720i32];
+        env.get_int_array_region(&arr, 0, &mut out)?;
+        Ok([
+            u32::try_from(out[0]).unwrap_or(1280).max(1),
+            u32::try_from(out[1]).unwrap_or(720).max(1),
+        ])
+    });
+    match result {
+        Ok(size) => size,
+        Err(_) => {
+            let _ = env.exception_clear();
+            [1280, 720]
+        }
+    }
+}
+
 pub fn wallpaper_status() -> Option<String> {
     let ui = UI.get()?;
     let mut env = ui.vm.attach_current_thread().ok()?;

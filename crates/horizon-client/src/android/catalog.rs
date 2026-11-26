@@ -115,6 +115,10 @@ pub struct Config {
     #[serde(default)]
     pub wallpaper_index: Option<usize>,
     #[serde(default)]
+    pub custom_wallpaper_path: Option<String>,
+    #[serde(default)]
+    pub custom_wallpaper_is_video: bool,
+    #[serde(default)]
     pub volt_fullscreen_default_v1: bool,
 }
 

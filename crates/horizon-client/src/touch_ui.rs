@@ -1404,20 +1404,36 @@ fn draw_input_picker_modal(
     kb_scroll_x: f32,
     for_custom_send: bool,
     mcpe_exclusive: bool,
+    bw_theme: bool,
 ) {
     use crate::touch::PickerStep;
     use crate::ui_theme::Face;
     let theme = crate::ui_theme::active_theme();
-    let bg_card = theme.bg_solid;
-    let bg_hi = theme.surface;
-    let border_c = theme.border;
-    let accent = theme.accent;
-    let accent_soft = theme.surface_selected;
-    let text_c = theme.text_primary;
-    let muted_c = theme.text_muted;
-    let danger_c = theme.danger;
+    let (bg_card, bg_hi, border_c, accent, accent_soft, text_c, muted_c, danger_c) = if bw_theme {
+        (
+            rgba(0, 0, 0, 248),
+            rgba(22, 22, 26, 244),
+            rgba(255, 255, 255, 78),
+            rgba(255, 255, 255, 255),
+            rgba(46, 46, 52, 248),
+            rgba(255, 255, 255, 255),
+            rgba(194, 194, 200, 255),
+            rgba(240, 240, 244, 255),
+        )
+    } else {
+        (
+            theme.bg_solid,
+            theme.surface,
+            theme.border,
+            theme.accent,
+            theme.surface_selected,
+            theme.text_primary,
+            theme.text_muted,
+            theme.danger,
+        )
+    };
 
-    ui.fill(0.0, 0.0, w, h, rgba(4, 5, 10, 195));
+    ui.fill(0.0, 0.0, w, h, if bw_theme { rgba(0, 0, 0, 205) } else { rgba(4, 5, 10, 195) });
     match step {
         PickerStep::AskInputType { event_slot } => {
             let dw = (w - 36.0).clamp(270.0, 440.0);
@@ -3449,22 +3465,22 @@ impl TouchUi {
         let open_ease = crate::ui_theme::motion::spring_expressive_default(open_t);
         let tab_ease = crate::ui_theme::motion::spring_expressive_default(tab_t);
 
-        // Volt Graphics frosted glass palette — slightly lighter charcoal-violet slate
-        // with true #745CEB violet accent and crisp hairline borders.
-        let surface_bg = rgba(34, 32, 48, 240);
-        let sidebar_bg = rgba(26, 24, 38, 242);
-        let card_bg = rgba(54, 51, 78, 224);
-        let card_sel = rgba(74, 68, 114, 236);
-        let well_bg = rgba(42, 40, 62, 230);
-        let border_c = rgba(255, 255, 255, 62);
-        let border_strong = rgba(255, 255, 255, 232);
-        let accent = rgba(116, 92, 235, 255);
-        let accent_hi = rgba(140, 118, 248, 255);
-        let accent_edge = rgba(180, 164, 255, 225);
-        let accent_fg = rgba(255, 255, 255, 255);
-        let text_c = rgba(248, 247, 255, 255);
-        let muted_c = rgba(188, 186, 206, 255);
-        let danger_c = rgba(242, 108, 120, 255);
+        // Full monochrome Black & White theme for the V+ overlay & Control Hub:
+        // pure black surfaces, crisp white foreground letters/icons/borders, and inverted black-on-white active controls.
+        let surface_bg = rgba(0, 0, 0, 246);
+        let sidebar_bg = rgba(8, 8, 10, 248);
+        let card_bg = rgba(18, 18, 22, 238);
+        let card_sel = rgba(38, 38, 44, 246);
+        let well_bg = rgba(10, 10, 12, 244);
+        let border_c = rgba(255, 255, 255, 68);
+        let border_strong = rgba(255, 255, 255, 238);
+        let accent = rgba(255, 255, 255, 255);
+        let accent_hi = rgba(255, 255, 255, 255);
+        let accent_edge = rgba(255, 255, 255, 215);
+        let accent_fg = rgba(0, 0, 0, 255);
+        let text_c = rgba(255, 255, 255, 255);
+        let muted_c = rgba(190, 190, 196, 255);
+        let danger_c = rgba(242, 242, 246, 245);
         let _ = color::hex;
 
         // Keep the V+ overlay button visible regardless of touch/HUD fade state whenever
@@ -3476,7 +3492,7 @@ impl TouchUi {
             overlay_alpha
         };
 
-        // Draw moveable Floating Menu Button (MCPE stone-bevel V+ button OR GoyControl V+ pill)
+        // Draw moveable Floating Menu Button (MCPE black/white bevel V+ button OR GoyControl V+ pill)
         if !self.expanded && bubble_alpha > 0.001 {
             let [btn_x, btn_y, btn_w, btn_h] = floating_button_rect(w, h, settings);
             let ov_scale = settings.overlay_scale.clamp(0.5, 2.0);
@@ -3484,20 +3500,20 @@ impl TouchUi {
                 let scale_rgba = |r: u8, g: u8, bl: u8, al: u8| -> u32 {
                     rgba(r, g, bl, (f32::from(al) * bubble_alpha).round() as u8)
                 };
-                // Authentic MCPE top-bar V+ button plate (stone-slate 3D bevel, draggable & screen-clamped)
+                // Monochrome B&W MCPE top-bar V+ button plate (predominantly black with crisp white letters)
                 ui.rounded(
                     btn_x + 1.5,
                     btn_y + 2.0,
                     btn_w,
                     btn_h,
                     3.0,
-                    scale_rgba(0, 0, 0, 120),
+                    scale_rgba(0, 0, 0, 145),
                 );
-                ui.rounded(btn_x, btn_y, btn_w, btn_h, 3.0, scale_rgba(18, 20, 24, 230));
+                ui.rounded(btn_x, btn_y, btn_w, btn_h, 3.0, scale_rgba(255, 255, 255, 225));
                 let body_col = if self.floating_menu {
-                    scale_rgba(88, 130, 72, 230)
+                    scale_rgba(255, 255, 255, 245)
                 } else {
-                    scale_rgba(116, 118, 124, 210)
+                    scale_rgba(8, 8, 10, 236)
                 };
                 ui.rounded(
                     btn_x + 2.0,
@@ -3507,15 +3523,23 @@ impl TouchUi {
                     2.0,
                     body_col,
                 );
-                let hi_bevel = scale_rgba(198, 202, 210, 215);
-                let lo_bevel = scale_rgba(48, 50, 56, 225);
+                let hi_bevel = scale_rgba(255, 255, 255, 225);
+                let lo_bevel = scale_rgba(95, 95, 102, 225);
                 ui.fill(btn_x + 2.0, btn_y + 2.0, btn_w - 4.0, 2.0, hi_bevel);
                 ui.fill(btn_x + 2.0, btn_y + 4.0, 2.0, btn_h - 6.0, hi_bevel);
                 ui.fill(btn_x + 2.0, btn_y + btn_h - 4.0, btn_w - 4.0, 2.0, lo_bevel);
                 ui.fill(btn_x + btn_w - 4.0, btn_y + 4.0, 2.0, btn_h - 6.0, lo_bevel);
-                // Crisp MCPE stone-bevel "V+" button with classic 1px drop shadow
-                let v_fg = scale_rgba(248, 249, 252, 250);
-                let v_sh = scale_rgba(24, 26, 32, 220);
+                // Crisp white "V+" letters on black (inverted black on white when menu is open)
+                let v_fg = if self.floating_menu {
+                    scale_rgba(0, 0, 0, 255)
+                } else {
+                    scale_rgba(255, 255, 255, 255)
+                };
+                let v_sh = if self.floating_menu {
+                    scale_rgba(210, 210, 215, 180)
+                } else {
+                    scale_rgba(0, 0, 0, 230)
+                };
                 let font_sz = (15.0 * ov_scale).clamp(9.0, 26.0);
                 ui.centered_fit(
                     Face::SemiBold,
@@ -3540,7 +3564,7 @@ impl TouchUi {
                     btn_w,
                     btn_h,
                     rad,
-                    rgba(0, 0, 0, (135.0 * bubble_alpha).round() as u8),
+                    rgba(0, 0, 0, (145.0 * bubble_alpha).round() as u8),
                 );
                 ui.rounded(
                     btn_x,
@@ -3549,7 +3573,7 @@ impl TouchUi {
                     btn_h,
                     rad,
                     color::with_alpha(
-                        if self.floating_menu { accent } else { card_bg },
+                        if self.floating_menu { accent } else { surface_bg },
                         bubble_alpha,
                     ),
                 );
@@ -3560,12 +3584,9 @@ impl TouchUi {
                     btn_h,
                     rad,
                     1.6,
-                    color::with_alpha(
-                        if self.floating_menu { text_c } else { accent },
-                        bubble_alpha,
-                    ),
+                    color::with_alpha(accent, bubble_alpha),
                 );
-                // Branded Volt+ "V+" floating trigger
+                // Branded Volt+ "V+" floating trigger (white letters on black)
                 ui.centered_fit(
                     Face::SemiBold,
                     font_sz,
@@ -3574,7 +3595,7 @@ impl TouchUi {
                         if self.floating_menu {
                             accent_fg
                         } else {
-                            accent_hi
+                            text_c
                         },
                         bubble_alpha,
                     ),
@@ -3589,15 +3610,15 @@ impl TouchUi {
         }
 
         // Backdrop scrim & Modal Shell with expressive entrance slide
-        let scrim_a = (156.0 * open_ease.clamp(0.35, 1.0)).round() as u8;
-        ui.fill(0.0, 0.0, w, h, rgba(16, 15, 26, scrim_a));
+        let scrim_a = (165.0 * open_ease.clamp(0.35, 1.0)).round() as u8;
+        ui.fill(0.0, 0.0, w, h, rgba(0, 0, 0, scrim_a));
         let (dw, dh, dx, dy_base, side_w, cx, cw, body_top_base, body_h) = hub_metrics(w, h);
         let slide_y = (1.0 - open_ease) * 18.0;
         let dy = dy_base + slide_y;
         let body_top = body_top_base + slide_y;
         let sb_rects = hub_sidebar_rects(dx, dy, dw, dh, side_w);
 
-        ui.rounded(dx + 2.0, dy + 6.0, dw, dh, 18.0, rgba(8, 7, 14, 155));
+        ui.rounded(dx + 2.0, dy + 6.0, dw, dh, 18.0, rgba(0, 0, 0, 175));
         ui.rounded(dx, dy, dw, dh, 18.0, surface_bg);
 
         // Left Sidebar Shell & Vertical Divider (always visible per Option 2 layout)
@@ -4839,7 +4860,7 @@ impl TouchUi {
                     Face::SemiBold,
                     10.6,
                     cells.start,
-                    if busy { text_c } else { accent_fg },
+                    accent_fg,
                     if busy { "Stop" } else { "Start" },
                 );
 
@@ -5800,19 +5821,19 @@ impl TouchUi {
                     false
                 };
                 if !drawn {
-                    let (bg_col, badge_col, glyph_txt) = match idx {
-                        0 => (rgba(82, 28, 34, 240), rgba(242, 86, 86, 255), "AS"),
-                        1 => (rgba(68, 32, 92, 240), rgba(212, 114, 255, 255), "CO"),
-                        2 => (rgba(26, 68, 52, 240), rgba(84, 232, 146, 255), "SS"),
-                        _ => (rgba(32, 54, 92, 240), rgba(108, 178, 255, 255), "UH"),
+                    let glyph_txt = match idx {
+                        0 => "AS",
+                        1 => "CO",
+                        2 => "SS",
+                        _ => "UH",
                     };
-                    ui.rounded(ix, iy, 40.0, 40.0, 9.0, bg_col);
-                    ui.border(ix, iy, 40.0, 40.0, 9.0, badge_col);
+                    ui.rounded(ix, iy, 40.0, 40.0, 9.0, sidebar_bg);
+                    ui.border(ix, iy, 40.0, 40.0, 9.0, accent);
                     ui.centered_fit(
                         Face::SemiBold,
                         13.0,
                         [ix, iy, 40.0, 40.0],
-                        badge_col,
+                        text_c,
                         glyph_txt,
                     );
                 }
@@ -6022,6 +6043,7 @@ impl TouchUi {
                     );
                 }
             }
+            }
             _ => {}
         }
 
@@ -6038,7 +6060,7 @@ impl TouchUi {
 
         // Preset Management Sub-Modal (when self.presets_modal_open == true)
         if self.presets_modal_open {
-            ui.fill(0.0, 0.0, w, h, rgba(5, 4, 12, 195));
+            ui.fill(0.0, 0.0, w, h, rgba(0, 0, 0, 200));
             let mdw = (w - 24.0).clamp(320.0, 520.0);
             let mdh = (h - 18.0).clamp(248.0, 360.0);
             let mdx = (w - mdw) * 0.5;
@@ -6177,7 +6199,7 @@ impl TouchUi {
 
         // Copy / Edit Preset Name & Description Dialog
         if let Some(dlg) = &self.preset_dialog {
-            ui.fill(0.0, 0.0, w, h, rgba(4, 3, 10, 210));
+            ui.fill(0.0, 0.0, w, h, rgba(0, 0, 0, 212));
             let mdw = (w - 28.0).clamp(310.0, 480.0);
             let mdh = (h - 16.0).clamp(242.0, 330.0);
             let mdx = (w - mdw) * 0.5;
@@ -6257,14 +6279,14 @@ impl TouchUi {
                 Face::SemiBold,
                 11.0,
                 save_r,
-                text_c,
+                accent_fg,
                 if dlg.is_copy {
                     "Create Independent Preset Copy"
                 } else {
                     "Save Preset Details"
                 },
             );            if dlg.confirm_replace_open {
-                ui.fill(0.0, 0.0, w, h, rgba(4, 5, 10, 210));
+                ui.fill(0.0, 0.0, w, h, rgba(0, 0, 0, 212));
                 let cdw = (w - 36.0).clamp(290.0, 430.0);
                 let cdh = 182.0;
                 let cdx = (w - cdw) * 0.5;
@@ -6317,6 +6339,7 @@ impl TouchUi {
                 self.custom_kb_scroll_x,
                 true,
                 false,
+                true,
             );
         }
 
@@ -7323,6 +7346,7 @@ pub fn draw_hud_editor(
             h,
             ed.picker_step,
             ed.kb_scroll_x,
+            false,
             false,
             false,
         );
