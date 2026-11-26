@@ -136,7 +136,7 @@
         const suffix = el.dataset.suffix || '';
         const start = performance.now();
         function step(now) {
-          const t = Math.min(1, (now - start) / 800);
+          const t = Math.max(0, Math.min(1, (now - start) / 800));
           const eased = 1 - Math.pow(1 - t, 3);
           el.textContent = `${Math.round(target * eased)}${suffix}`;
           if (t < 1) requestAnimationFrame(step);
