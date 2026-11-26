@@ -316,13 +316,14 @@ impl Game<'_> {
         let options = &pack.manifest.options;
         let constants = options
             .iter()
-            .filter_map(|o| {
+            .map(|o| {
                 let v = match &o.kind {
-                    horizon_shader_api::OptionKind::Float { default, .. } => *default,
-                    horizon_shader_api::OptionKind::Int { default, .. } => *default as f32,
-                    horizon_shader_api::OptionKind::Bool { default } => f32::from(*default),
+                    horizon_shader_api::OptionKind::Float { default, .. } => f64::from(*default),
+                    horizon_shader_api::OptionKind::Int { default, .. } => f64::from(*default),
+                    horizon_shader_api::OptionKind::Bool { default } => f64::from(u8::from(*default)),
+                    horizon_shader_api::OptionKind::Choice { default, .. } => f64::from(*default),
                 };
-                Some((o.id.clone(), v))
+                (o.id.clone(), v)
             })
             .collect();
         let sprites = || {

@@ -355,7 +355,7 @@ impl Game<'_> {
         if cfg.fast_place && self.use_delay > 0 {
             let holding_crystal_or_obi = |s: &ItemStack| {
                 matches!(
-                    s.item.as_str(),
+                    s.item,
                     "minecraft:end_crystal" | "minecraft:obsidian"
                 )
             };
@@ -662,7 +662,18 @@ impl Game<'_> {
             };
             batch.fill(atlas, x, y, 2.0, row_h, accent);
 
-            let sprite = brewing::sprite(eff.id);
+            let mut sprite = String::new();
+            let path = match eff.id.split_once(':') {
+                None => eff.id,
+                Some(("minecraft", path)) => path,
+                Some((ns, path)) => {
+                    sprite.push_str(ns);
+                    sprite.push(':');
+                    path
+                }
+            };
+            sprite.push_str("mob_effect/");
+            sprite.push_str(path);
             let icon_sz = if cfg.potion_compact { 14.0 } else { 18.0 };
             batch.sprite_scaled(
                 atlas,
