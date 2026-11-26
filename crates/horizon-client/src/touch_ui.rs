@@ -3179,7 +3179,7 @@ impl TouchUi {
                     return Some(InGameMenuAction::ToggleOverlayShowControlsInMenus);
                 }
             }
-            _ => {
+            8 => {
                 // Tab 8: Internet Music Player, Fast-Forward, Volume, Playlists & Vanilla Toggle
                 let seek_r = [cx + 12.0, body_y + 58.0, (cw - 24.0).max(40.0), 18.0];
                 if inside(seek_r) {
@@ -3325,7 +3325,8 @@ impl TouchUi {
                         return Some(InGameMenuAction::MusicNextPage);
                     }
                 }
-            } else if self.hub_tab == 9 && inside(content_pane) {
+            }
+            9 => {
                 let body_y = body_top - self.hub_scroll;
                 if let Some(mod_idx) = self.volt_extras_config_mod {
                     let back_btn = [cx, body_y, (cw - 60.0).max(120.0), 32.0];
@@ -3422,6 +3423,7 @@ impl TouchUi {
                     }
                 }
             }
+            _ => {}
         }
 
         Some(InGameMenuAction::Close)
@@ -5121,7 +5123,7 @@ impl TouchUi {
                     None,
                 );
             }
-            _ => {
+            8 => {
                 // Tab 8: Internet Music Player (Now Playing, Fast-Forward, Volume, Playlists & Vanilla Toggle)
                 use crate::internet_music::{self, format_duration, format_ms};
                 let snap = internet_music::snapshot();
@@ -5776,8 +5778,8 @@ impl TouchUi {
                     );
                 }
             }
-        } else if self.hub_tab == 9 {
-            let draw_volt_mod_emblem = |ui: &mut Ui<'_>, idx: u8, ix: f32, iy: f32| {
+            9 => {
+                let draw_volt_mod_emblem = |ui: &mut Ui<'_>, idx: u8, ix: f32, iy: f32| {
                 let icon_url = match idx {
                     0 => volt_extras_modrinth_icon_url("appleskin"),
                     1 => volt_extras_modrinth_icon_url("crystal_optimizer"),
@@ -6020,6 +6022,7 @@ impl TouchUi {
                     );
                 }
             }
+            _ => {}
         }
 
         ui.set_clip(None);
