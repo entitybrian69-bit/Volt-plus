@@ -1641,16 +1641,17 @@ impl Catalog {
                         }
                     }
                     // Also check fabric.mod.json `"icon"` path if present
-                    if icon_bytes.is_none()
-                        && let Ok(mut fmj) = zip.by_name("fabric.mod.json")
-                    {
-                        let mut fmj_buf = String::new();
-                        if std::io::Read::take(&mut fmj, 256 * 1024)
-                            .read_to_string(&mut fmj_buf)
-                            .is_ok()
-                            && let Ok(val) = serde_json::from_str::<serde_json::Value>(&fmj_buf)
-                            && let Some(icon_path) = val.get("icon").and_then(|v| v.as_str())
-                        {
+                    if icon_bytes.is_none() {
+                        let fmj_icon: Option<String> = (|| {
+                            let mut fmj = zip.by_name("fabric.mod.json").ok()?;
+                            let mut fmj_buf = String::new();
+                            std::io::Read::take(&mut fmj, 256 * 1024)
+                                .read_to_string(&mut fmj_buf)
+                                .ok()?;
+                            let val = serde_json::from_str::<serde_json::Value>(&fmj_buf).ok()?;
+                            val.get("icon").and_then(|v| v.as_str()).map(str::to_owned)
+                        })();
+                        if let Some(icon_path) = fmj_icon {
                             let norm = icon_path.trim_start_matches('/');
                             if let Ok(mut entry) = zip.by_name(norm) {
                                 let mut buf = Vec::new();

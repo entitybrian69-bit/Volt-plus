@@ -292,7 +292,7 @@ impl Game<'_> {
     // 2. Marlow's Crystal Optimizer
     // =========================================================================
 
-    fn crystal_opt_can_break(&self) -> bool {
+    fn crystal_opt_can_break(&mut self) -> bool {
         let cfg = &self.settings.extras.volt.crystal_optimizer;
         if !cfg.enabled || !cfg.instant_break {
             return false;
@@ -300,7 +300,7 @@ impl Game<'_> {
         if cfg.respect_weakness && self.potions.effects.get("weakness").is_some() {
             let dmg = self
                 .player
-                .as_ref()
+                .as_mut()
                 .and_then(|p| p.attribute("minecraft:attack_damage").ok())
                 .unwrap_or(1.0);
             if dmg <= 0.5 {
