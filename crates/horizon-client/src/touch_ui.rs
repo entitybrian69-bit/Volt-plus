@@ -1015,7 +1015,7 @@ impl TouchUi {
     }
     /// Sliders retain mouse dragging; list rows use scroll-or-tap gestures.
     pub fn direct_pointer(&mut self, id: u64, p: [f32; 2], phase: TouchPhase) -> bool {
-        let on_slider = |t: &crate::widgets::Widget| {
+        let on_target_slider = |t: &crate::widgets::Target| {
             let [x, y, w, h] = t.rect;
             matches!(t.kind, crate::widgets::Kind::Slider { .. })
                 && p[0] >= x - 4.0
@@ -1023,9 +1023,16 @@ impl TouchUi {
                 && p[1] >= y - 4.0
                 && p[1] <= y + h + 4.0
         };
+        let on_widget_slider = |t: &crate::widgets::Widget| {
+            matches!(t.kind, crate::widgets::Kind::Slider { .. })
+                && p[0] >= t.x - 4.0
+                && p[0] <= t.x + t.w + 4.0
+                && p[1] >= t.y - 4.0
+                && p[1] <= t.y + t.h + 4.0
+        };
         if phase == TouchPhase::Started
-            && (crate::widgets::last_targets().iter().any(on_slider)
-                || crate::widgets::last_labelled().iter().any(on_slider))
+            && (crate::widgets::last_targets().iter().any(on_target_slider)
+                || crate::widgets::last_labelled().iter().any(on_widget_slider))
         {
             self.pointer_drag = Some(id);
         }
