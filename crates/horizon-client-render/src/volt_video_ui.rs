@@ -1241,14 +1241,21 @@ impl VoltVideoUi {
                         };
                         batch.fill(atlas, thumb_x, thumb_y, thumb_w, thumb_h, thumb_col);
 
+                        let slider_kind = crate::widgets::Kind::Slider {
+                            value: shown_v,
+                            track: [track_x, track_w],
+                        };
+                        if live {
+                            crate::widgets::target_as(
+                                [ctrl.x - 4.0, dy, ctrl.w + 8.0, rect.h],
+                                slider_kind,
+                            );
+                        }
                         crate::widgets::record_as(
                             &full_label,
                             ctrl.array(),
                             live,
-                            crate::widgets::Kind::Slider {
-                                value: shown_v,
-                                track: [track_x, track_w],
-                            },
+                            slider_kind,
                         );
                     } else {
                         // Cycle selector `< Value >` or action pill
@@ -1578,7 +1585,7 @@ impl VoltVideoUi {
                         return actions;
                     }
                     // Clicking on the right slider area grabs/sets slider; clicking left label selects row
-                    if pos.0 >= ctrl.x {
+                    if pos.0 >= ctrl.x - 4.0 {
                         let track_x = ctrl.x + 6.0;
                         let track_w = (ctrl.w - 12.0).max(16.0);
                         let v = ((pos.0 - track_x) / track_w).clamp(0.0, 1.0);

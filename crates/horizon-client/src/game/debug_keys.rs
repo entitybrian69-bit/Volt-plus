@@ -317,7 +317,16 @@ impl Game<'_> {
         } else {
             Vec::new()
         };
-        let (left, right) = d.columns(&footer);
+        let (mut left, right) = d.columns(&footer);
+        if self.settings.extras.volt.appleskin.enabled
+            && self.settings.extras.volt.appleskin.show_debug_stats
+            && let Some(p) = &self.player
+        {
+            left.push(format!(
+                "AppleSkin: Food {}/20 | Sat {:.2} | Exh {:.2}/4.00",
+                p.health.food.food, p.health.food.saturation, p.health.food.exhaustion
+            ));
+        }
         let atlas = &self.gui.atlas;
         let mut draws = debug_overlay::draw(&atlas.font, [&left, &right], scale, width);
         if self.debug {

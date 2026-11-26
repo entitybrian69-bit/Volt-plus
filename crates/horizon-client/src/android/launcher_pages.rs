@@ -10495,6 +10495,7 @@ impl Launcher {
                     if self.catalog.offset + crate::catalog::CATALOG_PAGE_SIZE < total {
                         self.catalog.offset += crate::catalog::CATALOG_PAGE_SIZE;
                         self.catalog.scroll = 0.0;
+                        self.catalog.fetch_icons(&self.home);
                     }
                 } else if self.catalog.results.len() >= crate::catalog::CATALOG_PAGE_SIZE {
                     self.catalog.offset += crate::catalog::CATALOG_PAGE_SIZE;
@@ -10512,6 +10513,8 @@ impl Launcher {
                                 == crate::shader_catalog::Origin::Horizon);
                     if !is_horizon_paged {
                         self.catalog.search(&self.home);
+                    } else {
+                        self.catalog.fetch_icons(&self.home);
                     }
                 }
             }

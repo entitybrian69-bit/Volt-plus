@@ -297,6 +297,9 @@ impl Game<'_> {
                     });
                 } else {
                     self.pack_ids = None;
+                    if cfg!(target_os = "android") {
+                        self.apply_android_shader_fallback(name);
+                    }
                 }
             }
             Ok(Err(e)) => {
@@ -539,6 +542,9 @@ impl Game<'_> {
                                     });
                                 } else {
                                     self.pack_ids = None;
+                                    if cfg!(target_os = "android") {
+                                        self.apply_android_shader_fallback(&name);
+                                    }
                                 }
                             }
                             Err(panic) => self.shader_pack_failed(&name, dimension, &panic),
@@ -670,6 +676,10 @@ impl Game<'_> {
             // Marks this dimension as loaded, without a pack, so it does not loop-crash this dimension,
             // while preserving self.settings.horizon.shader_pack so the user's chosen shader does not turn off automatically.
             renderer.set_shader_pack(dimension, None, &[]);
+        }
+        if cfg!(target_os = "android") && self.apply_android_shader_fallback(name) {
+            log::info!("shader pack {name}: activated Horizon mobile compatibility shader");
+            return;
         }
         self.system_message(Text::colored(
             format!("Shader pack {name} could not be loaded and was turned off"),

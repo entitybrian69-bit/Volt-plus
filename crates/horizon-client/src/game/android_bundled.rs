@@ -266,7 +266,16 @@ pub(super) fn parse_dynamic_hnmod(path: &std::path::Path) -> Option<DynamicHnmod
                 }
                 if let Some(arr) = v.get("custom_buttons").and_then(|x| x.as_array()) {
                     for btn in arr.iter().filter_map(|x| x.as_str()) {
-                        custom_buttons.push(btn.to_owned());
+                        let b = btn.trim();
+                        if !b.is_empty()
+                            && !b.eq_ignore_ascii_case("Mode")
+                            && !b.starts_with("Mode:")
+                            && !b.contains("Vein / Action Limit")
+                            && !b.eq_ignore_ascii_case("HUD Overlay")
+                            && !b.starts_with("HUD Overlay:")
+                        {
+                            custom_buttons.push(b.to_owned());
+                        }
                     }
                 }
                 if let Some(arr) = v.get("items").and_then(|x| x.as_array()) {
@@ -360,8 +369,16 @@ pub(super) fn parse_dynamic_hnmod(path: &std::path::Path) -> Option<DynamicHnmod
         description = d;
     }
     for b in parsed_btns {
-        if !custom_buttons.contains(&b) {
-            custom_buttons.push(b);
+        let trimmed = b.trim();
+        if !trimmed.is_empty()
+            && !trimmed.eq_ignore_ascii_case("Mode")
+            && !trimmed.starts_with("Mode:")
+            && !trimmed.contains("Vein / Action Limit")
+            && !trimmed.eq_ignore_ascii_case("HUD Overlay")
+            && !trimmed.starts_with("HUD Overlay:")
+            && !custom_buttons.iter().any(|x| x == trimmed)
+        {
+            custom_buttons.push(trimmed.to_owned());
         }
     }
 
@@ -526,7 +543,8 @@ fn ensure_dynamic_mods_loaded(game: &Game<'_>, force: bool) {
         }
     }
 
-    // Collect all .hnmod bundles across horizon-native-mods/ and horizon-mods/
+    // Collect all .hnmod bundles across horizon-native-mods/ and horizon-mods/,
+    // plus unified non-WASM .hmod bundles that embed `horizon-native.json` / `mixins/`.
     let mut hnmod_paths = Vec::new();
     for root in &roots {
         for sub in [
@@ -540,15 +558,27 @@ fn ensure_dynamic_mods_loaded(game: &Game<'_>, force: bool) {
             };
             for entry in rd.flatten() {
                 let p = entry.path();
-                // Only load `.hnmod` source/native bundles here; `.hmod` packages execute
-                // natively in `horizon_mods::Mods` and `apply_content_mods`.
                 if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("hnmod")) {
                     hnmod_paths.push((root.clone(), p));
+                } else if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("hmod"))
+                    && let Ok(f) = fs::File::open(&p)
+                    && let Ok(mut zip) = zip::ZipArchive::new(f)
+                {
+                    let has_wasm = zip.by_name("mod.wasm").is_ok();
+                    let has_native = zip.by_name("horizon-native.json").is_ok();
+                    if !has_wasm && has_native {
+                        hnmod_paths.push((root.clone(), p));
+                    }
                 }
             }
         }
     }
-    hnmod_paths.sort_by(|a, b| a.1.cmp(&b.1));
+    // Sort so `.hnmod` takes priority over fallback `.hmod` when both exist for the same mod id.
+    hnmod_paths.sort_by(|a, b| {
+        let a_is_hnmod = a.1.extension().is_some_and(|e| e.eq_ignore_ascii_case("hnmod"));
+        let b_is_hnmod = b.1.extension().is_some_and(|e| e.eq_ignore_ascii_case("hnmod"));
+        b_is_hnmod.cmp(&a_is_hnmod).then_with(|| a.1.cmp(&b.1))
+    });
 
     let mut discovered = BTreeMap::new();
     for (root, path) in hnmod_paths {

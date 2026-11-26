@@ -11147,10 +11147,11 @@ impl Game<'_> {
             .entries()
             .iter()
             .filter(|e| {
-                matches!(
-                    e.status,
-                    horizon_mods::Status::Running | horizon_mods::Status::Elsewhere
-                )
+                e.has_wasm()
+                    && matches!(
+                        e.status,
+                        horizon_mods::Status::Running | horizon_mods::Status::Elsewhere
+                    )
             })
             .filter_map(|e| e.manifest.as_ref().map(|m| m.id.clone()))
             .collect();

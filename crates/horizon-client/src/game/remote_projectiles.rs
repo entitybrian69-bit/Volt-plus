@@ -703,6 +703,7 @@ impl Game<'_> {
         self.tridents.retain(|t| t.id != id);
         self.rockets.retain(|r| r.id != id);
         self.crystals.retain(|c| c.id != id);
+        self.crystal_opt_on_remote_remove(id);
         self.potions.remove_remote_thrown(id);
         self.potions.clouds.retain(|c| c.id != id);
         self.dragon_fireballs.retain(|b| b.id != id);

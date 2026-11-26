@@ -148,6 +148,10 @@ pub fn install(
                 let _ = fs::remove_file(path);
             }
         }
+        let options_path = home.join("options.txt");
+        let mut settings = horizon_client::settings::Settings::load(&options_path);
+        settings.horizon.shader_pack = name.to_owned();
+        settings.save(&options_path);
         Ok(1)
     })();
     let _ = fs::remove_dir_all(stage);
@@ -419,6 +423,7 @@ api = "0.1"
 description = {desc_lit}
 authors = [{author_lit}]
 license = "MIT"
+shared = ["common.wgsl"]
 
 [sky]
 file = "sky.wgsl"
@@ -452,8 +457,17 @@ gpu_ms = 0.5
 "#
     );
 
+    let common_wgsl = r#"fn luminance(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+fn daylight() -> f32 {
+    return select(0.35, smoothstep(-0.15, 0.15, frame.sun_direction.y), frame.dimension == 0);
+}
+"#;
+
     let mut files = BTreeMap::new();
     files.insert(MANIFEST.to_owned(), manifest.into_bytes());
+    files.insert("common.wgsl".to_owned(), common_wgsl.as_bytes().to_vec());
     files.insert("sky.wgsl".to_owned(), sky_wgsl.as_bytes().to_vec());
     files.insert("material.wgsl".to_owned(), material_wgsl.as_bytes().to_vec());
     files.insert("post.wgsl".to_owned(), post_wgsl.as_bytes().to_vec());

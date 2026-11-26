@@ -1673,6 +1673,10 @@ impl Loading {
                 true,
                 horizon_client::recorder::hiding_controls(),
             ) && let Some(gui) = self.gui.as_ref()
+                && {
+                    self.menu.touch.sync_volt_extras(&self.settings.extras.volt);
+                    true
+                }
                 && let Some(hub_act) = self.menu.touch.floating_menu_touch(
                     &mut b,
                     &gui.atlas,
@@ -2107,6 +2111,10 @@ impl Loading {
                             }
                             _ => {}
                         }
+                    }
+                    InGameMenuAction::UpdateVoltExtras(volt) => {
+                        self.settings.extras.volt = volt;
+                        self.save_menu_settings();
                     }
                     _ => {}
                 }
@@ -2781,6 +2789,9 @@ impl Loading {
                     true,
                     horizon_client::recorder::hiding_controls(),
                 ) {
+                    self.menu
+                        .touch
+                        .sync_volt_extras(&self.settings.extras.volt);
                     self.menu
                         .touch
                         .draw_floating_menu(batch, &gui.atlas, &self.menu.controls.settings);

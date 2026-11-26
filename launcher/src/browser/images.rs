@@ -10,21 +10,28 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Hosts images may come from.
-const HOSTS: [&str; 10] = [
+const HOSTS: [&str; 17] = [
     "https://cdn.modrinth.com/",
     // Fabric's and Forge's own icons, for instances that play them (no published logo licence:
     // drawn from their sites, never shipped).
     "https://raw.githubusercontent.com/FabricMC/fabric-loader/",
     "https://raw.githubusercontent.com/",
     "https://avatars.githubusercontent.com/",
+    "https://media.githubusercontent.com/",
+    "https://objects.githubusercontent.com/",
+    "https://user-images.githubusercontent.com/",
+    "https://github.com/",
     "https://files.minecraftforge.net/static/images/",
     "https://media.forgecdn.net/",
     "https://mediafilez.forgecdn.net/",
     "https://edge.forgecdn.net/",
+    "https://www.curseforge.com/",
+    "https://i.imgur.com/",
     // Horizon's registry's icons (its GitHub Pages), and the mirror kept at the address it had
     // before the repositories moved to the horizon-rust organization.
     "https://horizon-rust.github.io/horizon-mods/",
     "https://ludovic111.github.io/horizon-mods/",
+    "https://playhorizon.dev/",
 ];
 /// The most an image may weigh before decoding.
 pub const MAX_DOWNLOAD: u64 = 8 << 20;

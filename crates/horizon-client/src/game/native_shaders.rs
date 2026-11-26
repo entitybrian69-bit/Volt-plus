@@ -57,7 +57,285 @@ pub(super) fn pack_reads_labpbr(pack: &Pack) -> bool {
     }) || pack.manifest.shared.iter().any(|s| stage_reads(s))
 }
 
+/// Auto-repairs `.hshader` packs that reference shared helpers like `daylight()` or
+/// `luminance()` without declaring/including `common.wgsl`, so previously downloaded
+/// packs load cleanly without `unresolved value 'daylight'`.
+fn repair_pack_if_needed(pack: &mut Pack) {
+    let all_src: String = pack
+        .files
+        .iter()
+        .filter(|(k, _)| k.ends_with(".wgsl"))
+        .filter_map(|(_, v)| std::str::from_utf8(v).ok())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let needs_daylight = all_src.contains("daylight(") && !all_src.contains("fn daylight(");
+    let needs_luminance = all_src.contains("luminance(") && !all_src.contains("fn luminance(");
+    if !needs_daylight && !needs_luminance {
+        return;
+    }
+    let mut extra = String::new();
+    if needs_luminance {
+        extra.push_str(
+            "fn luminance(c: vec3<f32>) -> f32 {\n    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));\n}\n",
+        );
+    }
+    if needs_daylight {
+        extra.push_str(
+            "fn daylight() -> f32 {\n    return select(0.35, smoothstep(-0.15, 0.15, frame.sun_direction.y), frame.dimension == 0);\n}\n",
+        );
+    }
+    let shared_name = pack
+        .manifest
+        .shared
+        .first()
+        .cloned()
+        .unwrap_or_else(|| "common.wgsl".to_owned());
+    if !pack.manifest.shared.contains(&shared_name) {
+        pack.manifest.shared.push(shared_name.clone());
+    }
+    let existing = pack
+        .files
+        .get(&shared_name)
+        .and_then(|b| std::str::from_utf8(b).ok())
+        .unwrap_or("")
+        .to_owned();
+    pack.files
+        .insert(shared_name, format!("{extra}{existing}").into_bytes());
+}
+
+/// Builds a tuned in-memory `.hshader` fallback pack for Android when a desktop-only
+/// OptiFine/Iris `.zip` shader uses unsupported GLSL/compute stages on mobile GPUs.
+pub(super) fn android_fallback_native_shader(name: &str) -> Pack {
+    use horizon_shader_api::manifest::MANIFEST;
+    use std::collections::BTreeMap;
+
+    let clean_id: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_owned();
+    let id = if clean_id.is_empty() {
+        "mobile_shader".to_owned()
+    } else {
+        clean_id
+    };
+    let lower = name.to_lowercase();
+    let is_night = lower.contains("galax")
+        || lower.contains("nebula")
+        || lower.contains("night")
+        || lower.contains("void")
+        || lower.contains("star");
+    let is_warm = lower.contains("golden")
+        || lower.contains("sildur")
+        || lower.contains("bsl")
+        || lower.contains("chocapic")
+        || lower.contains("seus")
+        || lower.contains("nostalgia");
+
+    let (vibrance, water, sky_wgsl, material_wgsl) = if is_night {
+        (
+            1.22_f32,
+            0.80_f32,
+            r#"fn sky(input: SkyInput) -> vec4<f32> {
+    let d = normalize(input.direction);
+    let sun_dot = max(dot(d, frame.sun_direction), 0.0);
+    let halo = pow(sun_dot, 10.0) * 0.45 * (1.0 - frame.rain * 0.8);
+    let nebula = vec3<f32>(0.24, 0.36, 0.78) * (0.25 + 0.55 * smoothstep(-0.1, 0.9, d.y)) * (1.0 - daylight() * 0.75);
+    let warm = vec3<f32>(1.0, 0.58, 0.35) * halo;
+    let base = input.color.rgb * mix(vec3<f32>(0.92, 0.96, 1.05), vec3<f32>(0.68, 0.78, 1.12), smoothstep(0.0, 1.0, max(d.y, 0.0)) * 0.4);
+    return vec4<f32>(clamp(base + warm + nebula, vec3<f32>(0.0), vec3<f32>(1.0)), input.color.a);
+}
+"#,
+            r#"override water_clarity: f32 = 0.80;
+
+fn material(input: MaterialInput) -> Surface {
+    let ndotl = max(dot(input.normal, frame.light_direction), 0.0);
+    let dir_shade = 0.76 + 0.38 * ndotl * input.light.y;
+    let torch = vec3<f32>(1.22, 0.80, 0.44) * pow(input.light.x, 1.55) * 0.48;
+    var col = input.albedo.rgb * input.tint.rgb * (input.lightmap * dir_shade + torch + input.colored_light * 0.6);
+    if input.fluid == 1u {
+        let view_dir = normalize(-input.position);
+        let fresnel = clamp(pow(1.0 - max(dot(input.normal, view_dir), 0.0), 3.4), 0.10, 0.90);
+        let sky_ref = mix(vec3<f32>(0.10, 0.24, 0.52), vec3<f32>(0.26, 0.54, 0.92), daylight());
+        col = mix(col, sky_ref, fresnel * water_clarity);
+    }
+    return Surface(vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), input.albedo.a * input.tint.a));
+}
+"#,
+        )
+    } else if is_warm {
+        (
+            1.20,
+            0.78,
+            r#"fn sky(input: SkyInput) -> vec4<f32> {
+    let d = normalize(input.direction);
+    let sun_dot = max(dot(d, frame.sun_direction), 0.0);
+    let near_horizon = 1.0 - smoothstep(-0.05, 0.55, d.y);
+    let day = max(daylight(), 0.25) * (1.0 - frame.rain * 0.65);
+    let corona = pow(sun_dot, 6.0) * 0.55 + near_horizon * pow(sun_dot, 2.0) * 0.35;
+    let warm = vec3<f32>(1.0, 0.62, 0.26) * corona * day;
+    let base = mix(input.color.rgb * 1.04, input.color.rgb * vec3<f32>(0.84, 0.90, 1.06), smoothstep(0.1, 0.95, max(d.y, 0.0)) * 0.36);
+    return vec4<f32>(clamp(base + warm, vec3<f32>(0.0), vec3<f32>(1.0)), input.color.a);
+}
+"#,
+            r#"override water_clarity: f32 = 0.78;
+
+fn material(input: MaterialInput) -> Surface {
+    let ndotl = max(dot(input.normal, frame.light_direction), 0.0);
+    let dir_shade = 0.75 + 0.40 * ndotl * input.light.y;
+    let torch = vec3<f32>(1.24, 0.76, 0.36) * pow(input.light.x, 1.55) * 0.50;
+    var col = input.albedo.rgb * input.tint.rgb * (input.lightmap * dir_shade + torch + input.colored_light * 0.58);
+    if input.fluid == 1u {
+        let view_dir = normalize(-input.position);
+        let fresnel = clamp(pow(1.0 - max(dot(input.normal, view_dir), 0.0), 3.4), 0.10, 0.88);
+        let sky_ref = mix(vec3<f32>(0.12, 0.36, 0.60), vec3<f32>(0.36, 0.62, 0.92), daylight());
+        col = mix(col, sky_ref, fresnel * water_clarity);
+    }
+    return Surface(vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), input.albedo.a * input.tint.a));
+}
+"#,
+        )
+    } else {
+        (
+            1.18,
+            0.76,
+            r#"fn sky(input: SkyInput) -> vec4<f32> {
+    let d = normalize(input.direction);
+    let sun_dot = max(dot(d, frame.sun_direction), 0.0);
+    let halo = pow(sun_dot, 8.0) * 0.48 * (1.0 - frame.rain * 0.75) * max(daylight(), 0.3);
+    let warm = vec3<f32>(1.0, 0.66, 0.34) * halo;
+    let zenith = smoothstep(0.05, 0.92, max(d.y, 0.0));
+    let base = mix(input.color.rgb * 1.05, input.color.rgb * vec3<f32>(0.80, 0.90, 1.08), zenith * 0.36);
+    return vec4<f32>(clamp(base + warm, vec3<f32>(0.0), vec3<f32>(1.0)), input.color.a);
+}
+"#,
+            r#"override water_clarity: f32 = 0.76;
+
+fn material(input: MaterialInput) -> Surface {
+    let ndotl = max(dot(input.normal, frame.light_direction), 0.0);
+    let dir_shade = 0.77 + 0.38 * ndotl * input.light.y;
+    let torch = vec3<f32>(1.20, 0.78, 0.40) * pow(input.light.x, 1.55) * 0.46;
+    var col = input.albedo.rgb * input.tint.rgb * (input.lightmap * dir_shade + torch + input.colored_light * 0.56);
+    if input.fluid == 1u {
+        let view_dir = normalize(-input.position);
+        let fresnel = clamp(pow(1.0 - max(dot(input.normal, view_dir), 0.0), 3.4), 0.08, 0.88);
+        let sky_ref = mix(vec3<f32>(0.10, 0.34, 0.58), vec3<f32>(0.30, 0.58, 0.90), daylight());
+        col = mix(col, sky_ref, fresnel * water_clarity);
+    }
+    return Surface(vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), input.albedo.a * input.tint.a));
+}
+"#,
+        )
+    };
+    let post_wgsl = format!(
+        r#"override vibrance: f32 = {vibrance:.2};
+
+fn post(input: PostInput) -> vec4<f32> {{
+    let c = (input.color.rgb - 0.48) * 1.08 + 0.48;
+    let lum = luminance(c);
+    let sat = mix(vec3<f32>(lum), c, vibrance);
+    return vec4<f32>(clamp(sat, vec3<f32>(0.0), vec3<f32>(1.0)), input.color.a);
+}}
+"#
+    );
+    let title_lit = serde_json::to_string(name).unwrap_or_else(|_| "\"Shader Pack\"".to_owned());
+    let manifest = format!(
+        r#"schema = 1
+id = "{id}"
+name = {title_lit}
+version = "1.0.0"
+api = "0.1"
+description = "Horizon mobile shader compatibility pipeline."
+authors = ["Horizon"]
+license = "MIT"
+shared = ["common.wgsl"]
+
+[sky]
+file = "sky.wgsl"
+
+[material]
+file = "material.wgsl"
+
+[[post]]
+file = "post.wgsl"
+
+[[options]]
+id = "vibrance"
+name = "Color Vibrance"
+type = "float"
+default = {vibrance:.2}
+min = 0.6
+max = 1.8
+step = 0.02
+
+[[options]]
+id = "water_clarity"
+name = "Water Reflection Strength"
+type = "float"
+default = {water:.2}
+min = 0.1
+max = 1.0
+step = 0.05
+
+[budget]
+gpu_ms = 0.5
+"#
+    );
+    let common_wgsl = r#"fn luminance(c: vec3<f32>) -> f32 {
+    return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+}
+fn daylight() -> f32 {
+    return select(0.35, smoothstep(-0.15, 0.15, frame.sun_direction.y), frame.dimension == 0);
+}
+"#;
+    let mut files = BTreeMap::new();
+    files.insert(MANIFEST.to_owned(), manifest.into_bytes());
+    files.insert("common.wgsl".to_owned(), common_wgsl.as_bytes().to_vec());
+    files.insert("sky.wgsl".to_owned(), sky_wgsl.as_bytes().to_vec());
+    files.insert("material.wgsl".to_owned(), material_wgsl.as_bytes().to_vec());
+    files.insert("post.wgsl".to_owned(), post_wgsl.into_bytes());
+    Pack::from_files(files).expect("fallback native shader manifest is valid")
+}
+
 impl Game<'_> {
+    pub(super) fn apply_android_shader_fallback(&mut self, name: &str) -> bool {
+        let pack = android_fallback_native_shader(name);
+        let Ok(report) = check(&pack) else {
+            return false;
+        };
+        let Some(renderer) = &mut self.renderer else {
+            return false;
+        };
+        let options = &pack.manifest.options;
+        let constants = options
+            .iter()
+            .filter_map(|o| {
+                let v = match &o.kind {
+                    horizon_shader_api::OptionKind::Float { default, .. } => *default,
+                    horizon_shader_api::OptionKind::Int { default, .. } => *default as f32,
+                    horizon_shader_api::OptionKind::Bool { default } => f32::from(*default),
+                };
+                Some((o.id.clone(), v))
+            })
+            .collect();
+        let sprites = || {
+            let layers = self.pack.render.sprite_layers.iter();
+            layers.map(|(n, layer)| (n.as_str(), *layer))
+        };
+        let tags = pack.manifest.sprite_tags(sprites());
+        let materials = pack.manifest.sprite_materials(sprites());
+        let lights = horizon_client::gfx::block_light::LightTable::default();
+        renderer
+            .set_native_shader_pack(Some((report, constants, tags, materials, lights)))
+            .is_ok()
+    }
     /// Builds the pack at `path` when its files changed since it was last read.
     pub(super) fn tick_native_shader_pack(&mut self, path: &Path) {
         let now = Instant::now();
@@ -75,7 +353,8 @@ impl Game<'_> {
         let Some(renderer) = &mut self.renderer else {
             return;
         };
-        let result = Pack::read(path).map_err(|e| vec![e]).and_then(|pack| {
+        let result = Pack::read(path).map_err(|e| vec![e]).and_then(|mut pack| {
+            repair_pack_if_needed(&mut pack);
             let report = check(&pack)
                 .map_err(|p| p.iter().map(ToString::to_string).collect::<Vec<String>>())?;
             // The player's values (the pack's Shader Options page), else the defaults.

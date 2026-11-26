@@ -325,6 +325,7 @@ mod tweaks;
 mod ui_control;
 mod vault;
 mod villagers;
+mod volt_extras;
 mod wandering_trader;
 mod win;
 mod wind;
@@ -2444,6 +2445,7 @@ struct Game<'a> {
     hand: Hand,
     /// The shield's item cooldown after an axe disabled it (ticks).
     shield_cooldown: u32,
+    prev_shield_cooldown: u32,
     /// `Player.getCooldowns()`: the `use_cooldown` component's entries, what
     /// `itemDecorations` shades a slot by. A server's players have their own
     /// (`GuestPlay::cooldowns`), swapped in for their turn.
@@ -2595,6 +2597,7 @@ struct Game<'a> {
     fight: dragon::Fight,
     dragon: Option<dragon::Dragon>,
     crystals: Vec<dragon::Crystal>,
+    pending_crystal_breaks: Vec<(dragon::Crystal, Instant)>,
     dragon_fireballs: Vec<dragon::DragonFireball>,
     breath_clouds: Vec<dragon::Breath>,
     dragon_model: Option<horizon_client::mobs::Part>,
@@ -6939,6 +6942,8 @@ impl Game<'_> {
         self.tick_totem();
         self.update_totem_ready();
         self.tick_command_extras();
+        self.crystal_opt_tick();
+        self.tick_shield_status();
         self.tick_mods();
         self.native_tick();
         self.tick_server_mods();
@@ -8262,10 +8267,19 @@ impl Game<'_> {
                     }
                 }
             }
-            horizon_client::hud::inset_overlay(&mut batch, margins, |b| self.draw_effect_icons(b));
+            if !(self.settings.extras.volt.uku_hud.enabled
+                && self.settings.extras.volt.uku_hud.potion_enabled)
+            {
+                horizon_client::hud::inset_overlay(&mut batch, margins, |b| {
+                    self.draw_effect_icons(b)
+                });
+            }
             // Hud: the action bar and titles draw over the hotbar (nextStratum).
             horizon_client::hud::inset_overlay(&mut batch, margins, |b| self.draw_boss_bars(b));
             horizon_client::hud::inset_overlay(&mut batch, margins, |b| self.draw_extras(b));
+            horizon_client::hud::inset_overlay(&mut batch, margins, |b| {
+                self.draw_volt_extras_hud(b, wi, hi)
+            });
             self.draw_mod_shapes(&mut batch);
         }
         if show_hud {
@@ -8306,6 +8320,7 @@ impl Game<'_> {
                     u32::MAX,
                 );
             }
+            let mut appleskin_frame: Option<(hud_layout::HealthInputs, f32)> = None;
             if !self.creative
                 && !spectator
                 && let Some(p) = &mut self.player
@@ -8334,6 +8349,7 @@ impl Game<'_> {
                 // Hud.extractAirBubbles: `isEyeInFluidMatching`, so the eyes are below
                 // the surface, not merely in the water block.
                 let under_water = p.is_eye_in_fluid(horizon_client::motion::WATER);
+                let exhaustion = p.health.food.exhaustion;
                 let inputs = hud_layout::HealthInputs {
                     tick: self.ticks as i32,
                     millis: self.started.elapsed().as_millis() as i64,
@@ -8368,6 +8384,7 @@ impl Game<'_> {
                 // A fresh borrow: the hook ran with all of `self`.
                 let atlas = &self.gui.atlas;
                 hud_layout::paint(&mut batch, atlas, &draws);
+                appleskin_frame = Some((inputs, exhaustion));
                 bar_height = self
                     .health_hud
                     .left_height
@@ -8384,6 +8401,9 @@ impl Game<'_> {
                         .play_on(players, "ui.hud.bubble_pop", Some(at), volume, pitch);
                     self.audio.capture = capture;
                 }
+            }
+            if let Some((inputs, exhaustion)) = appleskin_frame {
+                self.draw_appleskin_hud(&mut batch, &inputs, exhaustion, wi, hi);
             }
             if contextual == ContextualBar::Locator {
                 let draws = self.locator_bar_draws(wi, hi);
@@ -15257,6 +15277,9 @@ impl Game<'_> {
                     self.pad_in_menu(),
                     horizon_client::recorder::hiding_controls(),
                 ) {
+                    self.pad
+                        .touch_ui
+                        .sync_volt_extras(&self.settings.extras.volt);
                     self.pad.touch_ui.draw_floating_menu(
                         &mut hud,
                         &self.gui.atlas,
@@ -18974,6 +18997,7 @@ impl<'a> Game<'a> {
             hotbar_pop: [0; 10],
             hand: Hand::Main,
             shield_cooldown: 0,
+            prev_shield_cooldown: 0,
             cooldowns: Default::default(),
             command_source: None,
             titles: Default::default(),
@@ -19062,6 +19086,7 @@ impl<'a> Game<'a> {
             fight: dragon::Fight::default(),
             dragon: None,
             crystals: Vec::new(),
+            pending_crystal_breaks: Vec::new(),
             dragon_fireballs: Vec::new(),
             breath_clouds: Vec::new(),
             dragon_model: prepared.dragon_model,

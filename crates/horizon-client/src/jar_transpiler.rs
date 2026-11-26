@@ -735,6 +735,8 @@ pub fn parse_rust_mod_metadata(rust_src: &str, mod_id: &str) -> (Option<String>,
                     if !label_prefix.is_empty()
                         && label_prefix.len() <= 36
                         && !label_prefix.contains('{')
+                        && !label_prefix.eq_ignore_ascii_case("Mode")
+                        && !label_prefix.contains("Vein / Action Limit")
                         && !label_prefix.contains("HUD Overlay")
                         && !label_prefix.contains("Active Ability")
                         && !label_prefix.contains("Active Gameplay Effect")
@@ -1681,7 +1683,39 @@ fn build_hnmod_from_jar(
 
     let mut custom_buttons: Vec<String> = Vec::new();
     let clean_title = title.trim();
-    if !items.is_empty() || !blocks.is_empty() {
+    if !features.is_empty() {
+        for feat in features.iter().take(4) {
+            let lbl = match feat.as_str() {
+                "fullbright" => "Fullbright Gamma Boost",
+                "dynamic_lights" => "Dynamic Held & Dropped Lights",
+                "zoom" => "Smooth Optical Zoom",
+                "toggle_sprint" => "Toggle Sprint",
+                "fps_overlay" => "Show FPS & 1% Low HUD",
+                "keystrokes" => "Show Keystrokes & CPS",
+                "coords_hud" => "Show Coordinates & Direction",
+                "armor_status" => "Show Armor & Durability HUD",
+                "appleskin_hud" => "Show Food & Saturation Overlay",
+                "jade_hud" => "Show Targeted Block & State Info",
+                "minimap" => "Show World Minimap Overlay",
+                "veinminer" => "Vein Mine Matching Ore Veins",
+                "treefall" => "Timber / Tree Feller",
+                "rightclickharvest" => "Right-Click Crop Replant",
+                "carryblock" => "Sneak + Right-Click Block Carry",
+                "waypoints" => "Show Waypoint Distance HUD",
+                "wrench" => "Block Rotate & Disassemble",
+                "enchantmenthints" => "Show Enchantment Descriptions",
+                "shulkerpeek" => "Preview Container Contents",
+                "eating_animation" => "Eating Crumbs & Bite Animation",
+                "motion_blur" => "Camera Motion Blur",
+                "immersive_thunder" => "Atmospheric Storm Thunder",
+                _ => continue,
+            };
+            if !custom_buttons.iter().any(|b| b == lbl) {
+                custom_buttons.push(lbl.to_owned());
+            }
+        }
+    }
+    if custom_buttons.is_empty() && (!items.is_empty() || !blocks.is_empty()) {
         custom_buttons.push(format!("{clean_title} Effects & Gear Perks"));
         if !items.is_empty() {
             custom_buttons.push(format!(
@@ -1696,9 +1730,21 @@ fn build_hnmod_from_jar(
             ));
         }
         custom_buttons.push(format!("Show {clean_title} HUD Status"));
-    } else {
-        custom_buttons.push(format!("{clean_title} Active"));
-        custom_buttons.push(format!("Show {clean_title} HUD Overlay"));
+    } else if custom_buttons.is_empty() {
+        for (_, key_lbl, _) in custom_keys.iter().take(2) {
+            if !key_lbl.trim().is_empty() {
+                custom_buttons.push(format!("{} Enabled", key_lbl.trim()));
+            }
+        }
+        for cmd in custom_commands.iter().take(2) {
+            if !cmd.trim().is_empty() {
+                custom_buttons.push(format!("/{cmd} Command Active"));
+            }
+        }
+        if custom_buttons.is_empty() {
+            custom_buttons.push(format!("{clean_title} Active"));
+            custom_buttons.push(format!("Show {clean_title} Status Pill"));
+        }
     }
 
     let compiled_json = serde_json::json!({
@@ -1953,6 +1999,23 @@ pub fn is_vein_target(name: &str) -> bool {{
         block_len = blocks.len(),
     );
 
+    let mut opt_lines = Vec::new();
+    if !items.is_empty() {
+        opt_lines.push(format!("format!(\"{safe_title} Items ({} loaded): {{}}\", if hud {{ \"ON\" }} else {{ \"OFF\" }})", items.len()));
+    }
+    if !blocks.is_empty() {
+        opt_lines.push(format!("format!(\"{safe_title} Blocks ({} loaded): {{}}\", if hud {{ \"ON\" }} else {{ \"OFF\" }})", blocks.len()));
+    }
+    if opt_lines.is_empty() {
+        opt_lines.push(format!("format!(\"{safe_title} Active: {{}}\", if hud {{ \"ON\" }} else {{ \"OFF\" }})"));
+        if features.iter().any(|f| f == "veinminer" || f == "treefall") {
+            opt_lines.push("format!(\"Max Chain Blocks: {power}\")".to_owned());
+        } else {
+            opt_lines.push(format!("format!(\"{safe_title} Status Indicator: {{}}\", if mode == \"all\" {{ \"ON\" }} else {{ \"MINIMAL\" }})"));
+        }
+    }
+    let settings_vec_body = opt_lines.join(",\n            ");
+
     let native_rs = format!(
         r#"//! Engine adapter for {safe_title} (`{mod_id}`), injected into `crates/horizon-client/src/game.rs`.
 use super::{mod_mod_name} as rt;
@@ -1970,9 +2033,7 @@ impl Game<'_> {{
         let hud = rt::is_hud_on(self.native_setting(rt::ID, rt::HUD_SETTING).as_deref());
         let power = rt::power_level(self.native_setting(rt::ID, rt::POWER_SETTING).as_deref());
         vec![
-            format!("Mode: {{mode}}"),
-            format!("HUD Overlay: {{}}", if hud {{ "ON" }} else {{ "OFF" }}),
-            format!("Vein / Action Limit: {{power}} blocks"),
+            {settings_vec_body},
         ]
     }}
 

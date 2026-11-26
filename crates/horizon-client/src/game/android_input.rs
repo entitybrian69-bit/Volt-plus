@@ -807,6 +807,12 @@ impl Game<'_> {
             horizon_client::recorder::hiding_controls(),
         ) && !self.pad.touch_ui.owns_relative(t.id)
             && !self.pad.touch_ui.owns_gesture(t.id)
+            && {
+                self.pad
+                    .touch_ui
+                    .sync_volt_extras(&self.settings.extras.volt);
+                true
+            }
             && let Some(menu_act) = self.pad.touch_ui.floating_menu_touch(
                 &mut b,
                 &self.gui.atlas,
@@ -1359,6 +1365,10 @@ impl Game<'_> {
                         horizon_client::internet_music::start_download_track(track);
                     }
                 }
+                InGameMenuAction::UpdateVoltExtras(volt) => {
+                    self.settings.extras.volt = volt;
+                    self.settings.extras.save(std::path::Path::new("."));
+                }
             }
             return Ok(true);
         }
@@ -1661,7 +1671,23 @@ impl Game<'_> {
             if self.pad.touch_ui.floating_menu && self.pad.touch_ui.music_editing_search {
                 match &out {
                     Output::Text(t) => {
-                        horizon_client::internet_music::set_in_game_query(t.clone());
+                        let mut s = horizon_client::internet_music::in_game_search_snapshot();
+                        for ch in t.chars() {
+                            if ch == '\n' || ch == '\r' {
+                                self.pad.touch_ui.music_editing_search = false;
+                                crate::platform::hide();
+                                horizon_client::internet_music::set_in_game_query(s.query.clone());
+                                horizon_client::internet_music::trigger_in_game_search(
+                                    s.query, s.genre, s.sort, 0,
+                                );
+                                break;
+                            } else if !ch.is_control() {
+                                s.query.push(ch);
+                            }
+                        }
+                        if self.pad.touch_ui.music_editing_search {
+                            horizon_client::internet_music::set_in_game_query(s.query);
+                        }
                     }
                     Output::Backspace => {
                         let mut s = horizon_client::internet_music::in_game_search_snapshot();
@@ -1680,7 +1706,33 @@ impl Game<'_> {
                         self.pad.touch_ui.music_editing_search = false;
                         crate::platform::hide();
                     }
-                    Output::Key(_) => {}
+                    Output::Key(code) => {
+                        use winit::keyboard::KeyCode;
+                        let mut s = horizon_client::internet_music::in_game_search_snapshot();
+                        match code {
+                            KeyCode::Backspace => {
+                                s.query.pop();
+                                horizon_client::internet_music::set_in_game_query(s.query);
+                            }
+                            KeyCode::Enter | KeyCode::NumpadEnter => {
+                                self.pad.touch_ui.music_editing_search = false;
+                                crate::platform::hide();
+                                horizon_client::internet_music::trigger_in_game_search(
+                                    s.query, s.genre, s.sort, 0,
+                                );
+                            }
+                            KeyCode::Escape => {
+                                self.pad.touch_ui.music_editing_search = false;
+                                crate::platform::hide();
+                            }
+                            _ => {
+                                if let Some(ch) = horizon_client::touch_ui::key_code_to_char(*code) {
+                                    s.query.push(ch);
+                                    horizon_client::internet_music::set_in_game_query(s.query);
+                                }
+                            }
+                        }
+                    }
                 }
                 continue;
             }

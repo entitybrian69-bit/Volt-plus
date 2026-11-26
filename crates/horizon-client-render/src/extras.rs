@@ -58,6 +58,417 @@ impl Corner {
     }
 }
 
+/// Configurable color preset for Shield Status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShieldColorPreset {
+    Green,
+    Cyan,
+    Blue,
+    White,
+    Red,
+    Orange,
+    Magenta,
+    Gray,
+}
+impl ShieldColorPreset {
+    pub const ENABLED_CHOICES: [Self; 4] = [Self::Green, Self::Cyan, Self::Blue, Self::White];
+    pub const DISABLED_CHOICES: [Self; 4] = [Self::Red, Self::Orange, Self::Magenta, Self::Gray];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Green => "green",
+            Self::Cyan => "cyan",
+            Self::Blue => "blue",
+            Self::White => "white",
+            Self::Red => "red",
+            Self::Orange => "orange",
+            Self::Magenta => "magenta",
+            Self::Gray => "gray",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Green => "Green",
+            Self::Cyan => "Cyan",
+            Self::Blue => "Blue",
+            Self::White => "White",
+            Self::Red => "Red",
+            Self::Orange => "Orange",
+            Self::Magenta => "Magenta",
+            Self::Gray => "Gray",
+        }
+    }
+    pub fn rgb(self) -> [u8; 3] {
+        match self {
+            Self::Green => [84, 232, 126],
+            Self::Cyan => [82, 224, 240],
+            Self::Blue => [96, 152, 255],
+            Self::White => [244, 246, 255],
+            Self::Red => [242, 82, 92],
+            Self::Orange => [255, 162, 68],
+            Self::Magenta => [224, 96, 240],
+            Self::Gray => [156, 160, 174],
+        }
+    }
+    pub fn next_enabled(self) -> Self {
+        let i = Self::ENABLED_CHOICES.iter().position(|&c| c == self).unwrap_or(0);
+        Self::ENABLED_CHOICES[(i + 1) % Self::ENABLED_CHOICES.len()]
+    }
+    pub fn next_disabled(self) -> Self {
+        let i = Self::DISABLED_CHOICES.iter().position(|&c| c == self).unwrap_or(0);
+        Self::DISABLED_CHOICES[(i + 1) % Self::DISABLED_CHOICES.len()]
+    }
+    fn parse(s: &str, default: Self) -> Self {
+        Self::ENABLED_CHOICES
+            .into_iter()
+            .chain(Self::DISABLED_CHOICES)
+            .find(|c| c.name() == s)
+            .unwrap_or(default)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShieldDisplayMode {
+    Both,
+    HudOnly,
+    ShieldOnly,
+}
+impl ShieldDisplayMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Both => "both",
+            Self::HudOnly => "hud",
+            Self::ShieldOnly => "shield",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Both => "HUD + Shield",
+            Self::HudOnly => "HUD Badge Only",
+            Self::ShieldOnly => "Held Shield Only",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Both => Self::HudOnly,
+            Self::HudOnly => Self::ShieldOnly,
+            Self::ShieldOnly => Self::Both,
+        }
+    }
+    fn parse(s: &str, default: Self) -> Self {
+        match s {
+            "both" => Self::Both,
+            "hud" => Self::HudOnly,
+            "shield" => Self::ShieldOnly,
+            _ => default,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UkuAnchor {
+    Hotbar,
+    Bottom,
+    Top,
+}
+impl UkuAnchor {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Hotbar => "hotbar",
+            Self::Bottom => "bottom",
+            Self::Top => "top",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Hotbar => "Hotbar",
+            Self::Bottom => "Bottom",
+            Self::Top => "Top",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Hotbar => Self::Bottom,
+            Self::Bottom => Self::Top,
+            Self::Top => Self::Hotbar,
+        }
+    }
+    fn parse(s: &str, default: Self) -> Self {
+        match s {
+            "hotbar" => Self::Hotbar,
+            "bottom" => Self::Bottom,
+            "top" => Self::Top,
+            _ => default,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UkuSide {
+    Left,
+    Right,
+}
+impl UkuSide {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Left => "Left",
+            Self::Right => "Right",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+        }
+    }
+    fn parse(s: &str, default: Self) -> Self {
+        match s {
+            "left" => Self::Left,
+            "right" => Self::Right,
+            _ => default,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UkuStyle {
+    Hotbar,
+    Rounded,
+    Flat,
+    None,
+}
+impl UkuStyle {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Hotbar => "hotbar",
+            Self::Rounded => "rounded",
+            Self::Flat => "flat",
+            Self::None => "none",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Hotbar => "Hotbar",
+            Self::Rounded => "Rounded",
+            Self::Flat => "Flat",
+            Self::None => "Minimal",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Hotbar => Self::Rounded,
+            Self::Rounded => Self::Flat,
+            Self::Flat => Self::None,
+            Self::None => Self::Hotbar,
+        }
+    }
+    fn parse(s: &str, default: Self) -> Self {
+        match s {
+            "hotbar" => Self::Hotbar,
+            "rounded" => Self::Rounded,
+            "flat" => Self::Flat,
+            "none" => Self::None,
+            _ => default,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UkuDurability {
+    Bar,
+    Numeric,
+    Percentage,
+    None,
+}
+impl UkuDurability {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Bar => "bar",
+            Self::Numeric => "numeric",
+            Self::Percentage => "percentage",
+            Self::None => "none",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Bar => "Bar",
+            Self::Numeric => "Numeric",
+            Self::Percentage => "Percentage",
+            Self::None => "Off",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Bar => Self::Numeric,
+            Self::Numeric => Self::Percentage,
+            Self::Percentage => Self::None,
+            Self::None => Self::Bar,
+        }
+    }
+    fn parse(s: &str, default: Self) -> Self {
+        match s {
+            "bar" => Self::Bar,
+            "numeric" => Self::Numeric,
+            "percentage" => Self::Percentage,
+            "none" => Self::None,
+            _ => default,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UkuPotionAnchor {
+    TopRight,
+    TopLeft,
+    BottomLeft,
+}
+impl UkuPotionAnchor {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::TopRight => "top_right",
+            Self::TopLeft => "top_left",
+            Self::BottomLeft => "bottom_left",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TopRight => "Top Right",
+            Self::TopLeft => "Top Left",
+            Self::BottomLeft => "Bottom Left",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::TopRight => Self::TopLeft,
+            Self::TopLeft => Self::BottomLeft,
+            Self::BottomLeft => Self::TopRight,
+        }
+    }
+    fn parse(s: &str, default: Self) -> Self {
+        match s {
+            "top_right" => Self::TopRight,
+            "top_left" => Self::TopLeft,
+            "bottom_left" => Self::BottomLeft,
+            _ => default,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppleSkinConfig {
+    pub enabled: bool,
+    pub show_saturation_overlay: bool,
+    pub show_exhaustion_underlay: bool,
+    pub show_held_food_preview: bool,
+    pub show_health_regen_overlay: bool,
+    pub show_food_tooltip: bool,
+    pub always_show_tooltip: bool,
+    pub show_debug_stats: bool,
+}
+impl Default for AppleSkinConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_saturation_overlay: true,
+            show_exhaustion_underlay: true,
+            show_held_food_preview: true,
+            show_health_regen_overlay: true,
+            show_food_tooltip: true,
+            always_show_tooltip: false,
+            show_debug_stats: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CrystalOptimizerConfig {
+    pub enabled: bool,
+    pub instant_break: bool,
+    pub respect_weakness: bool,
+    pub fast_place: bool,
+    pub timeout_ms: u16,
+}
+impl Default for CrystalOptimizerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            instant_break: true,
+            respect_weakness: true,
+            fast_place: true,
+            timeout_ms: 500,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShieldStatusConfig {
+    pub enabled: bool,
+    pub enabled_color: ShieldColorPreset,
+    pub disabled_color: ShieldColorPreset,
+    pub interpolate_colors: bool,
+    pub display_mode: ShieldDisplayMode,
+    pub disable_sound: bool,
+}
+impl Default for ShieldStatusConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            enabled_color: ShieldColorPreset::Green,
+            disabled_color: ShieldColorPreset::Red,
+            interpolate_colors: true,
+            display_mode: ShieldDisplayMode::Both,
+            disable_sound: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UkuHudConfig {
+    pub enabled: bool,
+    pub armor_enabled: bool,
+    pub potion_enabled: bool,
+    pub armor_anchor: UkuAnchor,
+    pub armor_side: UkuSide,
+    pub box_style: UkuStyle,
+    pub durability_display: UkuDurability,
+    pub show_offhand: bool,
+    pub hide_empty: bool,
+    pub low_durability_pct: u8,
+    pub potion_anchor: UkuPotionAnchor,
+    pub potion_compact: bool,
+}
+impl Default for UkuHudConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            armor_enabled: true,
+            potion_enabled: true,
+            armor_anchor: UkuAnchor::Hotbar,
+            armor_side: UkuSide::Right,
+            box_style: UkuStyle::Hotbar,
+            durability_display: UkuDurability::Bar,
+            show_offhand: true,
+            hide_empty: true,
+            low_durability_pct: 15,
+            potion_anchor: UkuPotionAnchor::TopRight,
+            potion_compact: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VoltExtras {
+    pub appleskin: AppleSkinConfig,
+    pub crystal_optimizer: CrystalOptimizerConfig,
+    pub shield_status: ShieldStatusConfig,
+    pub uku_hud: UkuHudConfig,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Extras {
     pub fullbright: bool,
@@ -115,6 +526,8 @@ pub struct Extras {
     /// "Playing Volt+" on the player's Discord profile, with the mode, the dimension and the
     /// time played (`discord_presence`; on by default).
     pub discord_presence: bool,
+    /// Native built-in Volt+ Extras mods housed in the Control Hub's Volt+ Extras tab.
+    pub volt: VoltExtras,
 }
 impl Default for Extras {
     fn default() -> Self {
@@ -148,6 +561,7 @@ impl Default for Extras {
             no_ai: false,
             agent_control: false,
             discord_presence: true,
+            volt: VoltExtras::default(),
         }
     }
 }
@@ -223,13 +637,52 @@ impl Extras {
                 horizon_core::no_ai::KEY => e.no_ai = flag(e.no_ai),
                 "agentControl" => e.agent_control = flag(e.agent_control),
                 "discordPresence" => e.discord_presence = flag(e.discord_presence),
+                "volt.appleskin.enabled" => e.volt.appleskin.enabled = flag(e.volt.appleskin.enabled),
+                "volt.appleskin.saturation" => e.volt.appleskin.show_saturation_overlay = flag(e.volt.appleskin.show_saturation_overlay),
+                "volt.appleskin.exhaustion" => e.volt.appleskin.show_exhaustion_underlay = flag(e.volt.appleskin.show_exhaustion_underlay),
+                "volt.appleskin.heldPreview" => e.volt.appleskin.show_held_food_preview = flag(e.volt.appleskin.show_held_food_preview),
+                "volt.appleskin.regen" => e.volt.appleskin.show_health_regen_overlay = flag(e.volt.appleskin.show_health_regen_overlay),
+                "volt.appleskin.tooltip" => e.volt.appleskin.show_food_tooltip = flag(e.volt.appleskin.show_food_tooltip),
+                "volt.appleskin.tooltipAlways" => e.volt.appleskin.always_show_tooltip = flag(e.volt.appleskin.always_show_tooltip),
+                "volt.appleskin.debug" => e.volt.appleskin.show_debug_stats = flag(e.volt.appleskin.show_debug_stats),
+                "volt.crystal.enabled" => e.volt.crystal_optimizer.enabled = flag(e.volt.crystal_optimizer.enabled),
+                "volt.crystal.instantBreak" => e.volt.crystal_optimizer.instant_break = flag(e.volt.crystal_optimizer.instant_break),
+                "volt.crystal.weakness" => e.volt.crystal_optimizer.respect_weakness = flag(e.volt.crystal_optimizer.respect_weakness),
+                "volt.crystal.fastPlace" => e.volt.crystal_optimizer.fast_place = flag(e.volt.crystal_optimizer.fast_place),
+                "volt.crystal.timeoutMs" => {
+                    if let Ok(v) = value.parse::<u16>() {
+                        e.volt.crystal_optimizer.timeout_ms = v.clamp(100, 2000);
+                    }
+                }
+                "volt.shield.enabled" => e.volt.shield_status.enabled = flag(e.volt.shield_status.enabled),
+                "volt.shield.enabledColor" => e.volt.shield_status.enabled_color = ShieldColorPreset::parse(value, e.volt.shield_status.enabled_color),
+                "volt.shield.disabledColor" => e.volt.shield_status.disabled_color = ShieldColorPreset::parse(value, e.volt.shield_status.disabled_color),
+                "volt.shield.interpolate" => e.volt.shield_status.interpolate_colors = flag(e.volt.shield_status.interpolate_colors),
+                "volt.shield.mode" => e.volt.shield_status.display_mode = ShieldDisplayMode::parse(value, e.volt.shield_status.display_mode),
+                "volt.shield.sound" => e.volt.shield_status.disable_sound = flag(e.volt.shield_status.disable_sound),
+                "volt.uku.enabled" => e.volt.uku_hud.enabled = flag(e.volt.uku_hud.enabled),
+                "volt.uku.armor" => e.volt.uku_hud.armor_enabled = flag(e.volt.uku_hud.armor_enabled),
+                "volt.uku.potion" => e.volt.uku_hud.potion_enabled = flag(e.volt.uku_hud.potion_enabled),
+                "volt.uku.armorAnchor" => e.volt.uku_hud.armor_anchor = UkuAnchor::parse(value, e.volt.uku_hud.armor_anchor),
+                "volt.uku.armorSide" => e.volt.uku_hud.armor_side = UkuSide::parse(value, e.volt.uku_hud.armor_side),
+                "volt.uku.style" => e.volt.uku_hud.box_style = UkuStyle::parse(value, e.volt.uku_hud.box_style),
+                "volt.uku.durability" => e.volt.uku_hud.durability_display = UkuDurability::parse(value, e.volt.uku_hud.durability_display),
+                "volt.uku.offhand" => e.volt.uku_hud.show_offhand = flag(e.volt.uku_hud.show_offhand),
+                "volt.uku.hideEmpty" => e.volt.uku_hud.hide_empty = flag(e.volt.uku_hud.hide_empty),
+                "volt.uku.lowPct" => {
+                    if let Ok(v) = value.parse::<u8>() {
+                        e.volt.uku_hud.low_durability_pct = v.min(50);
+                    }
+                }
+                "volt.uku.potionAnchor" => e.volt.uku_hud.potion_anchor = UkuPotionAnchor::parse(value, e.volt.uku_hud.potion_anchor),
+                "volt.uku.potionCompact" => e.volt.uku_hud.potion_compact = flag(e.volt.uku_hud.potion_compact),
                 _ => {}
             }
         }
         e
     }
     pub fn serialize(&self) -> String {
-        format!(
+        let mut s = format!(
             "fullbright:{}\ndynamicLights:{}\nzoom:{}\nzoomKey:{}\nzoomLevel:{}\nzoomSmooth:{}\nzoomSensitivity:{}\nfps:{}\nfpsCorner:{}\nfpsLows:{}\nkeystrokes:{}\nkeystrokesCorner:{}\nkeystrokesCps:{}\nmovedToMods:{}\nminimap:{}\nminimapCorner:{}\nminimapSize:{}\nminimapShape:{}\nminimapZoom:{}\nminimapRotate:{}\nautoReconnect:{}\nownNameTag:{}\nmouseTweaks:{}\nmouseTweaksWheel:{}\nsort:{}\nsortKey:{}\n{}:{}\nagentControl:{}\ndiscordPresence:{}\n",
             bool_text(self.fullbright),
             bool_text(self.dynamic_lights),
@@ -265,7 +718,44 @@ impl Extras {
             bool_text(self.no_ai),
             bool_text(self.agent_control),
             bool_text(self.discord_presence),
-        )
+        );
+        let a = &self.volt.appleskin;
+        let c = &self.volt.crystal_optimizer;
+        let sh = &self.volt.shield_status;
+        let u = &self.volt.uku_hud;
+        use std::fmt::Write;
+        let _ = writeln!(s, "volt.appleskin.enabled:{}", bool_text(a.enabled));
+        let _ = writeln!(s, "volt.appleskin.saturation:{}", bool_text(a.show_saturation_overlay));
+        let _ = writeln!(s, "volt.appleskin.exhaustion:{}", bool_text(a.show_exhaustion_underlay));
+        let _ = writeln!(s, "volt.appleskin.heldPreview:{}", bool_text(a.show_held_food_preview));
+        let _ = writeln!(s, "volt.appleskin.regen:{}", bool_text(a.show_health_regen_overlay));
+        let _ = writeln!(s, "volt.appleskin.tooltip:{}", bool_text(a.show_food_tooltip));
+        let _ = writeln!(s, "volt.appleskin.tooltipAlways:{}", bool_text(a.always_show_tooltip));
+        let _ = writeln!(s, "volt.appleskin.debug:{}", bool_text(a.show_debug_stats));
+        let _ = writeln!(s, "volt.crystal.enabled:{}", bool_text(c.enabled));
+        let _ = writeln!(s, "volt.crystal.instantBreak:{}", bool_text(c.instant_break));
+        let _ = writeln!(s, "volt.crystal.weakness:{}", bool_text(c.respect_weakness));
+        let _ = writeln!(s, "volt.crystal.fastPlace:{}", bool_text(c.fast_place));
+        let _ = writeln!(s, "volt.crystal.timeoutMs:{}", c.timeout_ms);
+        let _ = writeln!(s, "volt.shield.enabled:{}", bool_text(sh.enabled));
+        let _ = writeln!(s, "volt.shield.enabledColor:{}", sh.enabled_color.name());
+        let _ = writeln!(s, "volt.shield.disabledColor:{}", sh.disabled_color.name());
+        let _ = writeln!(s, "volt.shield.interpolate:{}", bool_text(sh.interpolate_colors));
+        let _ = writeln!(s, "volt.shield.mode:{}", sh.display_mode.name());
+        let _ = writeln!(s, "volt.shield.sound:{}", bool_text(sh.disable_sound));
+        let _ = writeln!(s, "volt.uku.enabled:{}", bool_text(u.enabled));
+        let _ = writeln!(s, "volt.uku.armor:{}", bool_text(u.armor_enabled));
+        let _ = writeln!(s, "volt.uku.potion:{}", bool_text(u.potion_enabled));
+        let _ = writeln!(s, "volt.uku.armorAnchor:{}", u.armor_anchor.name());
+        let _ = writeln!(s, "volt.uku.armorSide:{}", u.armor_side.name());
+        let _ = writeln!(s, "volt.uku.style:{}", u.box_style.name());
+        let _ = writeln!(s, "volt.uku.durability:{}", u.durability_display.name());
+        let _ = writeln!(s, "volt.uku.offhand:{}", bool_text(u.show_offhand));
+        let _ = writeln!(s, "volt.uku.hideEmpty:{}", bool_text(u.hide_empty));
+        let _ = writeln!(s, "volt.uku.lowPct:{}", u.low_durability_pct);
+        let _ = writeln!(s, "volt.uku.potionAnchor:{}", u.potion_anchor.name());
+        let _ = writeln!(s, "volt.uku.potionCompact:{}", bool_text(u.potion_compact));
+        s
     }
     /// Binds the extra key `name` (`SORT_KEY`); false for
     /// another name (a vanilla mapping).

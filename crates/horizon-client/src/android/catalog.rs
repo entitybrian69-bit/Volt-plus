@@ -885,7 +885,9 @@ pub struct Catalog {
     music_icon_worker: Option<mpsc::Receiver<(String, u32, u32, Vec<u8>)>>,
     worker: Option<mpsc::Receiver<Result<Reply, String>>>,
     search_worker: Option<mpsc::Receiver<Result<Vec<Project>, String>>>,
-    icon_worker: Option<mpsc::Receiver<IconData>>,
+    icon_workers: Vec<mpsc::Receiver<IconData>>,
+    icon_inflight: std::collections::HashSet<String>,
+    local_icon_aliases: std::collections::HashMap<String, Vec<String>>,
     searches: crate::search_queue::Queue<(Page, browser::SourceId, String, usize), Vec<Project>>,
 }
 #[derive(Clone)]
@@ -997,7 +999,9 @@ impl Catalog {
             music_icon_worker: None,
             worker: None,
             search_worker: None,
-            icon_worker: None,
+            icon_workers: Vec::new(),
+            icon_inflight: std::collections::HashSet::new(),
+            local_icon_aliases: std::collections::HashMap::new(),
             searches: crate::search_queue::Queue::new(),
         };
         crate::updater::check_in_background();
@@ -1609,14 +1613,16 @@ impl Catalog {
                     && let Ok(mut zip) = zip::ZipArchive::new(file)
                 {
                     let mut icon_bytes = None;
-                    for i in 0..zip.len().min(512) {
-                        let Ok(mut entry) = zip.by_index(i) else { continue };
-                        let Ok(entry_name) = entry.name() else { continue };
-                        let ename = entry_name.to_ascii_lowercase();
-                        if matches!(ename.as_str(), "icon.png" | "logo.png" | "pack.png")
-                            || (ename.starts_with("assets/") && ename.ends_with("/icon.png"))
-                            || (ename.starts_with("assets/") && ename.ends_with("/logo.png"))
-                        {
+                    // Fast direct probes first (works even for >512 entry archives)
+                    let direct_candidates = [
+                        "icon.png".to_owned(),
+                        "pack.png".to_owned(),
+                        "logo.png".to_owned(),
+                        format!("assets/{canon_id}/icon.png"),
+                        format!("assets/{canon_id}/logo.png"),
+                    ];
+                    for probe in &direct_candidates {
+                        if let Ok(mut entry) = zip.by_name(probe) {
                             let mut buf = Vec::new();
                             if std::io::Read::take(&mut entry, 2 * 1024 * 1024)
                                 .read_to_end(&mut buf)
@@ -1625,6 +1631,51 @@ impl Catalog {
                             {
                                 icon_bytes = Some(buf);
                                 break;
+                            }
+                        }
+                    }
+                    // Also check fabric.mod.json `"icon"` path if present
+                    if icon_bytes.is_none()
+                        && let Ok(mut fmj) = zip.by_name("fabric.mod.json")
+                    {
+                        let mut fmj_buf = String::new();
+                        if std::io::Read::take(&mut fmj, 256 * 1024)
+                            .read_to_string(&mut fmj_buf)
+                            .is_ok()
+                            && let Ok(val) = serde_json::from_str::<serde_json::Value>(&fmj_buf)
+                            && let Some(icon_path) = val.get("icon").and_then(|v| v.as_str())
+                        {
+                            let norm = icon_path.trim_start_matches('/');
+                            if let Ok(mut entry) = zip.by_name(norm) {
+                                let mut buf = Vec::new();
+                                if std::io::Read::take(&mut entry, 2 * 1024 * 1024)
+                                    .read_to_end(&mut buf)
+                                    .is_ok()
+                                    && !buf.is_empty()
+                                {
+                                    icon_bytes = Some(buf);
+                                }
+                            }
+                        }
+                    }
+                    if icon_bytes.is_none() {
+                        for i in 0..zip.len().min(4096) {
+                            let Ok(mut entry) = zip.by_index(i) else { continue };
+                            let Ok(entry_name) = entry.name() else { continue };
+                            let ename = entry_name.to_ascii_lowercase();
+                            if matches!(ename.as_str(), "icon.png" | "logo.png" | "pack.png")
+                                || (ename.starts_with("assets/") && ename.ends_with("/icon.png"))
+                                || (ename.starts_with("assets/") && ename.ends_with("/logo.png"))
+                            {
+                                let mut buf = Vec::new();
+                                if std::io::Read::take(&mut entry, 2 * 1024 * 1024)
+                                    .read_to_end(&mut buf)
+                                    .is_ok()
+                                    && !buf.is_empty()
+                                {
+                                    icon_bytes = Some(buf);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1640,6 +1691,7 @@ impl Catalog {
         }
         self.sort_local_items();
         self.refresh_fm(home);
+        self.fetch_icons(home);
     }
 
     pub fn sort_local_items(&mut self) {
@@ -1990,13 +2042,33 @@ impl Catalog {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        if let Some(rx) = &self.icon_worker {
-            while let Ok((key, w, h, rgba, summary)) = rx.try_recv() {
-                self.icons.insert(key.clone(), (w, h, rgba));
-                if let Some(s) = summary.filter(|s| !s.trim().is_empty()) {
-                    self.enriched_summaries.insert(key, s);
+        self.icon_workers.retain(|rx| {
+            let mut alive = true;
+            loop {
+                match rx.try_recv() {
+                    Ok((key, w, h, rgba, summary)) => {
+                        self.icon_inflight.remove(&key);
+                        if let Some(aliases) = self.local_icon_aliases.get(&key) {
+                            for alias in aliases {
+                                self.icons.insert(alias.clone(), (w, h, rgba.clone()));
+                            }
+                        }
+                        self.icons.insert(key.clone(), (w, h, rgba));
+                        if let Some(s) = summary.filter(|s| !s.trim().is_empty()) {
+                            self.enriched_summaries.insert(key, s);
+                        }
+                    }
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        alive = false;
+                        break;
+                    }
                 }
             }
+            alive
+        });
+        if self.icon_workers.is_empty() {
+            self.icon_inflight.clear();
         }
         if let Some(rx) = &self.modal_worker {
             while let Ok(update) = rx.try_recv() {
@@ -2294,6 +2366,8 @@ impl Catalog {
                 .filter(|u| !u.is_empty());
             raw_tasks.push((p.id.clone(), p.title.clone(), direct, p.kind, p.source));
         }
+        let game_home = self.config.game_home(home);
+        let installed_entries = Installed::load(&game_home).entries;
         for item in &self.local {
             let raw_id = item
                 .file
@@ -2315,8 +2389,36 @@ impl Catalog {
                     horizon_client::content_files::Kind::Packs => Kind::ResourcePack,
                     horizon_client::content_files::Kind::Shaders => Kind::Shader,
                 };
-                let clean_q = item.title.split('(').next().unwrap_or(&item.title).trim().to_owned();
-                raw_tasks.push((canon_id, clean_q, None, b_kind, browser::SourceId::Horizon));
+                let matched_installed = installed_entries.iter().find(|e| {
+                    e.file == item.file
+                        || e.file.ends_with(&format!("/{}", item.file))
+                        || horizon_client::jar_transpiler::sanitize_mod_id(&e.project) == canon_id
+                        || horizon_client::jar_transpiler::sanitize_mod_id(&e.slug) == canon_id
+                });
+                let (task_id, task_title, task_src) = if let Some(inst) = matched_installed {
+                    let entry_aliases = self
+                        .local_icon_aliases
+                        .entry(inst.project.clone())
+                        .or_default();
+                    if !entry_aliases.contains(&canon_id) {
+                        entry_aliases.push(canon_id.clone());
+                    }
+                    if !entry_aliases.contains(&item.file) {
+                        entry_aliases.push(item.file.clone());
+                    }
+                    (inst.project.clone(), inst.title.clone(), inst.source)
+                } else {
+                    let clean_q = item.title.split('(').next().unwrap_or(&item.title).trim().to_owned();
+                    let entry_aliases = self
+                        .local_icon_aliases
+                        .entry(canon_id.clone())
+                        .or_default();
+                    if !entry_aliases.contains(&item.file) {
+                        entry_aliases.push(item.file.clone());
+                    }
+                    (canon_id, clean_q, browser::SourceId::Horizon)
+                };
+                raw_tasks.push((task_id, task_title, None, b_kind, task_src));
             }
         }
 
@@ -2324,7 +2426,7 @@ impl Catalog {
         let mut tasks = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for (id, title, direct_url, kind, source) in raw_tasks {
-            if !seen.insert(id.clone()) {
+            if self.icons.contains_key(&id) || self.icon_inflight.contains(&id) || !seen.insert(id.clone()) {
                 continue;
             }
             if let Some((w, h, rgba, summary)) = browser::images::load_cached_rgba_by_id(
@@ -2333,6 +2435,11 @@ impl Catalog {
                 direct_url.as_deref(),
                 browser::images::FAST_ICON,
             ) {
+                if let Some(aliases) = self.local_icon_aliases.get(&id) {
+                    for alias in aliases {
+                        self.icons.insert(alias.clone(), (w, h, rgba.clone()));
+                    }
+                }
                 self.icons.insert(id.clone(), (w, h, rgba));
                 if source != browser::SourceId::Horizon
                     && let Some(s) = summary
@@ -2352,6 +2459,7 @@ impl Catalog {
                 self.icons.insert(id.clone(), (w, h, rgba));
                 continue;
             }
+            self.icon_inflight.insert(id.clone());
             tasks.push((id, title, direct_url, kind, source));
         }
 
@@ -2360,7 +2468,7 @@ impl Catalog {
         }
         let home = home.to_path_buf();
         let (tx, rx) = mpsc::channel();
-        self.icon_worker = Some(rx);
+        self.icon_workers.push(rx);
         std::thread::spawn(move || {
             // Pass 2: Batch-resolve Modrinth icon URLs in a single API call if any Modrinth item lacks a URL
             let modrinth_missing: Vec<String> = tasks
@@ -2451,6 +2559,9 @@ impl Catalog {
                                 )
                             {
                                 let _ = tx.send((id.clone(), w, h, rgba, found_summary));
+                            } else if *kind == Kind::Shader {
+                                let (w, h, rgba) = synthesize_shader_badge_rgba(id, title);
+                                let _ = tx.send((id.clone(), w, h, rgba, None));
                             }
                         }
                     });
@@ -2991,7 +3102,42 @@ impl Catalog {
                     crate::shader_catalog::install_horizon_builtin_shader(&project, &game, &report)?
                 } else {
                     match browser::installed::install(source.as_ref(), &project, true, &game, &report) {
-                        Ok(entries) => entries.len(),
+                        Ok(entries) => {
+                            let mut activated: Option<String> = None;
+                            let mut valid = !entries.is_empty();
+                            for e in &entries {
+                                let p = game.join(&e.file);
+                                if p.is_file() {
+                                    if horizon_shader_api::package::is_pack(&p) {
+                                        let ok = horizon_shader_api::Pack::read(&p)
+                                            .ok()
+                                            .is_some_and(|pk| horizon_shader_api::check(&pk).is_ok());
+                                        if !ok {
+                                            valid = false;
+                                        }
+                                    }
+                                    if activated.is_none()
+                                        && let Some(name) = p.file_name().and_then(|n| n.to_str())
+                                    {
+                                        activated = Some(name.to_owned());
+                                    }
+                                }
+                            }
+                            if !valid {
+                                crate::shader_catalog::install_horizon_synthesized_shader(
+                                    &project, &game, &report,
+                                )?
+                            } else {
+                                if let Some(pack_name) = activated {
+                                    let options_path = game.join("options.txt");
+                                    let mut settings =
+                                        horizon_client::settings::Settings::load(&options_path);
+                                    settings.horizon.shader_pack = pack_name;
+                                    settings.save(&options_path);
+                                }
+                                entries.len()
+                            }
+                        }
                         Err(_) => crate::shader_catalog::install_horizon_synthesized_shader(
                             &project, &game, &report,
                         )?,
@@ -4128,7 +4274,15 @@ fn is_horizon_builtin_or_catalog_mod(id: &str) -> bool {
 }
 
 fn clean_modrinth_search_title(title: &str) -> String {
-    let base = title.split('(').next().unwrap_or(title);
+    let base = title
+        .strip_suffix(".jar")
+        .or_else(|| title.strip_suffix(".hmod"))
+        .or_else(|| title.strip_suffix(".hnmod"))
+        .or_else(|| title.strip_suffix(".hshader"))
+        .or_else(|| title.strip_suffix(".zip"))
+        .unwrap_or(title);
+    let base = base.split('(').next().unwrap_or(base);
+    let base = base.split('[').next().unwrap_or(base);
     let base = base.split(" - ").next().unwrap_or(base);
     let base = base.split(" | ").next().unwrap_or(base);
     let base = if let Some(idx) = base.to_ascii_lowercase().find(" and ") {
@@ -4140,7 +4294,38 @@ fn clean_modrinth_search_title(title: &str) -> String {
     } else {
         base
     };
-    base.trim().to_owned()
+    let mut parts: Vec<&str> = Vec::new();
+    for raw_tok in base.split(|c: char| c == ' ' || c == '_' || c == '+') {
+        for sub in raw_tok.split('-') {
+            let low = sub.to_ascii_lowercase();
+            let is_ver = (low.starts_with('v') && low[1..].chars().next().is_some_and(|c| c.is_ascii_digit()))
+                || low.starts_with("mc1.")
+                || low.starts_with("1.")
+                || low.chars().next().is_some_and(|c| c.is_ascii_digit()) && low.contains('.');
+            let is_loader = matches!(
+                low.as_str(),
+                "fabric" | "forge" | "neoforge" | "quilt" | "universal" | "client" | "release"
+            );
+            if is_ver || is_loader {
+                break;
+            }
+            if !sub.is_empty() {
+                parts.push(sub);
+            }
+        }
+    }
+    let cleaned = parts.join(" ");
+    if cleaned.trim().is_empty() {
+        base.trim().to_owned()
+    } else {
+        cleaned.trim().to_owned()
+    }
+}
+
+fn token_stem(raw: &str) -> String {
+    let low = raw.to_ascii_lowercase();
+    let no_poss = low.strip_suffix("'s").or_else(|| low.strip_suffix("’s")).unwrap_or(&low);
+    normalize_mod_key(no_poss)
 }
 
 fn lookup_modrinth_by_name(title: &str, kind: Kind) -> Option<Project> {
@@ -4151,14 +4336,15 @@ fn lookup_modrinth_by_name(title: &str, kind: Kind) -> Option<Project> {
     }
     let mut query = Query::new(&clean_title, kind);
     query.everything = true;
-    query.limit = 10;
+    query.limit = 12;
     let hits = if kind == Kind::Shader {
         browser::modrinth::search_shader_packs(&query).ok()?
     } else {
         browser::modrinth::Modrinth.search(&query).ok()?
     };
     if let Some(exact) = hits.iter().find(|p| {
-        normalize_mod_key(&p.title) == target_key || normalize_mod_key(&p.slug) == target_key
+        p.icon.is_some()
+            && (normalize_mod_key(&p.title) == target_key || normalize_mod_key(&p.slug) == target_key)
     }) {
         return Some(exact.clone());
     }
@@ -4173,21 +4359,80 @@ fn lookup_modrinth_by_name(title: &str, kind: Kind) -> Option<Project> {
     {
         return Some(prefix.clone());
     }
+    let stop = ["and", "the", "for", "with", "mod", "shader", "shaders", "pack", "hud", "plus"];
     let words: Vec<String> = clean_title
         .split_whitespace()
-        .map(|w| normalize_mod_key(w))
-        .filter(|w| w.len() >= 3)
+        .map(token_stem)
+        .filter(|w| w.len() >= 3 && !stop.contains(&w.as_str()))
         .collect();
-    if !words.is_empty() {
-        return hits.into_iter().find(|p| {
-            if p.icon.is_none() {
-                return false;
-            }
-            let hay = format!("{} {}", normalize_mod_key(&p.title), normalize_mod_key(&p.slug));
-            words.iter().all(|w| hay.contains(w))
-        });
+    let effective_words: Vec<String> = if words.is_empty() {
+        clean_title
+            .split_whitespace()
+            .map(token_stem)
+            .filter(|w| w.len() >= 2)
+            .collect()
+    } else {
+        words
+    };
+    if effective_words.is_empty() {
+        return hits.into_iter().find(|p| p.icon.is_some());
     }
-    None
+    let min_hits = (effective_words.len() + 1) / 2;
+    hits.into_iter()
+        .filter(|p| p.icon.is_some())
+        .filter_map(|p| {
+            let hay = format!("{} {}", normalize_mod_key(&p.title), normalize_mod_key(&p.slug));
+            let matched = effective_words.iter().filter(|w| hay.contains(w.as_str())).count();
+            (matched >= min_hits).then_some((matched, p))
+        })
+        .max_by_key(|(matched, p)| (*matched, p.downloads))
+        .map(|(_, p)| p)
+}
+
+fn synthesize_shader_badge_rgba(id: &str, title: &str) -> (u32, u32, Vec<u8>) {
+    let lower = format!("{id} {title}").to_ascii_lowercase();
+    let (top, bot, sun) = if lower.contains("night") || lower.contains("galax") || lower.contains("nebula") || lower.contains("void") {
+        ([18.0f32, 24.0, 62.0], [64.0f32, 42.0, 128.0], [185.0f32, 210.0, 255.0])
+    } else if lower.contains("gold") || lower.contains("warm") || lower.contains("sunset") || lower.contains("sildur") {
+        ([46.0f32, 34.0, 88.0], [238.0f32, 134.0, 54.0], [255.0f32, 234.0, 152.0])
+    } else if lower.contains("vivid") || lower.contains("ultra") || lower.contains("rtx") || lower.contains("pbr") {
+        ([22.0f32, 108.0, 198.0], [72.0f32, 198.0, 232.0], [255.0f32, 246.0, 196.0])
+    } else {
+        ([42.0f32, 78.0, 168.0], [128.0f32, 186.0, 244.0], [255.0f32, 238.0, 178.0])
+    };
+    let size = 48u32;
+    let mut rgba = vec![0u8; (size * size * 4) as usize];
+    for y in 0..size {
+        let v = y as f32 / (size - 1) as f32;
+        for x in 0..size {
+            let u = x as f32 / (size - 1) as f32;
+            let mut r = top[0] + (bot[0] - top[0]) * v;
+            let mut g = top[1] + (bot[1] - top[1]) * v;
+            let mut b = top[2] + (bot[2] - top[2]) * v;
+            // Water reflection band on bottom third
+            if v > 0.68 {
+                let wave = ((u * 14.0 + v * 10.0).sin() * 0.5 + 0.5) * 0.25;
+                r = r * 0.65 + 24.0 + wave * 60.0;
+                g = g * 0.72 + 56.0 + wave * 80.0;
+                b = b * 0.85 + 98.0 + wave * 85.0;
+            }
+            // Sun/moon orb glow
+            let dx = u - 0.66;
+            let dy = v - 0.34;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let halo = (1.0 - (dist / 0.38)).clamp(0.0, 1.0).powf(2.2);
+            let core = if dist < 0.11 { 1.0 } else { halo * 0.62 };
+            r = (r + (sun[0] - r) * core).clamp(0.0, 255.0);
+            g = (g + (sun[1] - g) * core).clamp(0.0, 255.0);
+            b = (b + (sun[2] - b) * core).clamp(0.0, 255.0);
+            let idx = ((y * size + x) * 4) as usize;
+            rgba[idx] = r.round() as u8;
+            rgba[idx + 1] = g.round() as u8;
+            rgba[idx + 2] = b.round() as u8;
+            rgba[idx + 3] = 255;
+        }
+    }
+    (size, size, rgba)
 }
 
 fn clean_markdown_body(raw: &str) -> String {

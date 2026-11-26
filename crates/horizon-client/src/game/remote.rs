@@ -7328,6 +7328,21 @@ impl Game<'_> {
             return;
         }
         self.use_delay = 4;
+        if self.settings.extras.volt.crystal_optimizer.enabled
+            && self.settings.extras.volt.crystal_optimizer.fast_place
+        {
+            let crystal_or_obi = |s: &ItemStack| {
+                matches!(
+                    s.item.as_str(),
+                    "minecraft:end_crystal" | "minecraft:obsidian"
+                )
+            };
+            if self.stack_in(self.selected).is_some_and(crystal_or_obi)
+                || self.offhand.as_ref().is_some_and(crystal_or_obi)
+            {
+                self.use_delay = 0;
+            }
+        }
         // Minecraft.startUseItem: nothing is used while the hands paddle a boat.
         if self.hands_busy() {
             return;
@@ -8504,6 +8519,7 @@ impl Game<'_> {
             // VehicleEntity.hurtServer, ItemFrame and ArmorStand hurtServer,
             // a painting broken or an EndCrystal hurtServer: the server decides.
             self.send(S::Attack(play::Attack { id: hit.id }));
+            self.crystal_opt_on_attack(hit.id);
             self.reset_attack_strength();
         } else if let Some((i, distance)) = self.mob_hit()
             && self.before_block(distance)

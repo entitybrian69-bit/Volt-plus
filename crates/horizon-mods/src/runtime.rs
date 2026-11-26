@@ -297,6 +297,12 @@ pub struct Entry {
     modified: Option<SystemTime>,
 }
 impl Entry {
+    /// Whether this entry actually carries a WebAssembly module (`mod.wasm`),
+    /// as opposed to a content-only `.hmod` package.
+    pub fn has_wasm(&self) -> bool {
+        self.run.is_some()
+    }
+
     /// The running mod has a settings page (capability `ui` set widgets
     /// with `ui.set-settings`, or `input` registered keys the player may
     /// bind there): its row in Options > Mods gains a button.
