@@ -18,11 +18,13 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[derive(Clone)]
 struct Request {
     kind: Kind,
     appearance: Option<crate::skins::library::Kind>,
     target_dir: Option<PathBuf>,
     control_import: bool,
+    auto_replace_batch: bool,
     export_bytes: Option<(Vec<u8>, String)>,
     export_source_path: Option<(PathBuf, String)>,
     home: PathBuf,
@@ -148,6 +150,7 @@ pub fn begin(kind: Kind, home: PathBuf) -> std::result::Result<(), String> {
             appearance: None,
             target_dir: None,
             control_import: false,
+            auto_replace_batch: false,
             export_bytes: None,
             export_source_path: None,
             home,
@@ -194,6 +197,7 @@ pub fn begin_appearance(
             appearance: Some(kind),
             target_dir: None,
             control_import: false,
+            auto_replace_batch: false,
             export_bytes: None,
             export_source_path: None,
             home,
@@ -220,14 +224,24 @@ pub fn begin_into_dir(target_dir: PathBuf) -> std::result::Result<(), String> {
         .join("file-manager-imports");
     {
         let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
-        s.status_title = "Importing file...".into();
-        s.status_detail = "Choose a file in Android file picker (or tap Cancel)...".into();
+        s.status_title = "Importing files...".into();
+        s.status_detail = "Choose one or more files in Android file picker (or tap Cancel)...".into();
         s.progress = Some(0.08);
+        let dir_kind = if target_dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| matches!(s, "horizon-mods" | "horizon-native-mods" | "mods"))
+        {
+            Kind::Mods
+        } else {
+            Kind::Packs
+        };
         s.request = Some(Request {
-            kind: Kind::Packs,
+            kind: dir_kind,
             appearance: None,
             target_dir: Some(target_dir),
             control_import: false,
+            auto_replace_batch: false,
             export_bytes: None,
             export_source_path: None,
             home: PathBuf::new(),
@@ -238,7 +252,7 @@ pub fn begin_into_dir(target_dir: PathBuf) -> std::result::Result<(), String> {
         picker_failed("Android document picker is unavailable");
         return Err("Android document picker is unavailable".into());
     }
-    notice("Choose a file to import into this folder", false);
+    notice("Choose file(s) to import into this folder", false);
     Ok(())
 }
 
@@ -257,11 +271,21 @@ pub fn begin_folder_into_dir(target_dir: PathBuf) -> std::result::Result<(), Str
         s.status_title = "Importing folder...".into();
         s.status_detail = "Select world/folder in Android picker (or tap Cancel)...".into();
         s.progress = Some(0.08);
+        let dir_kind = if target_dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| matches!(s, "horizon-mods" | "horizon-native-mods" | "mods"))
+        {
+            Kind::Mods
+        } else {
+            Kind::Packs
+        };
         s.request = Some(Request {
-            kind: Kind::Packs,
+            kind: dir_kind,
             appearance: None,
             target_dir: Some(target_dir),
             control_import: false,
+            auto_replace_batch: false,
             export_bytes: None,
             export_source_path: None,
             home: PathBuf::new(),
@@ -298,6 +322,7 @@ pub fn begin_control_import(game_home: PathBuf) -> std::result::Result<(), Strin
             appearance: None,
             target_dir: None,
             control_import: true,
+            auto_replace_batch: false,
             export_bytes: None,
             export_source_path: None,
             home: game_home,
@@ -340,6 +365,7 @@ pub fn begin_control_export(
             appearance: None,
             target_dir: None,
             control_import: false,
+            auto_replace_batch: false,
             export_bytes: Some((bytes, suggested_name.clone())),
             export_source_path: None,
             home: game_home,
@@ -383,6 +409,7 @@ pub fn begin_file_export(
             appearance: None,
             target_dir: None,
             control_import: false,
+            auto_replace_batch: false,
             export_bytes: None,
             export_source_path: Some((source_path, suggested_name.clone())),
             home,
@@ -533,7 +560,7 @@ pub extern "system" fn document_result(
         let activity = env.new_global_ref(activity)?;
         Ok((env.get_java_vm()?, activity, text))
     })();
-    let Ok((vm, activity, uri)) = setup else {
+    let Ok((vm, activity, raw_uri)) = setup else {
         let _ = env.exception_clear();
         let mut st = STATE.lock().unwrap_or_else(|e| e.into_inner());
         st.working = false;
@@ -542,7 +569,17 @@ pub extern "system" fn document_result(
         notice("Could not read the selected document", false);
         return;
     };
-    if !uri.starts_with("content://") || uri.len() > 8192 {
+    let uris: Vec<String> = raw_uri
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    if uris.is_empty()
+        || uris
+            .iter()
+            .any(|u| !u.starts_with("content://") || u.len() > 8192)
+    {
         let mut st = STATE.lock().unwrap_or_else(|e| e.into_inner());
         st.working = false;
         st.progress = None;
@@ -550,6 +587,7 @@ pub extern "system" fn document_result(
         notice("Unsupported document URI", false);
         return;
     }
+    let uri = uris[0].clone();
 
     if request == 4103 {
         {
@@ -698,11 +736,16 @@ pub extern "system" fn document_result(
         return;
     }
 
+    let multi_count = uris.len();
     {
         let mut st = STATE.lock().unwrap_or_else(|e| e.into_inner());
         st.working = true;
-        st.status_title = "Importing package...".into();
-        st.status_detail = "Reading selected file from Android storage...".into();
+        st.status_title = if multi_count > 1 {
+            format!("Importing {multi_count} files...")
+        } else {
+            "Importing package...".into()
+        };
+        st.status_detail = "Reading selected file(s) from Android storage...".into();
         st.progress = Some(0.15);
     }
     let spawned = std::thread::Builder::new()
@@ -715,13 +758,70 @@ pub extern "system" fn document_result(
                 } else {
                     "import.zip"
                 };
-                let opened =
-                    crate::document_bridge::open(&mut env, activity.as_obj(), &uri, fallback);
-                if opened.is_err() {
-                    let _ = env.exception_clear();
+                if uris.len() <= 1 {
+                    let opened =
+                        crate::document_bridge::open(&mut env, activity.as_obj(), &uri, fallback);
+                    if opened.is_err() {
+                        let _ = env.exception_clear();
+                    }
+                    let (input, name) = opened.map_err(|e| e.to_string())?;
+                    return stage(pending, input, name);
                 }
-                let (input, name) = opened.map_err(|e| e.to_string())?;
-                stage(pending, input, name)
+                let mut batch_req = pending;
+                batch_req.auto_replace_batch = true;
+                let total = uris.len();
+                let mut ok_count = 0usize;
+                let mut first_err: Option<String> = None;
+                for (idx, item_uri) in uris.iter().enumerate() {
+                    if CANCEL.load(Ordering::Relaxed) {
+                        return Err("Import cancelled".into());
+                    }
+                    set_progress(
+                        format!("Importing file {}/{total}...", idx + 1),
+                        "Reading selected file from Android storage...".to_owned(),
+                        Some(((idx as f32) / total as f32).clamp(0.05, 0.95)),
+                    );
+                    let opened = crate::document_bridge::open(
+                        &mut env,
+                        activity.as_obj(),
+                        item_uri,
+                        fallback,
+                    );
+                    let (input, name) = match opened {
+                        Ok(pair) => pair,
+                        Err(err) => {
+                            let _ = env.exception_clear();
+                            if first_err.is_none() {
+                                first_err = Some(err.to_string());
+                            }
+                            continue;
+                        }
+                    };
+                    match stage(batch_req.clone(), input, name.clone()) {
+                        Ok(()) => ok_count += 1,
+                        Err(err) => {
+                            if first_err.is_none() {
+                                first_err = Some(format!("{name}: {err}"));
+                            }
+                        }
+                    }
+                }
+                if ok_count == 0 {
+                    return Err(first_err
+                        .unwrap_or_else(|| "No files could be imported".to_owned())
+                        .into());
+                }
+                let msg = if let Some(err) = first_err {
+                    format!("Imported {ok_count}/{total} files ({err})")
+                } else {
+                    format!("Imported all {ok_count} files successfully!")
+                };
+                if batch_req.target_dir.is_none() {
+                    imported(msg, batch_req.kind);
+                } else {
+                    notice(msg, true);
+                }
+                Ok(())
             })();
             {
                 let mut st = STATE.lock().unwrap_or_else(|e| e.into_inner());
@@ -794,6 +894,15 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
         {
             return Err("Refusing a redirected import cache".into());
         }
+        let in_mods = target_dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| matches!(s, "horizon-mods" | "horizon-native-mods" | "mods"));
+        let copy_limit = if in_mods || request.kind == Kind::Mods {
+            None
+        } else {
+            Some(content_files::MAX_INPUT)
+        };
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
         let staged = request.cache.join(format!(".import-fm-{stamp}.part"));
         let res = (|| -> Result<()> {
@@ -801,7 +910,7 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
                 .write(true)
                 .create_new(true)
                 .open(&staged)?;
-            content_files::copy_bounded(&mut input, &mut output, |bytes| {
+            content_files::copy_with_limit(&mut input, &mut output, copy_limit, |bytes| {
                 let ratio = if total_file_bytes > 0 {
                     (bytes as f32 / total_file_bytes as f32).clamp(0.08, 0.85)
                 } else {
@@ -841,15 +950,12 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
                     return Ok(());
                 }
             }
-            let in_mods = target_dir
-                .file_name()
-                .and_then(|s| s.to_str())
-                .is_some_and(|s| s == "horizon-mods" || s == "horizon-native-mods");
             if in_mods
                 && (lower_name.ends_with(".hnmod")
                     || lower_name.ends_with(".hmod")
                     || lower_name.ends_with(".hpack")
-                    || lower_name.ends_with(".jar"))
+                    || lower_name.ends_with(".jar")
+                    || lower_name.ends_with(".mrpack"))
             {
                 set_progress(
                     format!("Compiling mod '{name}'..."),
@@ -858,13 +964,28 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
                 );
                 let (mod_id, ext) = content_files::read_mod_archive_id(&staged, &name)?;
                 let canon_name = format!("{mod_id}.{ext}");
+                let target_is_plain_mods = target_dir
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| s == "mods");
                 let profile_root = target_dir.parent().unwrap_or(&target_dir);
-                let mods_dir = profile_root.join("horizon-mods");
+                let mods_dir = if target_is_plain_mods {
+                    target_dir.clone()
+                } else {
+                    profile_root.join("horizon-mods")
+                };
                 std::fs::create_dir_all(&mods_dir)?;
                 let dest = mods_dir.join(&canon_name);
                 if std::fs::rename(&staged, &dest).is_err() {
                     std::fs::copy(&staged, &dest)?;
                     let _ = std::fs::remove_file(&staged);
+                }
+                if target_is_plain_mods {
+                    let horizon_mods_dir = profile_root.join("horizon-mods");
+                    if horizon_mods_dir != dest.parent().unwrap_or(&mods_dir) {
+                        let _ = std::fs::create_dir_all(&horizon_mods_dir);
+                        let _ = std::fs::copy(&dest, horizon_mods_dir.join(&canon_name));
+                    }
                 }
                 let mut on = horizon_client::mod_list::ModList::load(profile_root);
                 on.disabled.remove(&mod_id);
@@ -1003,7 +1124,12 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
             .write(true)
             .create_new(true)
             .open(&staged)?;
-        content_files::copy_bounded(&mut input, &mut output, |bytes| {
+        let copy_limit = if request.kind == Kind::Mods {
+            None
+        } else {
+            Some(content_files::MAX_INPUT)
+        };
+        content_files::copy_with_limit(&mut input, &mut output, copy_limit, |bytes| {
             let ratio = if total_file_bytes > 0 {
                 (bytes as f32 / total_file_bytes as f32).clamp(0.1, 0.85)
             } else {
@@ -1048,7 +1174,7 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
             return Err("Import cancelled".into());
         }
         let target = dir.join(name);
-        if target.exists() {
+        if target.exists() && !request.auto_replace_batch {
             STATE.lock().unwrap_or_else(|e| e.into_inner()).conflict = Some(Conflict {
                 kind: request.kind,
                 staged: staged.clone(),
@@ -1059,6 +1185,9 @@ fn stage(request: Request, mut input: std::fs::File, name: String) -> Result<()>
                 false,
             );
         } else {
+            if target.exists() {
+                let _ = std::fs::remove_file(&target);
+            }
             if std::fs::rename(&staged, &target).is_err() {
                 std::fs::copy(&staged, &target)?;
                 let _ = std::fs::remove_file(&staged);

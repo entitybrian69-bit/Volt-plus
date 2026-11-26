@@ -64,6 +64,10 @@ pub struct TouchUi {
     pub music_volume_dragging: bool,
     /// Selected playlist index inspected in the Music tab.
     pub music_selected_playlist: usize,
+    /// Whether the in-game Music tab is showing Search Online (`true`) vs Playlists (`false`).
+    pub music_search_tab: bool,
+    /// Whether the in-game Music search field is currently focused for Android OSK input.
+    pub music_editing_search: bool,
     /// Step state for the Floating Menu "Send Custom Input" picker modal.
     pub custom_input_picker: crate::touch::PickerStep,
     /// Horizontal scroll offset for the Floating Menu custom keyboard picker.
@@ -130,6 +134,8 @@ impl Default for TouchUi {
             overlay_opacity_dragging: false,
             music_volume_dragging: false,
             music_selected_playlist: 0,
+            music_search_tab: false,
+            music_editing_search: false,
             custom_input_picker: crate::touch::PickerStep::None,
             custom_kb_scroll_x: 0.0,
             custom_kb_drag: None,
@@ -247,6 +253,15 @@ pub enum InGameMenuAction {
     MusicSelectPlaylist(usize),
     MusicPlayPlaylist(usize),
     MusicPlayPlaylistTrack(usize, usize),
+    MusicSetSearchTab(bool),
+    MusicOpenSearchKeyboard,
+    MusicTriggerSearch,
+    MusicSelectGenre(Option<&'static str>),
+    MusicCycleSort,
+    MusicPrevPage,
+    MusicNextPage,
+    MusicPlaySearchResult(usize),
+    MusicDownloadSearchResult(usize),
 }
 
 fn key_code_to_char(code: KeyCode) -> Option<char> {
@@ -3135,34 +3150,111 @@ impl TouchUi {
                     return Some(InGameMenuAction::MusicToggleVanilla);
                 }
 
-                let playlists = crate::internet_music::playlists();
-                let pl_start_y = body_y + 260.0;
-                for (pi, _) in playlists.iter().enumerate() {
-                    let ry = pl_start_y + pi as f32 * 42.0;
-                    let play_r = [cx + cw - 78.0, ry + 5.0, 68.0, 28.0];
-                    if inside(play_r) {
-                        self.music_selected_playlist = pi;
-                        return Some(InGameMenuAction::MusicPlayPlaylist(pi));
-                    }
-                    if inside([cx, ry, cw, 38.0]) {
-                        self.music_selected_playlist = pi;
-                        return Some(InGameMenuAction::MusicSelectPlaylist(pi));
-                    }
+                // Mode Switcher: Playlists | Search Online
+                let mode_y = body_y + 242.0;
+                let half_w = ((cw - 8.0) * 0.5).max(60.0);
+                if inside([cx, mode_y, half_w, 32.0]) {
+                    self.music_search_tab = false;
+                    self.music_editing_search = false;
+                    return Some(InGameMenuAction::MusicSetSearchTab(false));
+                }
+                if inside([cx + half_w + 8.0, mode_y, half_w, 32.0]) {
+                    self.music_search_tab = true;
+                    return Some(InGameMenuAction::MusicSetSearchTab(true));
                 }
 
-                let sel_idx = if playlists.is_empty() {
-                    0
-                } else {
-                    self.music_selected_playlist.min(playlists.len() - 1)
-                };
-                let tracks_header_y = pl_start_y + playlists.len().max(1) as f32 * 42.0 + 10.0;
-                let tracks_start_y = tracks_header_y + 20.0;
-                if let Some(pl) = playlists.get(sel_idx) {
-                    for (ti, _) in pl.tracks.iter().enumerate() {
-                        let ty = tracks_start_y + ti as f32 * 38.0;
-                        if inside([cx, ty, cw, 34.0]) {
-                            return Some(InGameMenuAction::MusicPlayPlaylistTrack(sel_idx, ti));
+                let sub_y = body_y + 284.0;
+                if !self.music_search_tab {
+                    let playlists = crate::internet_music::playlists();
+                    let pl_start_y = sub_y + 18.0;
+                    for (pi, _) in playlists.iter().enumerate() {
+                        let ry = pl_start_y + pi as f32 * 42.0;
+                        let play_r = [cx + cw - 78.0, ry + 5.0, 68.0, 28.0];
+                        if inside(play_r) {
+                            self.music_selected_playlist = pi;
+                            return Some(InGameMenuAction::MusicPlayPlaylist(pi));
                         }
+                        if inside([cx, ry, cw, 38.0]) {
+                            self.music_selected_playlist = pi;
+                            return Some(InGameMenuAction::MusicSelectPlaylist(pi));
+                        }
+                    }
+
+                    let sel_idx = if playlists.is_empty() {
+                        0
+                    } else {
+                        self.music_selected_playlist.min(playlists.len() - 1)
+                    };
+                    let tracks_header_y = pl_start_y + playlists.len().max(1) as f32 * 42.0 + 10.0;
+                    let tracks_start_y = tracks_header_y + 20.0;
+                    if let Some(pl) = playlists.get(sel_idx) {
+                        for (ti, _) in pl.tracks.iter().enumerate() {
+                            let ty = tracks_start_y + ti as f32 * 42.0;
+                            if inside([cx, ty, cw, 38.0]) {
+                                return Some(InGameMenuAction::MusicPlayPlaylistTrack(sel_idx, ti));
+                            }
+                        }
+                    }
+                } else {
+                    // Search Online Sub-Tab
+                    let search_btn_w = 72.0;
+                    let field_w = (cw - search_btn_w - 8.0).max(80.0);
+                    if inside([cx, sub_y, field_w, 34.0]) {
+                        self.music_editing_search = true;
+                        return Some(InGameMenuAction::MusicOpenSearchKeyboard);
+                    }
+                    if inside([cx + field_w + 8.0, sub_y, search_btn_w, 34.0]) {
+                        self.music_editing_search = false;
+                        return Some(InGameMenuAction::MusicTriggerSearch);
+                    }
+
+                    let chip_y = sub_y + 40.0;
+                    let sort_w = 88.0;
+                    let genres: [(&str, Option<&'static str>); 4] = [
+                        ("Trending", None),
+                        ("Lo-Fi", Some("Lo-Fi")),
+                        ("Chill", Some("Chill")),
+                        ("Synth", Some("Synthwave")),
+                    ];
+                    let chips_w = (cw - sort_w - 8.0).max(120.0);
+                    let chip_gap = 4.0;
+                    let chip_w = ((chips_w - chip_gap * 3.0) / 4.0).max(36.0);
+                    for (gi, (_, gval)) in genres.iter().enumerate() {
+                        let gx = cx + gi as f32 * (chip_w + chip_gap);
+                        if inside([gx, chip_y, chip_w, 28.0]) {
+                            return Some(InGameMenuAction::MusicSelectGenre(*gval));
+                        }
+                    }
+                    if inside([cx + cw - sort_w, chip_y, sort_w, 28.0]) {
+                        return Some(InGameMenuAction::MusicCycleSort);
+                    }
+
+                    let search_snap = crate::internet_music::in_game_search_snapshot();
+                    let list_y = sub_y + 76.0;
+                    for (idx, _) in search_snap.results.iter().enumerate() {
+                        let ry = list_y + idx as f32 * 50.0;
+                        let play_r = [cx + cw - 58.0, ry + 7.0, 52.0, 30.0];
+                        let dl_r = [play_r[0] - 36.0, ry + 7.0, 30.0, 30.0];
+                        if inside(dl_r) {
+                            return Some(InGameMenuAction::MusicDownloadSearchResult(idx));
+                        }
+                        if inside(play_r) || inside([cx, ry, cw, 44.0]) {
+                            return Some(InGameMenuAction::MusicPlaySearchResult(idx));
+                        }
+                    }
+
+                    let pager_y = list_y + search_snap.results.len().max(1) as f32 * 50.0 + 6.0;
+                    let btn_w = 84.0;
+                    let page_w = 68.0;
+                    let pager_total = btn_w * 2.0 + page_w + 12.0;
+                    let px = cx + (cw - pager_total).max(0.0) * 0.5;
+                    if search_snap.page > 0 && inside([px, pager_y, btn_w, 30.0]) {
+                        return Some(InGameMenuAction::MusicPrevPage);
+                    }
+                    if search_snap.has_next
+                        && inside([px + btn_w + page_w + 12.0, pager_y, btn_w, 30.0])
+                    {
+                        return Some(InGameMenuAction::MusicNextPage);
                     }
                 }
             }
@@ -3462,6 +3554,11 @@ impl TouchUi {
         } else {
             self.music_selected_playlist.min(music_playlists.len() - 1)
         };
+        let music_search_snap = if self.hub_tab == 8 && self.music_search_tab {
+            crate::internet_music::in_game_search_snapshot()
+        } else {
+            Default::default()
+        };
         let music_sel_tracks = music_playlists
             .get(music_sel_idx)
             .map_or(0, |p| p.tracks.len());
@@ -3474,11 +3571,14 @@ impl TouchUi {
             5 => 488.0,
             6 => 340.0,
             7 => 364.0,
+            _ if self.music_search_tab => {
+                284.0 + 76.0 + (music_search_snap.results.len().max(1) as f32) * 50.0 + 48.0
+            }
             _ => {
-                260.0
+                302.0
                     + (music_playlists.len().max(1) as f32) * 42.0
                     + 32.0
-                    + (music_sel_tracks.max(1) as f32) * 38.0
+                    + (music_sel_tracks.max(1) as f32) * 42.0
                     + 16.0
             }
         };
@@ -4881,12 +4981,23 @@ impl TouchUi {
                 } else {
                     format_ms(snap.position_ms)
                 };
-                let np_t_fit = ellipsis(np_title, ((cw - 115.0) / 5.6).max(10.0) as usize);
-                let np_s_fit = ellipsis(&np_sub, ((cw - 32.0) / 4.8).max(12.0) as usize);
-                ui.icon(Icon::Music, cx + 12.0, np_y + 10.0, 15.0, accent_hi);
-                ui.text(Face::SemiBold, 11.4, cx + 32.0, np_y + 8.0, text_c, &np_t_fit);
+                let np_t_fit = ellipsis(np_title, ((cw - 135.0) / 5.6).max(10.0) as usize);
+                let np_s_fit = ellipsis(&np_sub, ((cw - 56.0) / 4.8).max(12.0) as usize);
+                let np_art_drawn = if snap.has_track()
+                    && let Some((art_id, aw, ah, rgba)) =
+                        internet_music::find_track_icon_by_url(&snap.current_url)
+                {
+                    ui.image(&art_id, aw, ah, &rgba, cx + 10.0, np_y + 8.0, 32.0, 32.0)
+                } else {
+                    false
+                };
+                if !np_art_drawn {
+                    ui.rounded(cx + 10.0, np_y + 8.0, 32.0, 32.0, 8.0, sidebar_bg);
+                    ui.icon(Icon::Music, cx + 18.0, np_y + 16.0, 16.0, accent_hi);
+                }
+                ui.text(Face::SemiBold, 11.2, cx + 48.0, np_y + 8.0, text_c, &np_t_fit);
                 ui.text(Face::Medium, 9.2, cx + cw - 86.0, np_y + 10.0, muted_c, &time_txt);
-                ui.text(Face::Regular, 9.2, cx + 12.0, np_y + 27.0, muted_c, &np_s_fit);
+                ui.text(Face::Regular, 9.0, cx + 48.0, np_y + 25.0, muted_c, &np_s_fit);
 
                 // Seek Bar
                 let seek_x = cx + 12.0;
@@ -5021,130 +5132,474 @@ impl TouchUi {
                     None,
                 );
 
-                // Choose Playlist
-                ui.text(Face::SemiBold, 10.2, cx, body_y + 242.0, muted_c, "PLAYLISTS");
-                let pl_start_y = body_y + 260.0;
-                if music_playlists.is_empty() {
-                    ui.text(
-                        Face::Regular,
-                        9.6,
-                        cx,
-                        pl_start_y + 6.0,
-                        muted_c,
-                        "No playlists yet.",
-                    );
-                }
-                for (pi, pl) in music_playlists.iter().enumerate() {
-                    let ry = pl_start_y + pi as f32 * 42.0;
-                    let selected = pi == music_sel_idx;
-                    let playing_pl = snap.has_track() && snap.active_playlist == pl.name;
+                // Mode Switcher: Playlists | Search Online
+                let mode_y = body_y + 242.0;
+                let half_w = ((cw - 8.0) * 0.5).max(60.0);
+                for (mi, (mlbl, active)) in [
+                    ("Playlists", !self.music_search_tab),
+                    ("Search Online", self.music_search_tab),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let mx = cx + mi as f32 * (half_w + 8.0);
                     ui.rounded(
-                        cx,
-                        ry,
-                        cw,
-                        38.0,
+                        mx,
+                        mode_y,
+                        half_w,
+                        32.0,
                         10.0,
-                        if selected { card_sel } else { card_bg },
+                        if active { accent } else { card_bg },
                     );
                     ui.border(
-                        cx,
-                        ry,
-                        cw,
-                        38.0,
+                        mx,
+                        mode_y,
+                        half_w,
+                        32.0,
                         10.0,
-                        if selected || playing_pl { accent } else { border_c },
+                        if active { accent_hi } else { border_c },
                     );
-                    let p_name = ellipsis(&pl.name, ((cw - 140.0) / 5.4).max(8.0) as usize);
-                    ui.text(Face::SemiBold, 10.4, cx + 12.0, ry + 6.0, text_c, &p_name);
-                    ui.text(
-                        Face::Regular,
-                        8.8,
-                        cx + 12.0,
-                        ry + 21.0,
-                        muted_c,
-                        &format!("{} songs", pl.tracks.len()),
-                    );
-                    let play_r = [cx + cw - 78.0, ry + 5.0, 68.0, 28.0];
-                    ui.rounded(
-                        play_r[0],
-                        play_r[1],
-                        play_r[2],
-                        play_r[3],
-                        8.0,
-                        if playing_pl { accent } else { sidebar_bg },
-                    );
-                    ui.border(play_r[0], play_r[1], play_r[2], play_r[3], 8.0, accent);
                     ui.centered_fit(
                         Face::SemiBold,
-                        9.4,
-                        play_r,
-                        if playing_pl { accent_fg } else { text_c },
-                        if playing_pl { "Active" } else { "Play" },
+                        10.0,
+                        [mx, mode_y, half_w, 32.0],
+                        if active { accent_fg } else { text_c },
+                        mlbl,
                     );
                 }
 
-                // Check Songs in Selected Playlist
-                let tracks_hdr_y = pl_start_y + music_playlists.len().max(1) as f32 * 42.0 + 10.0;
-                let sel_pl_name = music_playlists
-                    .get(music_sel_idx)
-                    .map_or("Playlist", |p| p.name.as_str());
-                ui.text(
-                    Face::SemiBold,
-                    10.2,
-                    cx,
-                    tracks_hdr_y,
-                    muted_c,
-                    &format!("SONGS IN \"{}\"", sel_pl_name.to_uppercase()),
-                );
-                let tracks_start_y = tracks_hdr_y + 20.0;
-                if let Some(pl) = music_playlists.get(music_sel_idx) {
-                    if pl.tracks.is_empty() {
+                let sub_y = body_y + 284.0;
+                if !self.music_search_tab {
+                    // Choose Playlist
+                    ui.text(Face::SemiBold, 10.2, cx, sub_y, muted_c, "PLAYLISTS");
+                    let pl_start_y = sub_y + 18.0;
+                    if music_playlists.is_empty() {
                         ui.text(
                             Face::Regular,
                             9.6,
                             cx,
-                            tracks_start_y + 4.0,
+                            pl_start_y + 6.0,
                             muted_c,
-                            "Empty playlist. Tap + beside songs in Launcher -> Musics to add.",
+                            "No playlists yet.",
                         );
                     }
-                    for (ti, tr) in pl.tracks.iter().enumerate() {
-                        let ty = tracks_start_y + ti as f32 * 38.0;
-                        let is_cur = snap.has_track() && snap.current_url == tr.stream_url;
+                    for (pi, pl) in music_playlists.iter().enumerate() {
+                        let ry = pl_start_y + pi as f32 * 42.0;
+                        let selected = pi == music_sel_idx;
+                        let playing_pl = snap.has_track() && snap.active_playlist == pl.name;
                         ui.rounded(
                             cx,
-                            ty,
+                            ry,
                             cw,
-                            34.0,
-                            9.0,
+                            38.0,
+                            10.0,
+                            if selected { card_sel } else { card_bg },
+                        );
+                        ui.border(
+                            cx,
+                            ry,
+                            cw,
+                            38.0,
+                            10.0,
+                            if selected || playing_pl { accent } else { border_c },
+                        );
+                        let p_name = ellipsis(&pl.name, ((cw - 140.0) / 5.4).max(8.0) as usize);
+                        ui.text(Face::SemiBold, 10.4, cx + 12.0, ry + 6.0, text_c, &p_name);
+                        ui.text(
+                            Face::Regular,
+                            8.8,
+                            cx + 12.0,
+                            ry + 21.0,
+                            muted_c,
+                            &format!("{} songs", pl.tracks.len()),
+                        );
+                        let play_r = [cx + cw - 78.0, ry + 5.0, 68.0, 28.0];
+                        ui.rounded(
+                            play_r[0],
+                            play_r[1],
+                            play_r[2],
+                            play_r[3],
+                            8.0,
+                            if playing_pl { accent } else { sidebar_bg },
+                        );
+                        ui.border(play_r[0], play_r[1], play_r[2], play_r[3], 8.0, accent);
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            9.4,
+                            play_r,
+                            if playing_pl { accent_fg } else { text_c },
+                            if playing_pl { "Active" } else { "Play" },
+                        );
+                    }
+
+                    // Check Songs in Selected Playlist (with Album Art!)
+                    let tracks_hdr_y =
+                        pl_start_y + music_playlists.len().max(1) as f32 * 42.0 + 10.0;
+                    let sel_pl_name = music_playlists
+                        .get(music_sel_idx)
+                        .map_or("Playlist", |p| p.name.as_str());
+                    ui.text(
+                        Face::SemiBold,
+                        10.2,
+                        cx,
+                        tracks_hdr_y,
+                        muted_c,
+                        &format!("SONGS IN \"{}\"", sel_pl_name.to_uppercase()),
+                    );
+                    let tracks_start_y = tracks_hdr_y + 20.0;
+                    if let Some(pl) = music_playlists.get(music_sel_idx) {
+                        if pl.tracks.is_empty() {
+                            ui.text(
+                                Face::Regular,
+                                9.6,
+                                cx,
+                                tracks_start_y + 4.0,
+                                muted_c,
+                                "Empty playlist. Use Search Online or Launcher -> Musics!",
+                            );
+                        }
+                        for (ti, tr) in pl.tracks.iter().enumerate() {
+                            let ty = tracks_start_y + ti as f32 * 42.0;
+                            let is_cur = snap.has_track() && snap.current_url == tr.stream_url;
+                            ui.rounded(
+                                cx,
+                                ty,
+                                cw,
+                                38.0,
+                                9.0,
+                                if is_cur { card_sel } else { card_bg },
+                            );
+                            ui.border(
+                                cx,
+                                ty,
+                                cw,
+                                38.0,
+                                9.0,
+                                if is_cur { accent } else { border_c },
+                            );
+                            let drawn = if let Some((iw, ih, rgba)) =
+                                internet_music::get_or_request_icon(&tr.id, tr.icon_url.as_deref())
+                            {
+                                ui.image(&tr.id, iw, ih, &rgba, cx + 6.0, ty + 4.0, 30.0, 30.0)
+                            } else {
+                                false
+                            };
+                            if !drawn {
+                                ui.rounded(cx + 6.0, ty + 4.0, 30.0, 30.0, 7.0, sidebar_bg);
+                                ui.icon(Icon::Music, cx + 13.0, ty + 11.0, 16.0, accent_hi);
+                            }
+                            let t_fit = ellipsis(&tr.title, ((cw - 118.0) / 5.2).max(8.0) as usize);
+                            ui.text(Face::Medium, 9.8, cx + 42.0, ty + 6.0, text_c, &t_fit);
+                            ui.text(
+                                Face::Regular,
+                                8.4,
+                                cx + 42.0,
+                                ty + 20.0,
+                                muted_c,
+                                &ellipsis(&tr.artist, ((cw - 118.0) / 4.6).max(8.0) as usize),
+                            );
+                            ui.centered_fit(
+                                Face::Medium,
+                                9.0,
+                                [cx + cw - 54.0, ty + 8.0, 44.0, 22.0],
+                                muted_c,
+                                &if tr.duration_secs > 0 {
+                                    format_duration(tr.duration_secs)
+                                } else if !tr.stream_url.starts_with("https://") {
+                                    "Offline".to_owned()
+                                } else {
+                                    "Stream".to_owned()
+                                },
+                            );
+                        }
+                    }
+                } else {
+                    // Search Online Sub-Tab (OSK input, genre chips, sort, results with logos & download, pagination)
+                    if !music_search_snap.fetched_initial && !music_search_snap.searching {
+                        internet_music::trigger_in_game_search(
+                            music_search_snap.query.clone(),
+                            music_search_snap.genre.clone(),
+                            music_search_snap.sort,
+                            0,
+                        );
+                    }
+                    let search_btn_w = 72.0;
+                    let field_w = (cw - search_btn_w - 8.0).max(80.0);
+                    ui.rounded(cx, sub_y, field_w, 34.0, 10.0, sidebar_bg);
+                    ui.border(
+                        cx,
+                        sub_y,
+                        field_w,
+                        34.0,
+                        10.0,
+                        if self.music_editing_search {
+                            accent_hi
+                        } else {
+                            border_c
+                        },
+                    );
+                    let q_disp = if music_search_snap.query.is_empty() {
+                        "Tap to search songs..."
+                    } else {
+                        music_search_snap.query.as_str()
+                    };
+                    let q_col = if music_search_snap.query.is_empty() {
+                        muted_c
+                    } else {
+                        text_c
+                    };
+                    ui.text(
+                        Face::Regular,
+                        9.8,
+                        cx + 10.0,
+                        sub_y + 10.0,
+                        q_col,
+                        &ellipsis(q_disp, ((field_w - 20.0) / 5.2).max(10.0) as usize),
+                    );
+                    let sbx = cx + field_w + 8.0;
+                    ui.rounded(sbx, sub_y, search_btn_w, 34.0, 10.0, accent);
+                    ui.centered_fit(
+                        Face::SemiBold,
+                        9.6,
+                        [sbx, sub_y, search_btn_w, 34.0],
+                        accent_fg,
+                        if music_search_snap.searching { "..." } else { "Search" },
+                    );
+
+                    // Genre Chips + Sort Cycle Button
+                    let chip_y = sub_y + 40.0;
+                    let sort_w = 88.0;
+                    let genres: [(&str, Option<&str>); 4] = [
+                        ("Trending", None),
+                        ("Lo-Fi", Some("Lo-Fi")),
+                        ("Chill", Some("Chill")),
+                        ("Synth", Some("Synthwave")),
+                    ];
+                    let chips_w = (cw - sort_w - 8.0).max(120.0);
+                    let chip_gap = 4.0;
+                    let chip_w = ((chips_w - chip_gap * 3.0) / 4.0).max(36.0);
+                    for (gi, (glbl, gval)) in genres.iter().enumerate() {
+                        let gx = cx + gi as f32 * (chip_w + chip_gap);
+                        let active = match gval {
+                            None => music_search_snap.genre.is_none(),
+                            Some(g) => music_search_snap
+                                .genre
+                                .as_deref()
+                                .is_some_and(|cur| cur.eq_ignore_ascii_case(g)),
+                        };
+                        ui.rounded(
+                            gx,
+                            chip_y,
+                            chip_w,
+                            28.0,
+                            8.0,
+                            if active { accent } else { card_bg },
+                        );
+                        ui.border(
+                            gx,
+                            chip_y,
+                            chip_w,
+                            28.0,
+                            8.0,
+                            if active { accent_hi } else { border_c },
+                        );
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            8.6,
+                            [gx, chip_y, chip_w, 28.0],
+                            if active { accent_fg } else { text_c },
+                            glbl,
+                        );
+                    }
+                    let sx = cx + cw - sort_w;
+                    ui.rounded(sx, chip_y, sort_w, 28.0, 8.0, card_sel);
+                    ui.border(sx, chip_y, sort_w, 28.0, 8.0, accent);
+                    ui.centered_fit(
+                        Face::SemiBold,
+                        8.4,
+                        [sx, chip_y, sort_w, 28.0],
+                        accent_hi,
+                        music_search_snap.sort.label(),
+                    );
+
+                    let list_y = sub_y + 76.0;
+                    if music_search_snap.results.is_empty() {
+                        let empty_txt = if music_search_snap.searching {
+                            "Searching internet music..."
+                        } else if !music_search_snap.status.is_empty() {
+                            music_search_snap.status.as_str()
+                        } else {
+                            "No songs found."
+                        };
+                        ui.text(Face::Regular, 9.6, cx, list_y + 6.0, muted_c, empty_txt);
+                    }
+                    let downloads = internet_music::active_downloads();
+                    for (idx, tr) in music_search_snap.results.iter().enumerate() {
+                        let ry = list_y + idx as f32 * 50.0;
+                        let is_cur = snap.has_track() && snap.current_url == tr.stream_url;
+                        let is_dl = internet_music::is_track_downloaded(tr);
+                        let is_dl_active = downloads.iter().any(|d| d.id == tr.id && !d.done);
+                        ui.rounded(
+                            cx,
+                            ry,
+                            cw,
+                            44.0,
+                            10.0,
                             if is_cur { card_sel } else { card_bg },
                         );
                         ui.border(
                             cx,
-                            ty,
+                            ry,
                             cw,
-                            34.0,
-                            9.0,
+                            44.0,
+                            10.0,
                             if is_cur { accent } else { border_c },
                         );
-                        let t_fit = ellipsis(&tr.title, ((cw - 92.0) / 5.2).max(8.0) as usize);
-                        ui.text(Face::Medium, 9.8, cx + 10.0, ty + 5.0, text_c, &t_fit);
+                        let drawn = if let Some((iw, ih, rgba)) =
+                            internet_music::get_or_request_icon(&tr.id, tr.icon_url.as_deref())
+                        {
+                            ui.image(&tr.id, iw, ih, &rgba, cx + 6.0, ry + 5.0, 34.0, 34.0)
+                        } else {
+                            false
+                        };
+                        if !drawn {
+                            ui.rounded(cx + 6.0, ry + 5.0, 34.0, 34.0, 8.0, sidebar_bg);
+                            ui.icon(Icon::Music, cx + 14.0, ry + 13.0, 18.0, accent_hi);
+                        }
+                        let play_r = [cx + cw - 58.0, ry + 7.0, 52.0, 30.0];
+                        let dl_r = [play_r[0] - 36.0, ry + 7.0, 30.0, 30.0];
+                        let text_x = cx + 46.0;
+                        let max_chars = ((dl_r[0] - text_x - 6.0) / 5.1).max(8.0) as usize;
+                        ui.text(
+                            Face::SemiBold,
+                            9.8,
+                            text_x,
+                            ry + 7.0,
+                            text_c,
+                            &ellipsis(&tr.title, max_chars),
+                        );
+                        let sub_line = if is_dl_active {
+                            format!("{} • Downloading...", tr.artist)
+                        } else if is_dl {
+                            format!("{} • Downloaded", tr.artist)
+                        } else {
+                            format!("{} • {}", tr.artist, tr.source)
+                        };
                         ui.text(
                             Face::Regular,
                             8.4,
-                            cx + 10.0,
-                            ty + 18.0,
+                            text_x,
+                            ry + 23.0,
                             muted_c,
-                            &ellipsis(&tr.artist, ((cw - 92.0) / 4.6).max(8.0) as usize),
+                            &ellipsis(&sub_line, max_chars + 4),
                         );
+
+                        ui.rounded(
+                            dl_r[0],
+                            dl_r[1],
+                            dl_r[2],
+                            dl_r[3],
+                            8.0,
+                            if is_dl || is_dl_active { card_sel } else { sidebar_bg },
+                        );
+                        ui.border(
+                            dl_r[0],
+                            dl_r[1],
+                            dl_r[2],
+                            dl_r[3],
+                            8.0,
+                            if is_dl || is_dl_active { accent } else { border_c },
+                        );
+                        ui.icon(
+                            if is_dl { Icon::Check } else { Icon::Download },
+                            dl_r[0] + 7.0,
+                            dl_r[1] + 7.0,
+                            16.0,
+                            if is_dl || is_dl_active { accent_hi } else { text_c },
+                        );
+
+                        ui.rounded(
+                            play_r[0],
+                            play_r[1],
+                            play_r[2],
+                            play_r[3],
+                            8.0,
+                            if is_cur { accent } else { sidebar_bg },
+                        );
+                        ui.border(play_r[0], play_r[1], play_r[2], play_r[3], 8.0, accent);
                         ui.centered_fit(
-                            Face::Medium,
+                            Face::SemiBold,
                             9.0,
-                            [cx + cw - 54.0, ty + 6.0, 44.0, 22.0],
-                            muted_c,
-                            &format_duration(tr.duration_secs),
+                            play_r,
+                            if is_cur { accent_fg } else { text_c },
+                            if is_cur && snap.playing { "Playing" } else { "Play" },
                         );
                     }
+
+                    // Bottom-middle Pagination (Previous | Page N | Next)
+                    let pager_y =
+                        list_y + music_search_snap.results.len().max(1) as f32 * 50.0 + 6.0;
+                    let btn_w = 84.0;
+                    let page_w = 68.0;
+                    let pager_total = btn_w * 2.0 + page_w + 12.0;
+                    let px = cx + (cw - pager_total).max(0.0) * 0.5;
+                    let prev_ok = music_search_snap.page > 0;
+                    ui.rounded(
+                        px,
+                        pager_y,
+                        btn_w,
+                        30.0,
+                        8.0,
+                        if prev_ok { card_sel } else { sidebar_bg },
+                    );
+                    ui.border(
+                        px,
+                        pager_y,
+                        btn_w,
+                        30.0,
+                        8.0,
+                        if prev_ok { accent } else { border_c },
+                    );
+                    ui.centered_fit(
+                        Face::SemiBold,
+                        9.2,
+                        [px, pager_y, btn_w, 30.0],
+                        if prev_ok { text_c } else { muted_c },
+                        "Previous",
+                    );
+                    ui.rounded(px + btn_w + 6.0, pager_y, page_w, 30.0, 8.0, card_bg);
+                    ui.centered_fit(
+                        Face::SemiBold,
+                        9.2,
+                        [px + btn_w + 6.0, pager_y, page_w, 30.0],
+                        text_c,
+                        &format!("Page {}", music_search_snap.page + 1),
+                    );
+                    let nx = px + btn_w + page_w + 12.0;
+                    let next_ok = music_search_snap.has_next;
+                    ui.rounded(
+                        nx,
+                        pager_y,
+                        btn_w,
+                        30.0,
+                        8.0,
+                        if next_ok { accent } else { sidebar_bg },
+                    );
+                    ui.border(
+                        nx,
+                        pager_y,
+                        btn_w,
+                        30.0,
+                        8.0,
+                        if next_ok { accent_hi } else { border_c },
+                    );
+                    ui.centered_fit(
+                        Face::SemiBold,
+                        9.2,
+                        [nx, pager_y, btn_w, 30.0],
+                        if next_ok { accent_fg } else { muted_c },
+                        "Next",
+                    );
                 }
             }
         }

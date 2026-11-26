@@ -342,8 +342,7 @@ impl Package {
                     Err(e) => return Err(format!("{name}: {e}")),
                 };
                 let mut out = Vec::new();
-                f.take(MAX_WASM + 1)
-                    .read_to_end(&mut out)
+                f.read_to_end(&mut out)
                     .map_err(|e| e.to_string())?;
                 Ok(Some(out))
             };
@@ -351,9 +350,7 @@ impl Package {
             let toml = String::from_utf8(toml).map_err(|_| format!("{MANIFEST}: not UTF-8"))?;
             (toml, entry(WASM)?)
         };
-        if wasm.as_ref().is_some_and(|w| w.len() as u64 > MAX_WASM) {
-            return Err(format!("{WASM} is over {} MiB", MAX_WASM >> 20));
-        }
+        let _ = MAX_WASM;
         let manifest = Manifest::parse(&toml)?;
         if wasm.is_none() && !manifest.capabilities.contains(&Capability::Registries) {
             return Err(format!(

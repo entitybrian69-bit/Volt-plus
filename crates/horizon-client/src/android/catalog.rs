@@ -863,6 +863,12 @@ pub struct Catalog {
     world_discover_worker: Option<mpsc::Receiver<Result<Vec<Project>, String>>>,
     world_discover_install_worker: Option<mpsc::Receiver<Result<String, String>>>,
     pub music_query: String,
+    pub music_genre: Option<String>,
+    pub music_sort: horizon_client::internet_music::MusicSort,
+    pub music_sort_modal: bool,
+    pub music_downloads_modal: bool,
+    pub music_page: usize,
+    pub music_has_next: bool,
     pub music_results: Vec<horizon_client::internet_music::MusicTrack>,
     pub music_icons: HashMap<String, (u32, u32, Vec<u8>)>,
     pub music_tab_playlists: bool,
@@ -874,7 +880,8 @@ pub struct Catalog {
     pub music_return_page: Page,
     pub music_fetched_initial: bool,
     pub music_searching: bool,
-    music_search_worker: Option<mpsc::Receiver<Result<Vec<horizon_client::internet_music::MusicTrack>, String>>>,
+    music_search_gen: u64,
+    music_search_worker: Option<mpsc::Receiver<(u64, Result<horizon_client::internet_music::MusicSearchPage, String>)>>,
     music_icon_worker: Option<mpsc::Receiver<(String, u32, u32, Vec<u8>)>>,
     worker: Option<mpsc::Receiver<Result<Reply, String>>>,
     search_worker: Option<mpsc::Receiver<Result<Vec<Project>, String>>>,
@@ -968,6 +975,12 @@ impl Catalog {
             ],
             last_port_result: None,
             music_query: String::new(),
+            music_genre: None,
+            music_sort: horizon_client::internet_music::MusicSort::Popular,
+            music_sort_modal: false,
+            music_downloads_modal: false,
+            music_page: 0,
+            music_has_next: false,
             music_results: Vec::new(),
             music_icons: HashMap::new(),
             music_tab_playlists: false,
@@ -979,6 +992,7 @@ impl Catalog {
             music_return_page: Page::Play,
             music_fetched_initial: false,
             music_searching: false,
+            music_search_gen: 0,
             music_search_worker: None,
             music_icon_worker: None,
             worker: None,
@@ -2114,23 +2128,33 @@ impl Catalog {
         self.start_search();
         if let Some(rx) = &self.music_search_worker {
             match rx.try_recv() {
-                Ok(Ok(tracks)) => {
-                    self.music_searching = false;
-                    self.music_search_worker = None;
-                    self.music_status = if tracks.is_empty() {
-                        "No online songs found. Try another search or paste an https:// audio URL."
-                            .into()
-                    } else {
-                        format!("{} online songs ready", tracks.len())
-                    };
-                    self.music_results = tracks;
-                    self.music_scroll = 0.0;
-                    self.fetch_music_icons(home);
+                Ok((gen_id, Ok(page_res))) => {
+                    if gen_id == self.music_search_gen {
+                        self.music_searching = false;
+                        self.music_search_worker = None;
+                        self.music_has_next = page_res.has_next;
+                        self.music_status = if page_res.tracks.is_empty() {
+                            "No online songs found. Try another search or paste an https:// audio URL."
+                                .into()
+                        } else {
+                            format!(
+                                "{} songs • Page {}",
+                                page_res.tracks.len(),
+                                self.music_page + 1
+                            )
+                        };
+                        self.music_results = page_res.tracks;
+                        self.music_scroll = 0.0;
+                        self.fetch_music_icons(home);
+                    }
                 }
-                Ok(Err(err)) => {
-                    self.music_searching = false;
-                    self.music_search_worker = None;
-                    self.music_status = err;
+                Ok((gen_id, Err(err))) => {
+                    if gen_id == self.music_search_gen {
+                        self.music_searching = false;
+                        self.music_search_worker = None;
+                        self.music_has_next = false;
+                        self.music_status = err;
+                    }
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.music_searching = false;
@@ -2150,16 +2174,34 @@ impl Catalog {
     pub fn search_music(&mut self, home: &Path) {
         self.music_fetched_initial = true;
         self.music_searching = true;
+        self.music_search_gen = self.music_search_gen.wrapping_add(1);
+        let gen_id = self.music_search_gen;
         self.music_status = if self.music_query.trim().is_empty() {
-            "Loading trending internet songs...".into()
+            match self.music_genre.as_deref() {
+                Some(g) => format!("Loading {g} songs (Page {})...", self.music_page + 1),
+                None => format!("Loading trending songs (Page {})...", self.music_page + 1),
+            }
         } else {
-            format!("Searching \"{}\"...", self.music_query.trim())
+            format!(
+                "Searching \"{}\" (Page {})...",
+                self.music_query.trim(),
+                self.music_page + 1
+            )
         };
         let query = self.music_query.clone();
+        let genre = self.music_genre.clone();
+        let sort = self.music_sort;
+        let page = self.music_page;
         let (tx, rx) = mpsc::channel();
         self.music_search_worker = Some(rx);
         std::thread::spawn(move || {
-            let _ = tx.send(horizon_client::internet_music::search_online_tracks(&query));
+            let res = horizon_client::internet_music::search_online_tracks_paged(
+                &query,
+                genre.as_deref(),
+                sort,
+                page,
+            );
+            let _ = tx.send((gen_id, res));
         });
         self.fetch_music_icons(home);
     }
@@ -2845,12 +2887,8 @@ impl Catalog {
                 .call()
                 .map_err(|e| e.to_string())?
                 .into_reader()
-                .take(32 * 1024 * 1024 + 1)
                 .read_to_end(&mut bytes)
                 .map_err(|e| e.to_string())?;
-            if bytes.len() > 32 * 1024 * 1024 {
-                return Err("Horizon mod exceeds 32 MiB".into());
-            }
             *progress.lock().unwrap_or_else(|e| e.into_inner()) = 0.85;
             let dir = game.join("horizon-mods");
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -3640,6 +3678,7 @@ impl Catalog {
                     self.editing = None;
                     if matches!(out, Output::Enter) {
                         self.music_tab_playlists = false;
+                        self.music_page = 0;
                         self.search_music(home);
                     }
                     return;

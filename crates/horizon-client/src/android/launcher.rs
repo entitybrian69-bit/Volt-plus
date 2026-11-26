@@ -568,6 +568,10 @@ impl Launcher {
             self.login.hide();
         } else if self.chooser.take().is_some() {
             // Back dismisses the current dialog, including the exit question.
+        } else if self.catalog.music_sort_modal {
+            self.catalog.music_sort_modal = false;
+        } else if self.catalog.music_downloads_modal {
+            self.catalog.music_downloads_modal = false;
         } else if self.catalog.music_save_modal.take().is_some() {
             self.catalog.editing = None;
         } else if self.catalog.page == Page::Music {

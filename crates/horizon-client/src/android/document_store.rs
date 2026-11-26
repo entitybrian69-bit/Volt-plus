@@ -618,6 +618,7 @@ pub const FM_ROOT_DIRS: &[(&str, &str)] = &[
     ("horizon-mods", "Mods"),
     ("resourcepacks", "Packs"),
     ("shaderpacks", "Shaders"),
+    ("musics", "Musics"),
     ("controls", "Controls"),
     ("replays/raw", "Raw"),
     ("replays/rendered", "Rendered"),
@@ -664,6 +665,7 @@ pub fn is_protected_root_folder(rel_path: &str) -> bool {
                 | "horizon-mods"
                 | "resourcepacks"
                 | "shaderpacks"
+                | "musics"
                 | "controls"
                 | "replays"
                 | "replays/raw"
@@ -742,6 +744,8 @@ pub fn resolve_fm_path(home: &Path, profile_root: &Path, rel: &str) -> Result<Pa
         home.join("performance")
     } else if first == "recordings" {
         home.join("recordings")
+    } else if first == "musics" {
+        home.join("musics")
     } else {
         profile_root.join(first)
     };
@@ -859,6 +863,8 @@ pub fn ensure_fm_dirs(home: &Path, profile_root: &Path) {
             home.join("performance")
         } else if *sub == "recordings" {
             home.join("recordings")
+        } else if *sub == "musics" {
+            home.join("musics")
         } else {
             profile_root.join(sub)
         };

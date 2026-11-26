@@ -478,6 +478,15 @@ impl Ui {
                         "(Ljava/lang/String;)Landroid/content/Intent;",
                         &[JValue::Object(&mime)],
                     )?;
+                    let allow_multiple = JObject::from(
+                        env.new_string("android.intent.extra.ALLOW_MULTIPLE")?,
+                    );
+                    let _ = env.call_method(
+                        &intent,
+                        "putExtra",
+                        "(Ljava/lang/String;Z)Landroid/content/Intent;",
+                        &[JValue::Object(&allow_multiple), JValue::Bool(1)],
+                    );
                     env.call_method(
                         &intent,
                         "addFlags",

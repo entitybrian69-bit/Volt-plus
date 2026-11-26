@@ -2993,7 +2993,7 @@ impl Hub {
             g.received_moves += 1;
             let mut packets = g.received_moves - g.known_moves;
             if packets > 5 {
-                packets = 1;
+                packets = packets.min(20);
             }
             // shouldCheckPlayerMovement (never the single-player owner).
             if !owner && check && (!g.fall_flying || elytra_check) {

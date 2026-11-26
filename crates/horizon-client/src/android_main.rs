@@ -230,6 +230,10 @@ fn android_main(app: AndroidApp) {
     backend::initialize(home.clone());
     horizon_client::internet_music::initialize(&home);
     native_ime::music_install_backend();
+    horizon_client::internet_music::install_icon_backend(
+        browser::images::load_cached_music_icon_rgba,
+        browser::images::fetch_music_icon_rgba,
+    );
     horizon_client::logging::set_private_home(home.clone());
     if let Err(error) = diagnostics::initialize(&home, serde_json::json!({})) {
         log::error!("Cannot initialize local diagnostics: {error}");

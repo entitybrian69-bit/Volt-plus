@@ -1,8 +1,37 @@
-//! Internet music search, playlist persistence, and shared launcher/in-game playback bridge.
+//! Internet music search, offline library scanning, song downloads, playlist persistence,
+//! and shared launcher/in-game playback bridge.
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+pub const DOWNLOADED_PLAYLIST_NAME: &str = "Downloaded";
+pub const EXPORTED_PLAYLIST_NAME: &str = "Exported Music's";
+pub const PAGE_SIZE: usize = 20;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MusicSort {
+    #[default]
+    Popular,
+    Relevance,
+    MostPlayed,
+    Letters,
+}
+
+impl MusicSort {
+    pub const ALL: [Self; 4] = [Self::Popular, Self::Relevance, Self::MostPlayed, Self::Letters];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Popular => "Popular",
+            Self::Relevance => "Relevance",
+            Self::MostPlayed => "Most Played",
+            Self::Letters => "Letters",
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MusicTrack {
@@ -13,12 +42,44 @@ pub struct MusicTrack {
     pub stream_url: String,
     pub icon_url: Option<String>,
     pub source: String,
+    #[serde(default)]
+    pub play_count: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MusicPlaylist {
     pub name: String,
     pub tracks: Vec<MusicTrack>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MusicSearchPage {
+    pub tracks: Vec<MusicTrack>,
+    pub has_next: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DownloadProgress {
+    pub id: String,
+    pub title: String,
+    pub artist: String,
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+    pub done: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct InGameSearchSnapshot {
+    pub query: String,
+    pub genre: Option<String>,
+    pub sort: MusicSort,
+    pub page: usize,
+    pub has_next: bool,
+    pub searching: bool,
+    pub fetched_initial: bool,
+    pub results: Vec<MusicTrack>,
+    pub status: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -83,13 +144,26 @@ pub struct MusicBackend {
     pub snapshot: fn() -> MusicStatusSnapshot,
 }
 
+pub type IconCacheLoader = fn(&Path, &str) -> Option<(u32, u32, Vec<u8>)>;
+pub type IconNetLoader = fn(&Path, &str, &str) -> Result<(u32, u32, Vec<u8>), String>;
+
 struct SharedState {
     home: Option<PathBuf>,
     library: MusicLibrary,
     loaded: bool,
     backend: Option<MusicBackend>,
-    cached_discord_poll: Option<std::time::Instant>,
+    icon_cache_loader: Option<IconCacheLoader>,
+    icon_net_loader: Option<IconNetLoader>,
+    icons: HashMap<String, (u32, u32, Vec<u8>)>,
+    icon_in_flight: HashSet<String>,
+    cached_discord_poll: Option<Instant>,
     cached_discord_now_playing: Option<String>,
+    cached_offline_poll: Option<Instant>,
+    cached_downloaded: Vec<MusicTrack>,
+    cached_exported: Vec<MusicTrack>,
+    downloads: Vec<DownloadProgress>,
+    in_game_search: InGameSearchSnapshot,
+    in_game_search_gen: u64,
 }
 
 impl Default for SharedState {
@@ -99,8 +173,18 @@ impl Default for SharedState {
             library: MusicLibrary::default(),
             loaded: false,
             backend: None,
+            icon_cache_loader: None,
+            icon_net_loader: None,
+            icons: HashMap::new(),
+            icon_in_flight: HashSet::new(),
             cached_discord_poll: None,
             cached_discord_now_playing: None,
+            cached_offline_poll: None,
+            cached_downloaded: Vec::new(),
+            cached_exported: Vec::new(),
+            downloads: Vec::new(),
+            in_game_search: InGameSearchSnapshot::default(),
+            in_game_search_gen: 0,
         }
     }
 }
@@ -115,11 +199,174 @@ fn library_path(home: &Path) -> PathBuf {
     home.join("music").join("library.json")
 }
 
+fn downloaded_meta_path(home: &Path) -> PathBuf {
+    home.join("music").join("downloaded.json")
+}
+
+pub fn musics_dir(home: &Path) -> PathBuf {
+    home.join("musics")
+}
+
+pub fn downloaded_dir(home: &Path) -> PathBuf {
+    musics_dir(home).join("downloaded")
+}
+
+pub fn is_virtual_playlist(name: &str) -> bool {
+    name.eq_ignore_ascii_case(DOWNLOADED_PLAYLIST_NAME)
+        || name.eq_ignore_ascii_case(EXPORTED_PLAYLIST_NAME)
+}
+
+fn is_audio_file(path: &Path) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "mp3" | "wav" | "ogg" | "opus" | "flac" | "aac" | "m4a" | "aiff"
+    )
+}
+
+fn nice_file_title(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Audio Track");
+    let cleaned = stem.replace('_', " ").trim().to_owned();
+    if cleaned.is_empty() {
+        "Audio Track".to_owned()
+    } else {
+        cleaned
+    }
+}
+
+fn collect_audio_files(dir: &Path, skip_dir_name: Option<&str>, depth: usize, out: &mut Vec<PathBuf>) {
+    if depth > 3 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(skip) = skip_dir_name
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.eq_ignore_ascii_case(skip))
+            {
+                continue;
+            }
+            collect_audio_files(&path, None, depth + 1, out);
+        } else if path.is_file() && is_audio_file(&path) {
+            out.push(path);
+        }
+    }
+}
+
+fn load_downloaded_meta(home: &Path) -> Vec<MusicTrack> {
+    let path = downloaded_meta_path(home);
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<MusicTrack>>(&raw).unwrap_or_default()
+}
+
+fn save_downloaded_meta(home: &Path, tracks: &[MusicTrack]) {
+    let path = downloaded_meta_path(home);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(tracks) {
+        let tmp = path.with_extension("json.part");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+}
+
+fn rescan_offline_playlists(home: &Path) -> (Vec<MusicTrack>, Vec<MusicTrack>) {
+    let root = musics_dir(home);
+    let dl_dir = downloaded_dir(home);
+    let _ = std::fs::create_dir_all(&root);
+    let _ = std::fs::create_dir_all(&dl_dir);
+
+    let mut meta = load_downloaded_meta(home);
+    meta.retain(|t| Path::new(&t.stream_url).is_file());
+    let mut known_paths: HashSet<PathBuf> = meta
+        .iter()
+        .map(|t| PathBuf::from(&t.stream_url))
+        .collect();
+
+    let mut dl_files = Vec::new();
+    collect_audio_files(&dl_dir, None, 0, &mut dl_files);
+    dl_files.sort();
+    for p in dl_files {
+        if known_paths.insert(p.clone()) {
+            let path_str = p.to_string_lossy().into_owned();
+            meta.push(MusicTrack {
+                id: format!("local:dl:{path_str}"),
+                title: nice_file_title(&p),
+                artist: "Downloaded".to_owned(),
+                duration_secs: 0,
+                stream_url: path_str,
+                icon_url: None,
+                source: "Offline".to_owned(),
+                play_count: 0,
+            });
+        }
+    }
+
+    let mut exp_files = Vec::new();
+    collect_audio_files(&root, Some("downloaded"), 0, &mut exp_files);
+    exp_files.sort();
+    let exported = exp_files
+        .into_iter()
+        .map(|p| {
+            let path_str = p.to_string_lossy().into_owned();
+            MusicTrack {
+                id: format!("local:exp:{path_str}"),
+                title: nice_file_title(&p),
+                artist: "Local Audio".to_owned(),
+                duration_secs: 0,
+                stream_url: path_str,
+                icon_url: None,
+                source: EXPORTED_PLAYLIST_NAME.to_owned(),
+                play_count: 0,
+            }
+        })
+        .collect();
+
+    (meta, exported)
+}
+
+fn ensure_offline_fresh_locked(st: &mut SharedState) {
+    let Some(home) = st.home.clone() else {
+        return;
+    };
+    if let Some(last) = st.cached_offline_poll
+        && last.elapsed() < Duration::from_secs(3)
+    {
+        return;
+    }
+    let (dl, exp) = rescan_offline_playlists(&home);
+    st.cached_downloaded = dl;
+    st.cached_exported = exp;
+    st.cached_offline_poll = Some(Instant::now());
+}
+
+pub fn invalidate_offline_cache() {
+    let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+    st.cached_offline_poll = None;
+}
+
 fn ensure_loaded_locked(st: &mut SharedState) {
     if st.loaded {
         return;
     }
     if let Some(home) = &st.home {
+        let _ = std::fs::create_dir_all(musics_dir(home));
+        let _ = std::fs::create_dir_all(downloaded_dir(home));
         let path = library_path(home);
         if let Ok(raw) = std::fs::read_to_string(&path)
             && let Ok(mut lib) = serde_json::from_str::<MusicLibrary>(&raw)
@@ -159,8 +406,10 @@ pub fn initialize(home: &Path) {
     if home_changed {
         st.home = Some(home.to_path_buf());
         st.loaded = false;
+        st.cached_offline_poll = None;
     }
     ensure_loaded_locked(&mut st);
+    ensure_offline_fresh_locked(&mut st);
     if let Some(backend) = st.backend {
         let vol = st.library.volume;
         let muted = st.library.muted;
@@ -180,10 +429,97 @@ pub fn install_backend(backend: MusicBackend) {
     (backend.set_muted)(muted);
 }
 
+pub fn install_icon_backend(cache_loader: IconCacheLoader, net_loader: IconNetLoader) {
+    let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+    st.icon_cache_loader = Some(cache_loader);
+    st.icon_net_loader = Some(net_loader);
+}
+
+pub fn get_or_request_icon(track_id: &str, icon_url: Option<&str>) -> Option<(u32, u32, Vec<u8>)> {
+    if track_id.is_empty() {
+        return None;
+    }
+    let (home, cache_loader, net_loader) = {
+        let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(img) = st.icons.get(track_id) {
+            return Some(img.clone());
+        }
+        if st.icon_in_flight.contains(track_id) {
+            return None;
+        }
+        (st.home.clone(), st.icon_cache_loader, st.icon_net_loader)
+    };
+    let home = home?;
+    if let Some(loader) = cache_loader
+        && let Some((w, h, rgba)) = loader(&home, track_id)
+    {
+        let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+        st.icons.insert(track_id.to_owned(), (w, h, rgba.clone()));
+        return Some((w, h, rgba));
+    }
+    let url = icon_url?.trim();
+    if !url.starts_with("https://") {
+        return None;
+    }
+    let loader = net_loader?;
+    {
+        let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+        if !st.icon_in_flight.insert(track_id.to_owned()) {
+            return None;
+        }
+    }
+    let id_owned = track_id.to_owned();
+    let url_owned = url.to_owned();
+    std::thread::spawn(move || {
+        let res = loader(&home, &id_owned, &url_owned);
+        let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+        st.icon_in_flight.remove(&id_owned);
+        if let Ok((w, h, rgba)) = res {
+            st.icons.insert(id_owned, (w, h, rgba));
+        }
+    });
+    None
+}
+
+pub fn find_track_icon_by_url(stream_url: &str) -> Option<(String, u32, u32, Vec<u8>)> {
+    if stream_url.is_empty() {
+        return None;
+    }
+    let st = state().lock().unwrap_or_else(|e| e.into_inner());
+    let candidate = st
+        .in_game_search
+        .results
+        .iter()
+        .chain(st.cached_downloaded.iter())
+        .chain(st.library.playlists.iter().flat_map(|p| p.tracks.iter()))
+        .find(|t| t.stream_url == stream_url)
+        .map(|t| (t.id.clone(), t.icon_url.clone()));
+    if let Some((id, icon_url)) = candidate {
+        if let Some((w, h, rgba)) = st.icons.get(&id) {
+            return Some((id, *w, *h, rgba.clone()));
+        }
+        drop(st);
+        if let Some((w, h, rgba)) = get_or_request_icon(&id, icon_url.as_deref()) {
+            return Some((id, w, h, rgba));
+        }
+    }
+    None
+}
+
 pub fn playlists() -> Vec<MusicPlaylist> {
     let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
     ensure_loaded_locked(&mut st);
-    st.library.playlists.clone()
+    ensure_offline_fresh_locked(&mut st);
+    let mut out = st.library.playlists.clone();
+    out.push(MusicPlaylist {
+        name: DOWNLOADED_PLAYLIST_NAME.to_owned(),
+        tracks: st.cached_downloaded.clone(),
+    });
+    out.push(MusicPlaylist {
+        name: EXPORTED_PLAYLIST_NAME.to_owned(),
+        tracks: st.cached_exported.clone(),
+    });
+    out
 }
 
 pub fn active_playlist_name() -> Option<String> {
@@ -196,6 +532,9 @@ pub fn create_playlist(name: &str) -> Result<String, String> {
     let clean = name.trim();
     if clean.is_empty() {
         return Err("Enter a playlist name".to_owned());
+    }
+    if is_virtual_playlist(clean) {
+        return Err(format!("\"{clean}\" is a built-in offline folder playlist"));
     }
     let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
     ensure_loaded_locked(&mut st);
@@ -217,6 +556,9 @@ pub fn create_playlist(name: &str) -> Result<String, String> {
 }
 
 pub fn delete_playlist(name: &str) {
+    if is_virtual_playlist(name) {
+        return;
+    }
     let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
     ensure_loaded_locked(&mut st);
     st.library
@@ -243,6 +585,9 @@ pub fn add_track_to_playlist(playlist_name: &str, track: MusicTrack) -> Result<b
     let clean = playlist_name.trim();
     if clean.is_empty() {
         return Err("Select or create a playlist".to_owned());
+    }
+    if is_virtual_playlist(clean) {
+        return Err(format!("Cannot manually add songs to \"{clean}\""));
     }
     let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
     ensure_loaded_locked(&mut st);
@@ -276,6 +621,25 @@ pub fn add_track_to_playlist(playlist_name: &str, track: MusicTrack) -> Result<b
 pub fn remove_track_from_playlist(playlist_name: &str, track_id: &str) {
     let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
     ensure_loaded_locked(&mut st);
+    if playlist_name.eq_ignore_ascii_case(DOWNLOADED_PLAYLIST_NAME) {
+        if let Some(home) = st.home.clone() {
+            if let Some(track) = st.cached_downloaded.iter().find(|t| t.id == track_id) {
+                let _ = std::fs::remove_file(&track.stream_url);
+            }
+            let mut meta = load_downloaded_meta(&home);
+            meta.retain(|t| t.id != track_id);
+            save_downloaded_meta(&home, &meta);
+            st.cached_offline_poll = None;
+        }
+        return;
+    }
+    if playlist_name.eq_ignore_ascii_case(EXPORTED_PLAYLIST_NAME) {
+        if let Some(track) = st.cached_exported.iter().find(|t| t.id == track_id) {
+            let _ = std::fs::remove_file(&track.stream_url);
+            st.cached_offline_poll = None;
+        }
+        return;
+    }
     if let Some(list) = st
         .library
         .playlists
@@ -285,6 +649,164 @@ pub fn remove_track_from_playlist(playlist_name: &str, track_id: &str) {
         list.tracks.retain(|t| t.id != track_id);
         save_locked(&st);
     }
+}
+
+pub fn is_track_downloaded(track: &MusicTrack) -> bool {
+    let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+    ensure_offline_fresh_locked(&mut st);
+    st.cached_downloaded
+        .iter()
+        .any(|t| t.id == track.id || t.stream_url == track.stream_url)
+}
+
+pub fn active_downloads() -> Vec<DownloadProgress> {
+    let st = state().lock().unwrap_or_else(|e| e.into_inner());
+    st.downloads.clone()
+}
+
+pub fn dismiss_finished_downloads() {
+    let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+    st.downloads.retain(|d| !d.done);
+}
+
+fn sanitize_filename(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len().min(64));
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || ch == ' ' || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+        if out.len() >= 48 {
+            break;
+        }
+    }
+    let trimmed = out.trim().trim_matches('_');
+    if trimmed.is_empty() {
+        "track".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+fn short_hash(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.as_bytes() {
+        h ^= u64::from(*b);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+pub fn start_download_track(track: MusicTrack) {
+    let home = {
+        let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+        let Some(home) = st.home.clone() else {
+            return;
+        };
+        if st.downloads.iter().any(|d| d.id == track.id && !d.done) {
+            return;
+        }
+        st.downloads.retain(|d| d.id != track.id);
+        st.downloads.push(DownloadProgress {
+            id: track.id.clone(),
+            title: track.title.clone(),
+            artist: track.artist.clone(),
+            downloaded_bytes: 0,
+            total_bytes: None,
+            done: false,
+            error: None,
+        });
+        home
+    };
+
+    std::thread::spawn(move || {
+        let result = download_track_blocking(&home, &track);
+        let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(item) = st.downloads.iter_mut().find(|d| d.id == track.id) {
+            item.done = true;
+            if let Err(err) = result {
+                item.error = Some(err);
+            }
+        }
+        st.cached_offline_poll = None;
+    });
+}
+
+fn download_track_blocking(home: &Path, track: &MusicTrack) -> Result<(), String> {
+    if !track.stream_url.starts_with("https://") {
+        return Err("Track is already local".to_owned());
+    }
+    let dir = downloaded_dir(home);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create download folder: {e}"))?;
+
+    let agent = http_agent();
+    let resp = agent
+        .get(&track.stream_url)
+        .call()
+        .map_err(|e| format!("Download failed: {e}"))?;
+    let total_bytes = resp
+        .header("Content-Length")
+        .and_then(|s| s.parse::<u64>().ok());
+    let ext = match resp
+        .header("Content-Type")
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        ct if ct.contains("ogg") => "ogg",
+        ct if ct.contains("mp4") || ct.contains("m4a") || ct.contains("aac") => "m4a",
+        ct if ct.contains("flac") => "flac",
+        ct if ct.contains("wav") => "wav",
+        _ => "mp3",
+    };
+
+    {
+        let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(item) = st.downloads.iter_mut().find(|d| d.id == track.id) {
+            item.total_bytes = total_bytes;
+        }
+    }
+
+    let base = sanitize_filename(&format!("{} - {}", track.title, track.artist));
+    let hash = short_hash(&track.id);
+    let final_path = dir.join(format!("{base}_{hash:08x}.{ext}"));
+    let part_path = dir.join(format!("{base}_{hash:08x}.{ext}.part"));
+
+    let mut file = std::fs::File::create(&part_path)
+        .map_err(|e| format!("Cannot create file: {e}"))?;
+    let mut reader = resp.into_reader();
+    let mut buf = vec![0u8; 32 * 1024];
+    let mut written: u64 = 0;
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .map_err(|e| format!("Network read error: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        use std::io::Write as _;
+        file.write_all(&buf[..n])
+            .map_err(|e| format!("Disk write error: {e}"))?;
+        written += n as u64;
+        let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(item) = st.downloads.iter_mut().find(|d| d.id == track.id) {
+            item.downloaded_bytes = written;
+        }
+    }
+    drop(file);
+    std::fs::rename(&part_path, &final_path)
+        .map_err(|e| format!("Cannot finalize download: {e}"))?;
+
+    let mut offline_track = track.clone();
+    offline_track.stream_url = final_path.to_string_lossy().into_owned();
+    offline_track.source = DOWNLOADED_PLAYLIST_NAME.to_owned();
+
+    let mut meta = load_downloaded_meta(home);
+    meta.retain(|t| t.id != offline_track.id && t.stream_url != offline_track.stream_url);
+    meta.push(offline_track);
+    save_downloaded_meta(home, &meta);
+    Ok(())
 }
 
 pub fn play_queue(tracks: &[MusicTrack], start_index: usize, playlist_name: &str) {
@@ -314,13 +836,19 @@ pub fn play_playlist(playlist_name: &str, start_index: usize) -> bool {
     let tracks = {
         let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
         ensure_loaded_locked(&mut st);
-        let found = st
-            .library
-            .playlists
-            .iter()
-            .find(|p| p.name.eq_ignore_ascii_case(playlist_name))
-            .map(|p| p.tracks.clone())
-            .unwrap_or_default();
+        ensure_offline_fresh_locked(&mut st);
+        let found = if playlist_name.eq_ignore_ascii_case(DOWNLOADED_PLAYLIST_NAME) {
+            st.cached_downloaded.clone()
+        } else if playlist_name.eq_ignore_ascii_case(EXPORTED_PLAYLIST_NAME) {
+            st.cached_exported.clone()
+        } else {
+            st.library
+                .playlists
+                .iter()
+                .find(|p| p.name.eq_ignore_ascii_case(playlist_name))
+                .map(|p| p.tracks.clone())
+                .unwrap_or_default()
+        };
         if found.is_empty() {
             return false;
         }
@@ -509,9 +1037,80 @@ pub fn now_playing_for_discord() -> Option<String> {
         }
     };
     let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
-    st.cached_discord_poll = Some(std::time::Instant::now());
+    st.cached_discord_poll = Some(Instant::now());
     st.cached_discord_now_playing = next.clone();
     next
+}
+
+pub fn in_game_search_snapshot() -> InGameSearchSnapshot {
+    let st = state().lock().unwrap_or_else(|e| e.into_inner());
+    st.in_game_search.clone()
+}
+
+pub fn set_in_game_query(query: String) {
+    let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+    st.in_game_search.query = query;
+}
+
+pub fn trigger_in_game_search(
+    query: String,
+    genre: Option<String>,
+    sort: MusicSort,
+    page: usize,
+) {
+    let gen_id = {
+        let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+        st.in_game_search_gen += 1;
+        st.in_game_search.query = query.clone();
+        st.in_game_search.genre = genre.clone();
+        st.in_game_search.sort = sort;
+        st.in_game_search.page = page;
+        st.in_game_search.searching = true;
+        st.in_game_search.fetched_initial = true;
+        st.in_game_search.status = if query.trim().is_empty() {
+            "Loading songs...".to_owned()
+        } else {
+            format!("Searching \"{}\"...", query.trim())
+        };
+        st.in_game_search_gen
+    };
+
+    std::thread::spawn(move || {
+        let res = search_online_tracks_paged(&query, genre.as_deref(), sort, page);
+        let tracks_to_warm: Vec<(String, Option<String>)> = match &res {
+            Ok(p) => p
+                .tracks
+                .iter()
+                .map(|t| (t.id.clone(), t.icon_url.clone()))
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        {
+            let mut st = state().lock().unwrap_or_else(|e| e.into_inner());
+            if st.in_game_search_gen != gen_id {
+                return;
+            }
+            st.in_game_search.searching = false;
+            match res {
+                Ok(page_res) => {
+                    st.in_game_search.has_next = page_res.has_next;
+                    st.in_game_search.status = if page_res.tracks.is_empty() {
+                        "No songs found.".to_owned()
+                    } else {
+                        format!("{} songs (Page {})", page_res.tracks.len(), page + 1)
+                    };
+                    st.in_game_search.results = page_res.tracks;
+                }
+                Err(err) => {
+                    st.in_game_search.has_next = false;
+                    st.in_game_search.status = err;
+                }
+            }
+        }
+        for (id, icon_url) in tracks_to_warm {
+            let _ = get_or_request_icon(&id, icon_url.as_deref());
+        }
+    });
 }
 
 pub fn format_duration(secs: u64) -> String {
@@ -522,6 +1121,18 @@ pub fn format_duration(secs: u64) -> String {
 
 pub fn format_ms(ms: u64) -> String {
     format_duration(ms / 1000)
+}
+
+pub fn format_bytes(bytes: u64) -> String {
+    const MIB: f64 = 1024.0 * 1024.0;
+    const KIB: f64 = 1024.0;
+    if bytes as f64 >= MIB {
+        format!("{:.1} MB", bytes as f64 / MIB)
+    } else if bytes as f64 >= KIB {
+        format!("{:.0} KB", bytes as f64 / KIB)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 fn http_agent() -> ureq::Agent {
@@ -582,6 +1193,10 @@ fn parse_audius_tracks(host: &str, json: &serde_json::Value) -> Vec<MusicTrack> 
             .get("duration")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
+        let play_count = item
+            .get("play_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let icon_url = item
             .pointer("/artwork/150x150")
             .or_else(|| item.pointer("/artwork/480x480"))
@@ -598,28 +1213,98 @@ fn parse_audius_tracks(host: &str, json: &serde_json::Value) -> Vec<MusicTrack> 
             stream_url,
             icon_url,
             source: "Audius".to_owned(),
+            play_count,
         });
     }
     out
 }
 
-fn search_audius(query: &str) -> Result<Vec<MusicTrack>, String> {
+fn apply_sort(tracks: &mut [MusicTrack], sort: MusicSort) {
+    match sort {
+        MusicSort::Popular => {}
+        MusicSort::Relevance => {}
+        MusicSort::MostPlayed => {
+            tracks.sort_by(|a, b| b.play_count.cmp(&a.play_count));
+        }
+        MusicSort::Letters => {
+            tracks.sort_by(|a, b| {
+                a.title
+                    .to_ascii_lowercase()
+                    .cmp(&b.title.to_ascii_lowercase())
+            });
+        }
+    }
+}
+
+fn search_audius_paged(
+    query: &str,
+    genre: Option<&str>,
+    sort: MusicSort,
+    page: usize,
+) -> Result<MusicSearchPage, String> {
     let agent = http_agent();
     let trimmed = query.trim();
-    let encoded_q = url::form_urlencoded::byte_serialize(trimmed.as_bytes()).collect::<String>();
+    let genre_clean = genre
+        .map(str::trim)
+        .filter(|g| !g.is_empty() && !g.eq_ignore_ascii_case("Trending"));
+    let offset = page * PAGE_SIZE;
+    let limit = PAGE_SIZE + 1;
+    let combined = match (trimmed.is_empty(), genre_clean) {
+        (true, None) => String::new(),
+        (true, Some(g)) => g.to_owned(),
+        (false, None) => trimmed.to_owned(),
+        (false, Some(g)) => format!("{trimmed} {g}"),
+    };
+    let encoded_q = url::form_urlencoded::byte_serialize(combined.as_bytes()).collect::<String>();
+    let sort_param = match sort {
+        MusicSort::Relevance => "relevant",
+        MusicSort::Popular | MusicSort::MostPlayed | MusicSort::Letters => "popular",
+    };
+
     let mut last_err = String::new();
     for host in audius_hosts(&agent) {
         let endpoint = if trimmed.is_empty() {
-            format!("{host}/v1/tracks/trending?app_name=VoltPlus&limit=30")
+            let time_param = if sort == MusicSort::MostPlayed {
+                "&time=allTime"
+            } else {
+                ""
+            };
+            if let Some(g) = genre_clean {
+                let enc_g =
+                    url::form_urlencoded::byte_serialize(g.as_bytes()).collect::<String>();
+                format!(
+                    "{host}/v1/tracks/trending?genre={enc_g}{time_param}&limit={limit}&offset={offset}&app_name=VoltPlus"
+                )
+            } else {
+                format!(
+                    "{host}/v1/tracks/trending?{time_param}limit={limit}&offset={offset}&app_name=VoltPlus"
+                )
+                .replace("?&", "?")
+            }
         } else {
-            format!("{host}/v1/tracks/search?query={encoded_q}&app_name=VoltPlus&limit=30")
+            format!(
+                "{host}/v1/tracks/search?query={encoded_q}&sort_method={sort_param}&limit={limit}&offset={offset}&app_name=VoltPlus"
+            )
         };
         match agent.get(&endpoint).call() {
             Ok(resp) => {
                 if let Ok(json) = resp.into_json::<serde_json::Value>() {
-                    let tracks = parse_audius_tracks(&host, &json);
-                    if !tracks.is_empty() || !trimmed.is_empty() {
-                        return Ok(tracks);
+                    let mut tracks = parse_audius_tracks(&host, &json);
+                    if tracks.is_empty() && trimmed.is_empty() && genre_clean.is_some() {
+                        let fallback_ep = format!(
+                            "{host}/v1/tracks/search?query={encoded_q}&sort_method={sort_param}&limit={limit}&offset={offset}&app_name=VoltPlus"
+                        );
+                        if let Ok(r2) = agent.get(&fallback_ep).call()
+                            && let Ok(j2) = r2.into_json::<serde_json::Value>()
+                        {
+                            tracks = parse_audius_tracks(&host, &j2);
+                        }
+                    }
+                    if !tracks.is_empty() || !combined.is_empty() {
+                        let has_next = tracks.len() > PAGE_SIZE;
+                        tracks.truncate(PAGE_SIZE);
+                        apply_sort(&mut tracks, sort);
+                        return Ok(MusicSearchPage { tracks, has_next });
                     }
                 }
             }
@@ -635,19 +1320,38 @@ fn search_audius(query: &str) -> Result<Vec<MusicTrack>, String> {
     })
 }
 
-fn search_archive_org(query: &str) -> Result<Vec<MusicTrack>, String> {
+fn search_archive_org_paged(
+    query: &str,
+    genre: Option<&str>,
+    sort: MusicSort,
+    page: usize,
+) -> Result<MusicSearchPage, String> {
     let agent = http_agent();
-    let q_expr = if query.trim().is_empty() {
+    let trimmed = query.trim();
+    let genre_clean = genre
+        .map(str::trim)
+        .filter(|g| !g.is_empty() && !g.eq_ignore_ascii_case("Trending"));
+    let combined = match (trimmed.is_empty(), genre_clean) {
+        (true, None) => String::new(),
+        (true, Some(g)) => g.to_owned(),
+        (false, None) => trimmed.to_owned(),
+        (false, Some(g)) => format!("{trimmed} {g}"),
+    };
+    let q_expr = if combined.is_empty() {
         "mediatype:audio AND format:\"VBR MP3\" AND (subject:music OR subject:lofi OR subject:electronic)".to_owned()
     } else {
-        format!(
-            "mediatype:audio AND format:\"VBR MP3\" AND ({})",
-            query.trim()
-        )
+        format!("mediatype:audio AND format:\"VBR MP3\" AND ({combined})")
     };
     let encoded_q = url::form_urlencoded::byte_serialize(q_expr.as_bytes()).collect::<String>();
+    let sort_q = match sort {
+        MusicSort::Popular | MusicSort::MostPlayed => "&sort[]=downloads+desc",
+        MusicSort::Letters => "&sort[]=titleSorter+asc",
+        MusicSort::Relevance => "",
+    };
     let url = format!(
-        "https://archive.org/advancedsearch.php?q={encoded_q}&fl[]=identifier&fl[]=title&fl[]=creator&rows=18&output=json"
+        "https://archive.org/advancedsearch.php?q={encoded_q}&fl[]=identifier&fl[]=title&fl[]=creator&rows={}&page={}{sort_q}&output=json",
+        PAGE_SIZE,
+        page + 1
     );
     let resp = agent
         .get(&url)
@@ -661,8 +1365,13 @@ fn search_archive_org(query: &str) -> Result<Vec<MusicTrack>, String> {
         .and_then(|d| d.as_array())
         .cloned()
         .unwrap_or_default();
+    let num_found = json
+        .pointer("/response/numFound")
+        .and_then(|n| n.as_u64())
+        .unwrap_or(0) as usize;
+    let has_next = (page + 1) * PAGE_SIZE < num_found && !docs.is_empty();
     let mut tracks = Vec::new();
-    for doc in docs.into_iter().take(12) {
+    for doc in docs.into_iter().take(16) {
         let Some(ident) = doc.get("identifier").and_then(|v| v.as_str()) else {
             continue;
         };
@@ -722,14 +1431,19 @@ fn search_archive_org(query: &str) -> Result<Vec<MusicTrack>, String> {
             stream_url: format!("https://archive.org/download/{ident}/{encoded_file}"),
             icon_url: Some(format!("https://archive.org/services/img/{ident}")),
             source: "Internet Archive".to_owned(),
+            play_count: 0,
         });
     }
-    Ok(tracks)
+    apply_sort(&mut tracks, sort);
+    Ok(MusicSearchPage { tracks, has_next })
 }
 
-/// Searches online music tracks (Audius primary, Internet Archive fallback) or constructs
-/// a direct stream entry for a pasted `https://` audio URL.
-pub fn search_online_tracks(query: &str) -> Result<Vec<MusicTrack>, String> {
+pub fn search_online_tracks_paged(
+    query: &str,
+    genre: Option<&str>,
+    sort: MusicSort,
+    page: usize,
+) -> Result<MusicSearchPage, String> {
     let trimmed = query.trim();
     if trimmed.starts_with("https://") {
         let parsed = url::Url::parse(trimmed).map_err(|e| format!("Invalid HTTPS URL: {e}"))?;
@@ -743,22 +1457,32 @@ pub fn search_online_tracks(query: &str) -> Result<Vec<MusicTrack>, String> {
             .next()
             .unwrap_or(raw_name)
             .replace(['_', '-'], " ");
-        return Ok(vec![MusicTrack {
-            id: format!("url:{trimmed}"),
-            title,
-            artist: parsed.host_str().unwrap_or("Custom Stream").to_owned(),
-            duration_secs: 0,
-            stream_url: trimmed.to_owned(),
-            icon_url: None,
-            source: "Direct URL".to_owned(),
-        }]);
+        return Ok(MusicSearchPage {
+            tracks: vec![MusicTrack {
+                id: format!("url:{trimmed}"),
+                title,
+                artist: parsed.host_str().unwrap_or("Custom Stream").to_owned(),
+                duration_secs: 0,
+                stream_url: trimmed.to_owned(),
+                icon_url: None,
+                source: "Direct URL".to_owned(),
+                play_count: 0,
+            }],
+            has_next: false,
+        });
     }
-    match search_audius(trimmed) {
-        Ok(tracks) if !tracks.is_empty() => Ok(tracks),
-        Ok(_) => search_archive_org(trimmed),
-        Err(audius_err) => match search_archive_org(trimmed) {
-            Ok(tracks) if !tracks.is_empty() => Ok(tracks),
+    match search_audius_paged(trimmed, genre, sort, page) {
+        Ok(res) if !res.tracks.is_empty() => Ok(res),
+        Ok(_) => search_archive_org_paged(trimmed, genre, sort, page),
+        Err(audius_err) => match search_archive_org_paged(trimmed, genre, sort, page) {
+            Ok(res) if !res.tracks.is_empty() => Ok(res),
             Ok(_) | Err(_) => Err(format!("Could not fetch online music: {audius_err}")),
         },
     }
+}
+
+/// Searches online music tracks (Audius primary, Internet Archive fallback) or constructs
+/// a direct stream entry for a pasted `https://` audio URL.
+pub fn search_online_tracks(query: &str) -> Result<Vec<MusicTrack>, String> {
+    search_online_tracks_paged(query, None, MusicSort::Popular, 0).map(|p| p.tracks)
 }

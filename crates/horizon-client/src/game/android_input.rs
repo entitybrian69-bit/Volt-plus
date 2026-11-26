@@ -817,6 +817,7 @@ impl Game<'_> {
             )
         {
             use horizon_client::touch_ui::InGameMenuAction;
+            self.android_release_touch_keys(false);
             self.pad.touch.clear();
             self.pad.touch.ignore(t.id);
             if t.phase == TouchPhase::Started {
@@ -1258,6 +1259,106 @@ impl Game<'_> {
                         self.update_discord_presence();
                     }
                 }
+                InGameMenuAction::MusicSetSearchTab(search_tab) => {
+                    if search_tab {
+                        let s = horizon_client::internet_music::in_game_search_snapshot();
+                        if !s.fetched_initial && !s.searching {
+                            horizon_client::internet_music::trigger_in_game_search(
+                                s.query,
+                                s.genre,
+                                s.sort,
+                                0,
+                            );
+                        }
+                    } else {
+                        horizon_client::internet_music::invalidate_offline_cache();
+                    }
+                }
+                InGameMenuAction::MusicOpenSearchKeyboard => {
+                    let s = horizon_client::internet_music::in_game_search_snapshot();
+                    crate::platform::show(&s.query);
+                }
+                InGameMenuAction::MusicTriggerSearch => {
+                    let s = horizon_client::internet_music::in_game_search_snapshot();
+                    crate::platform::hide();
+                    horizon_client::internet_music::trigger_in_game_search(
+                        s.query,
+                        s.genre,
+                        s.sort,
+                        0,
+                    );
+                }
+                InGameMenuAction::MusicSelectGenre(genre) => {
+                    let s = horizon_client::internet_music::in_game_search_snapshot();
+                    let next_genre = match genre {
+                        None => None,
+                        Some(g) => {
+                            if s.genre.as_deref().is_some_and(|cur| cur.eq_ignore_ascii_case(g)) {
+                                None
+                            } else {
+                                Some(g.to_owned())
+                            }
+                        }
+                    };
+                    horizon_client::internet_music::trigger_in_game_search(
+                        s.query,
+                        next_genre,
+                        s.sort,
+                        0,
+                    );
+                }
+                InGameMenuAction::MusicCycleSort => {
+                    use horizon_client::internet_music::MusicSort;
+                    let s = horizon_client::internet_music::in_game_search_snapshot();
+                    let idx = MusicSort::ALL
+                        .iter()
+                        .position(|&x| x == s.sort)
+                        .unwrap_or(0);
+                    let next_sort = MusicSort::ALL[(idx + 1) % MusicSort::ALL.len()];
+                    horizon_client::internet_music::trigger_in_game_search(
+                        s.query,
+                        s.genre,
+                        next_sort,
+                        0,
+                    );
+                }
+                InGameMenuAction::MusicPrevPage => {
+                    let s = horizon_client::internet_music::in_game_search_snapshot();
+                    if s.page > 0 {
+                        horizon_client::internet_music::trigger_in_game_search(
+                            s.query,
+                            s.genre,
+                            s.sort,
+                            s.page - 1,
+                        );
+                    }
+                }
+                InGameMenuAction::MusicNextPage => {
+                    let s = horizon_client::internet_music::in_game_search_snapshot();
+                    if s.has_next {
+                        horizon_client::internet_music::trigger_in_game_search(
+                            s.query,
+                            s.genre,
+                            s.sort,
+                            s.page + 1,
+                        );
+                    }
+                }
+                InGameMenuAction::MusicPlaySearchResult(idx) => {
+                    let s = horizon_client::internet_music::in_game_search_snapshot();
+                    if idx < s.results.len() {
+                        horizon_client::internet_music::play_queue(&s.results, idx, "");
+                        self.update_discord_presence();
+                    }
+                }
+                InGameMenuAction::MusicDownloadSearchResult(idx) => {
+                    let s = horizon_client::internet_music::in_game_search_snapshot();
+                    if let Some(track) = s.results.get(idx).cloned()
+                        && !horizon_client::internet_music::is_track_downloaded(&track)
+                    {
+                        horizon_client::internet_music::start_download_track(track);
+                    }
+                }
             }
             return Ok(true);
         }
@@ -1557,6 +1658,32 @@ impl Game<'_> {
             if self.android_preset_typing(&out) {
                 continue;
             }
+            if self.pad.touch_ui.floating_menu && self.pad.touch_ui.music_editing_search {
+                match &out {
+                    Output::Text(t) => {
+                        horizon_client::internet_music::set_in_game_query(t.clone());
+                    }
+                    Output::Backspace => {
+                        let mut s = horizon_client::internet_music::in_game_search_snapshot();
+                        s.query.pop();
+                        horizon_client::internet_music::set_in_game_query(s.query);
+                    }
+                    Output::Enter => {
+                        self.pad.touch_ui.music_editing_search = false;
+                        crate::platform::hide();
+                        let s = horizon_client::internet_music::in_game_search_snapshot();
+                        horizon_client::internet_music::trigger_in_game_search(
+                            s.query, s.genre, s.sort, 0,
+                        );
+                    }
+                    Output::Close => {
+                        self.pad.touch_ui.music_editing_search = false;
+                        crate::platform::hide();
+                    }
+                    Output::Key(_) => {}
+                }
+                continue;
+            }
             let next_sign_line = self.sign_edit.is_some() && matches!(out, Output::Enter);
             let done =
                 matches!(out, Output::Close) || (matches!(out, Output::Enter) && !next_sign_line);
@@ -1567,11 +1694,15 @@ impl Game<'_> {
                 self.android_show_keyboard();
             }
         }
+        if !self.pad.touch_ui.floating_menu {
+            self.pad.touch_ui.music_editing_search = false;
+        }
         // Title screens also use Playing: their focused text fields must keep
         // the IME until the user confirms or closes the editor.
         if !self.pad_in_menu()
             && self.pad.touch.editor.is_none()
             && self.pad.touch_ui.custom_input_picker == horizon_client::touch::PickerStep::None
+            && !self.pad.touch_ui.music_editing_search
             && crate::platform::active()
         {
             crate::platform::hide();

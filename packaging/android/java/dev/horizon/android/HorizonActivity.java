@@ -462,6 +462,27 @@ public final class HorizonActivity extends android.app.NativeActivity {
         if (request != 4101 && request != 4102 && request != 4103) return;
         try {
             android.net.Uri uri = (data == null) ? null : data.getData();
+            String resultUri = null;
+            if (result == -1 && data != null && request == 4101) {
+                android.content.ClipData clip = data.getClipData();
+                if (clip != null && clip.getItemCount() > 0) {
+                    StringBuilder joined = new StringBuilder();
+                    for (int i = 0; i < clip.getItemCount(); i++) {
+                        android.content.ClipData.Item item = clip.getItemAt(i);
+                        android.net.Uri itemUri = (item == null) ? null : item.getUri();
+                        if (itemUri != null) {
+                            if (joined.length() > 0) joined.append('\n');
+                            joined.append(itemUri.toString());
+                        }
+                    }
+                    if (joined.length() > 0) {
+                        resultUri = joined.toString();
+                    }
+                }
+            }
+            if (resultUri == null && uri != null) {
+                resultUri = uri.toString();
+            }
             if (result == -1 && uri != null && request == 4102) {
                 try {
                     final int takeFlags = data.getFlags()
@@ -472,7 +493,7 @@ public final class HorizonActivity extends android.app.NativeActivity {
                             takeFlags != 0 ? takeFlags : android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 } catch (Throwable ignored) {}
             }
-            nativeDocumentResult(request, result, uri == null ? null : uri.toString());
+            nativeDocumentResult(request, result, resultUri);
         } catch (Throwable err) {
             android.util.Log.e("HorizonActivity", "onActivityResult failed", err);
             try {

@@ -7675,8 +7675,14 @@ impl Game<'_> {
             && self.book.is_none()
             && self.sign_edit.is_none()
             && self.server_packs.prompt.is_none()
+            && !self.pad.touch_ui.floating_menu
+            && self.pad.touch.editor.is_none()
             && !self.dialog_open()
         {
+            #[cfg(target_os = "android")]
+            if crate::documents::busy() {
+                return;
+            }
             self.pause_focus = None;
             self.screen = Screen::Paused;
         }
@@ -14891,12 +14897,13 @@ impl Game<'_> {
         let in_world_stationary_overlay = !exporting_replay
             && !self.shows_panorama()
             && self.player.is_some()
-            && !self.pad.touch_ui.floating_menu
             && (self.singleplayer_paused()
                 || self.screen.blurs_background(self.pause_menu)
-                || self.pad.touch.editor.is_some())
+                || self.pad.touch.editor.is_some()
+                || self.pad.touch_ui.floating_menu)
             && (self.singleplayer_paused()
                 || self.pad.touch.editor.is_some()
+                || self.pad.touch_ui.floating_menu
                 || self.pad.touch.state().left == [0.0, 0.0]);
         #[cfg(not(target_os = "android"))]
         let in_world_stationary_overlay = false;
@@ -16333,7 +16340,12 @@ impl ApplicationHandler for Game<'_> {
         self.keys.clear();
         self.physical_keys.clear();
         self.pad.touch.clear();
-        if self.title.is_none() && self.screen == Screen::Playing {
+        if self.title.is_none()
+            && self.screen == Screen::Playing
+            && !self.pad.touch_ui.floating_menu
+            && self.pad.touch.editor.is_none()
+            && !crate::documents::busy()
+        {
             self.screen = Screen::Paused;
         }
         if let Some(renderer) = &mut self.renderer {
@@ -16876,6 +16888,9 @@ impl Game<'_> {
             }
             if self.pad.touch.editor.is_some() {
                 let ended = matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled);
+                if self.pad.touch.consume_ignored(touch.id, ended) {
+                    return;
+                }
                 let mut b = HudBatch::new([size.width, size.height]);
                 if horizon_client::touch_ui::touch_hud_editor(
                     &mut self.pad.touch,
@@ -18384,13 +18399,14 @@ impl Game<'_> {
                     } else {
                         elapsed
                     };
+                    let clock_elapsed = clock_elapsed.min(Duration::from_millis(250));
                     let steps = self.clock.advance(clock_elapsed);
                     // The world ticking in the frame: once its ticks took a
                     // tick's length, the rest are dropped (`FixedStep::tick_fits`).
                     let in_frame = self.remote.is_none();
                     let mut spent = Duration::ZERO;
                     for step in 0..steps {
-                        if in_frame && !self.clock.tick_fits(spent) {
+                        if (in_frame || step > 0) && !self.clock.tick_fits(spent) {
                             if let Some(warning) = self.clock.drop_ticks(steps - step) {
                                 log::warn!("{warning}");
                             }

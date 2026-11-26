@@ -4,11 +4,17 @@ import android.media.AudioAttributes;
 import android.media.MediaPlayer;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.SystemClock;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 /**
  * Hardware-accelerated background music player for Volt+.
- * Runs on its own looper thread so playback and playlist auto-advance
- * continue seamlessly between the launcher and Minecraft gameplay.
+ * Runs on its own looper thread so playback, redirect resolution, and
+ * position polling never block the Vulkan game render thread.
  */
 final class MusicPlayer {
     private static final MusicPlayer INSTANCE = new MusicPlayer();
@@ -26,6 +32,7 @@ final class MusicPlayer {
     private boolean pausedByLifecycle;
     private float volume = 0.85f;
     private long lastPositionMs;
+    private long lastPositionAtMs;
     private long durationMs;
 
     private String[] urls = new String[0];
@@ -36,9 +43,89 @@ final class MusicPlayer {
     private String activePlaylist = "";
     private String status = "";
 
+    private final Runnable positionTicker = new Runnable() {
+        @Override
+        public void run() {
+            MediaPlayer mp;
+            int gen;
+            boolean shouldTick;
+            synchronized (lock) {
+                mp = player;
+                gen = generation;
+                shouldTick = playing && mp != null;
+            }
+            if (!shouldTick) {
+                return;
+            }
+            try {
+                if (mp.isPlaying()) {
+                    int pos = mp.getCurrentPosition();
+                    int dur = mp.getDuration();
+                    synchronized (lock) {
+                        if (gen == generation && player == mp) {
+                            if (pos >= 0) {
+                                lastPositionMs = pos;
+                                lastPositionAtMs = SystemClock.elapsedRealtime();
+                            }
+                            if (dur > 0) {
+                                durationMs = dur;
+                            }
+                        }
+                    }
+                }
+            } catch (Throwable ignored) {}
+            synchronized (lock) {
+                if (gen == generation && playing && player != null) {
+                    handler.postDelayed(this, 400L);
+                }
+            }
+        }
+    };
+
     private MusicPlayer() {
         thread.start();
         handler = new Handler(thread.getLooper());
+    }
+
+    private void scheduleTickerLocked() {
+        handler.removeCallbacks(positionTicker);
+        if (playing && player != null && !buffering) {
+            handler.postDelayed(positionTicker, 400L);
+        }
+    }
+
+    private static String resolveRedirectUrl(String rawUrl) {
+        if (rawUrl == null || !rawUrl.startsWith("https://")) {
+            return rawUrl;
+        }
+        String current = rawUrl;
+        for (int hop = 0; hop < 4; hop++) {
+            HttpURLConnection conn = null;
+            try {
+                conn = (HttpURLConnection) new URL(current).openConnection();
+                conn.setInstanceFollowRedirects(false);
+                conn.setRequestMethod("HEAD");
+                conn.setConnectTimeout(4500);
+                conn.setReadTimeout(4500);
+                conn.setRequestProperty("User-Agent", "VoltPlus/1.0.1");
+                int code = conn.getResponseCode();
+                if (code == 301 || code == 302 || code == 303 || code == 307 || code == 308) {
+                    String next = conn.getHeaderField("Location");
+                    if (next != null && next.startsWith("https://")) {
+                        current = next;
+                        continue;
+                    }
+                }
+                break;
+            } catch (Throwable ignored) {
+                break;
+            } finally {
+                if (conn != null) {
+                    try { conn.disconnect(); } catch (Throwable ignored) {}
+                }
+            }
+        }
+        return current;
     }
 
     void playQueue(
@@ -93,8 +180,10 @@ final class MusicPlayer {
             buffering = true;
             playing = true;
             lastPositionMs = 0L;
+            lastPositionAtMs = SystemClock.elapsedRealtime();
             durationMs = fallbackDur;
-            status = "Loading track...";
+            status = (url.startsWith("/") || url.startsWith("file://")) ? "Loading offline track..." : "Loading track...";
+            handler.removeCallbacks(positionTicker);
         }
 
         handler.post(() -> {
@@ -118,7 +207,22 @@ final class MusicPlayer {
                         .setUsage(AudioAttributes.USAGE_MEDIA)
                         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                         .build());
-                mp.setDataSource(url);
+                if (url.startsWith("/") || url.startsWith("file://")) {
+                    String path = url.startsWith("file://") ? url.substring(7) : url;
+                    File f = new File(path);
+                    try (FileInputStream fis = new FileInputStream(f)) {
+                        mp.setDataSource(fis.getFD());
+                    }
+                } else {
+                    String resolved = resolveRedirectUrl(url);
+                    synchronized (lock) {
+                        if (gen != generation) {
+                            try { mp.release(); } catch (Throwable ignored) {}
+                            return;
+                        }
+                    }
+                    mp.setDataSource(resolved);
+                }
                 mp.setOnPreparedListener(prepared -> {
                     boolean shouldStart;
                     float vol;
@@ -131,6 +235,8 @@ final class MusicPlayer {
                         if (dur > 0) {
                             durationMs = dur;
                         }
+                        lastPositionMs = 0L;
+                        lastPositionAtMs = SystemClock.elapsedRealtime();
                         vol = muted ? 0f : volume;
                         shouldStart = playing;
                         status = "";
@@ -139,8 +245,30 @@ final class MusicPlayer {
                         prepared.setVolume(vol, vol);
                         if (shouldStart) {
                             prepared.start();
+                            synchronized (lock) {
+                                scheduleTickerLocked();
+                            }
                         }
                     } catch (Throwable ignored) {}
+                });
+                mp.setOnInfoListener((infoMp, what, extra) -> {
+                    synchronized (lock) {
+                        if (gen != generation || player != infoMp) {
+                            return false;
+                        }
+                        if (what == MediaPlayer.MEDIA_INFO_BUFFERING_START) {
+                            buffering = true;
+                            lastPositionMs = estimatedPositionLocked();
+                            lastPositionAtMs = SystemClock.elapsedRealtime();
+                            status = "Buffering...";
+                        } else if (what == MediaPlayer.MEDIA_INFO_BUFFERING_END) {
+                            buffering = false;
+                            lastPositionAtMs = SystemClock.elapsedRealtime();
+                            status = "";
+                            scheduleTickerLocked();
+                        }
+                    }
+                    return false;
                 });
                 mp.setOnCompletionListener(finished -> {
                     synchronized (lock) {
@@ -156,6 +284,7 @@ final class MusicPlayer {
                             buffering = false;
                             playing = false;
                             status = "Playback error (" + what + ")";
+                            handler.removeCallbacks(positionTicker);
                         }
                     }
                     releasePlayerOnThread();
@@ -175,6 +304,7 @@ final class MusicPlayer {
                         buffering = false;
                         playing = false;
                         status = "Audio unavailable: " + e.getClass().getSimpleName();
+                        handler.removeCallbacks(positionTicker);
                     }
                 }
                 releasePlayerOnThread();
@@ -184,14 +314,18 @@ final class MusicPlayer {
 
     void togglePause() {
         final int gen;
+        final boolean targetPlay;
         synchronized (lock) {
             if (urls.length == 0) return;
             gen = generation;
+            if (playing) {
+                lastPositionMs = estimatedPositionLocked();
+            }
+            lastPositionAtMs = SystemClock.elapsedRealtime();
             playing = !playing;
             pausedByLifecycle = false;
+            targetPlay = playing;
         }
-        final boolean targetPlay;
-        synchronized (lock) { targetPlay = playing; }
         handler.post(() -> {
             MediaPlayer mp;
             synchronized (lock) {
@@ -202,8 +336,17 @@ final class MusicPlayer {
             try {
                 if (targetPlay) {
                     mp.start();
+                    synchronized (lock) {
+                        lastPositionAtMs = SystemClock.elapsedRealtime();
+                        scheduleTickerLocked();
+                    }
                 } else if (mp.isPlaying()) {
-                    lastPositionMs = mp.getCurrentPosition();
+                    int pos = mp.getCurrentPosition();
+                    synchronized (lock) {
+                        if (pos >= 0) lastPositionMs = pos;
+                        lastPositionAtMs = SystemClock.elapsedRealtime();
+                        handler.removeCallbacks(positionTicker);
+                    }
                     mp.pause();
                 }
             } catch (Throwable ignored) {}
@@ -224,7 +367,7 @@ final class MusicPlayer {
         final boolean restartCurrent;
         synchronized (lock) {
             if (urls.length == 0) return;
-            long pos = snapshotPositionLocked();
+            long pos = estimatedPositionLocked();
             restartCurrent = pos > 3500L;
             targetIdx = restartCurrent ? currentIndex : (currentIndex - 1 + urls.length) % urls.length;
         }
@@ -259,6 +402,7 @@ final class MusicPlayer {
                 mp.seekTo((int) target);
                 synchronized (lock) {
                     lastPositionMs = target;
+                    lastPositionAtMs = SystemClock.elapsedRealtime();
                     if (actualDur > 0) durationMs = actualDur;
                 }
             } catch (Throwable ignored) {}
@@ -284,6 +428,7 @@ final class MusicPlayer {
                 mp.seekTo((int) target);
                 synchronized (lock) {
                     lastPositionMs = target;
+                    lastPositionAtMs = SystemClock.elapsedRealtime();
                 }
             } catch (Throwable ignored) {}
         });
@@ -325,6 +470,7 @@ final class MusicPlayer {
             buffering = false;
             pausedByLifecycle = false;
             lastPositionMs = 0L;
+            lastPositionAtMs = SystemClock.elapsedRealtime();
             durationMs = 0L;
             urls = new String[0];
             titles = new String[0];
@@ -332,6 +478,7 @@ final class MusicPlayer {
             durationsMs = new long[0];
             currentIndex = 0;
             status = "";
+            handler.removeCallbacks(positionTicker);
         }
         handler.post(this::releasePlayerOnThread);
     }
@@ -340,9 +487,12 @@ final class MusicPlayer {
         final int gen;
         synchronized (lock) {
             if (!playing) return;
+            lastPositionMs = estimatedPositionLocked();
+            lastPositionAtMs = SystemClock.elapsedRealtime();
             playing = false;
             pausedByLifecycle = true;
             gen = generation;
+            handler.removeCallbacks(positionTicker);
         }
         handler.post(() -> {
             MediaPlayer mp;
@@ -352,7 +502,10 @@ final class MusicPlayer {
             }
             try {
                 if (mp.isPlaying()) {
-                    lastPositionMs = mp.getCurrentPosition();
+                    int pos = mp.getCurrentPosition();
+                    synchronized (lock) {
+                        if (pos >= 0) lastPositionMs = pos;
+                    }
                     mp.pause();
                 }
             } catch (Throwable ignored) {}
@@ -365,6 +518,7 @@ final class MusicPlayer {
             if (!pausedByLifecycle || urls.length == 0) return;
             pausedByLifecycle = false;
             playing = true;
+            lastPositionAtMs = SystemClock.elapsedRealtime();
             gen = generation;
         }
         handler.post(() -> {
@@ -375,25 +529,29 @@ final class MusicPlayer {
             }
             try {
                 mp.start();
+                synchronized (lock) {
+                    lastPositionAtMs = SystemClock.elapsedRealtime();
+                    scheduleTickerLocked();
+                }
             } catch (Throwable ignored) {}
         });
     }
 
-    private long snapshotPositionLocked() {
-        if (player != null && !buffering) {
-            try {
-                int pos = player.getCurrentPosition();
-                if (pos >= 0) lastPositionMs = pos;
-                int dur = player.getDuration();
-                if (dur > 0) durationMs = dur;
-            } catch (Throwable ignored) {}
+    private long estimatedPositionLocked() {
+        if (!playing || buffering || player == null) {
+            return lastPositionMs;
         }
-        return lastPositionMs;
+        long elapsed = Math.max(0L, SystemClock.elapsedRealtime() - lastPositionAtMs);
+        long pos = lastPositionMs + elapsed;
+        if (durationMs > 0L && pos > durationMs) {
+            pos = durationMs;
+        }
+        return pos;
     }
 
     String snapshot() {
         synchronized (lock) {
-            long pos = snapshotPositionLocked();
+            long pos = estimatedPositionLocked();
             String title = (currentIndex >= 0 && currentIndex < titles.length) ? titles[currentIndex] : "";
             String artist = (currentIndex >= 0 && currentIndex < artists.length) ? artists[currentIndex] : "";
             String url = (currentIndex >= 0 && currentIndex < urls.length) ? urls[currentIndex] : "";

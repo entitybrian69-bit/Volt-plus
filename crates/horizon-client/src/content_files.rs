@@ -65,14 +65,11 @@ pub fn validate(
         );
     }
     let file = std::fs::File::open(path)?;
-    if kind == Kind::Mods && file.metadata()?.len() > 32 << 20 {
-        return Err("Horizon mod exceeds 32 MiB".into());
-    }
-    if file.metadata()?.len() > MAX_INPUT {
+    if kind != Kind::Mods && file.metadata()?.len() > MAX_INPUT {
         return Err("Import exceeds 256 MiB".into());
     }
     let mut zip = zip::ZipArchive::new(file)?;
-    if zip.len() > 32768 {
+    if kind != Kind::Mods && zip.len() > 32768 {
         return Err("Archive contains too many files".into());
     }
     let mut names = HashSet::new();
@@ -102,7 +99,7 @@ pub fn validate(
         total = total
             .checked_add(entry.size())
             .ok_or("Archive size overflow")?;
-        if total > MAX_EXPANDED || kind == Kind::Mods && total > 64 << 20 {
+        if kind != Kind::Mods && total > MAX_EXPANDED {
             return Err("Expanded archive exceeds 512 MiB".into());
         }
         pack |= raw == "pack.mcmeta";
@@ -144,7 +141,7 @@ pub fn validate(
             if raw == "pack.mcmeta" {
                 metadata.extend_from_slice(&buffer[..n]);
             }
-            if actual > expected || actual > MAX_EXPANDED {
+            if actual > expected || (kind != Kind::Mods && actual > MAX_EXPANDED) {
                 return Err("Archive size mismatch".into());
             }
         }
@@ -258,6 +255,15 @@ pub fn read_mod_archive_id(path: &Path, original_name: &str) -> crate::Result<(S
 pub fn copy_bounded(
     input: &mut impl Read,
     output: &mut impl io::Write,
+    progress: impl FnMut(u64) -> bool,
+) -> io::Result<u64> {
+    copy_with_limit(input, output, Some(MAX_INPUT), progress)
+}
+
+pub fn copy_with_limit(
+    input: &mut impl Read,
+    output: &mut impl io::Write,
+    max_bytes: Option<u64>,
     mut progress: impl FnMut(u64) -> bool,
 ) -> io::Result<u64> {
     let mut total = 0u64;
@@ -274,8 +280,13 @@ pub fn copy_bounded(
             break;
         }
         total += n as u64;
-        if total > MAX_INPUT {
-            return Err(io::Error::other("Import exceeds 256 MiB"));
+        if let Some(limit) = max_bytes
+            && total > limit
+        {
+            return Err(io::Error::other(format!(
+                "Import exceeds {} MiB",
+                limit >> 20
+            )));
         }
         output.write_all(&buffer[..n])?;
     }

@@ -153,6 +153,7 @@ pub enum Icon {
     Skins,
     Mouse,
     Music,
+    Download,
 }
 
 struct Fonts {
@@ -759,6 +760,16 @@ fn icon_hit(icon: Icon, u: f32, v: f32) -> bool {
             let stem2 = seg_dist(u, v, 0.77, 0.63, 0.77, 0.18) <= 0.042;
             let beam = seg_dist(u, v, 0.39, 0.24, 0.77, 0.18) <= 0.058;
             head1 || head2 || stem1 || stem2 || beam
+        }
+        Icon::Download => {
+            // Crisp downward arrow into tray.
+            let tray_l = seg_dist(u, v, 0.20, 0.66, 0.20, 0.84) <= 0.045;
+            let tray_r = seg_dist(u, v, 0.80, 0.66, 0.80, 0.84) <= 0.045;
+            let tray_b = seg_dist(u, v, 0.20, 0.84, 0.80, 0.84) <= 0.045;
+            let stem = seg_dist(u, v, 0.50, 0.18, 0.50, 0.64) <= 0.048;
+            let head_l = seg_dist(u, v, 0.32, 0.48, 0.50, 0.66) <= 0.048;
+            let head_r = seg_dist(u, v, 0.68, 0.48, 0.50, 0.66) <= 0.048;
+            tray_l || tray_r || tray_b || stem || head_l || head_r
         }
     }
 }
