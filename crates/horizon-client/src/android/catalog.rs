@@ -165,6 +165,8 @@ impl Default for Config {
             theme: horizon_client::ui_theme::LauncherThemeConfig::default(),
             scene_gyro_sensitivity: default_scene_gyro(),
             wallpaper_index: None,
+            custom_wallpaper_path: None,
+            custom_wallpaper_is_video: false,
             volt_fullscreen_default_v1: true,
         }
     }

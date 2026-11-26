@@ -1678,7 +1678,7 @@ impl Game<'_> {
                                 crate::platform::hide();
                                 horizon_client::internet_music::set_in_game_query(s.query.clone());
                                 horizon_client::internet_music::trigger_in_game_search(
-                                    s.query, s.genre, s.sort, 0,
+                                    s.query.clone(), s.genre, s.sort, 0,
                                 );
                                 break;
                             } else if !ch.is_control() {
