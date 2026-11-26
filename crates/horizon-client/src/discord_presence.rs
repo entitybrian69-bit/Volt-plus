@@ -176,6 +176,7 @@ static SHARED: Mutex<Shared> = Mutex::new(Shared {
         shaders_active: false,
         recording_replay: false,
         screen_recording: false,
+        music_now_playing: None,
     },
     stop: false,
     stopped: false,
