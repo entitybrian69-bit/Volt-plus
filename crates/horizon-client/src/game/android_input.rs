@@ -1240,7 +1240,7 @@ impl Game<'_> {
                 InGameMenuAction::MusicToggleVanilla => {
                     let off = crate::internet_music::toggle_vanilla_music_disabled();
                     if off {
-                        self.music.stop_playing(&mut self.audio);
+                        self.music.stop_playing(None, &mut self.audio);
                     }
                 }
                 InGameMenuAction::MusicSelectPlaylist(_) => {}

@@ -98,6 +98,7 @@ impl Game<'_> {
                 recording_replay,
                 screen_recording,
                 music_now_playing,
+                ..Default::default()
             },
         )
     }

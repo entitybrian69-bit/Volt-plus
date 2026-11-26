@@ -141,6 +141,18 @@ jobs:
             --ndk-version 28.2.13676358 --build-tools-version 35.0.0 \
             --dev-build "${GITHUB_RUN_NUMBER}.${GITHUB_SHA:0:12}" \
             --dev-version-code "$((1000 + GITHUB_RUN_NUMBER))" 2>&1 | tee "$RUNNER_TEMP/volt-debug-build.log"
+      - name: Report build errors on failure
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          log = Path(os.environ['RUNNER_TEMP']) / 'volt-debug-build.log'
+          if log.is_file():
+              lines = log.read_text(errors='replace').splitlines()
+              for line in lines[-60:]:
+                  print(f'::error::{line}')
+          PY
       - name: Collect debug APK and public metadata
         env:
           ABI: ${{ matrix.abi }}
