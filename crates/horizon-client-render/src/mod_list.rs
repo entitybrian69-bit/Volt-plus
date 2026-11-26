@@ -234,7 +234,12 @@ impl ModList {
                 self.disabled.insert(m.id.clone());
             }
         } else if !self.enabled.remove(&m.id) {
+            #[cfg(target_os = "android")]
+            self.disabled.remove(&m.id);
             self.enabled.insert(m.id.clone());
+        } else {
+            #[cfg(target_os = "android")]
+            self.disabled.insert(m.id.clone());
         }
         sync_live_state(&self.enabled, &self.disabled);
     }

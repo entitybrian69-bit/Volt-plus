@@ -4990,12 +4990,12 @@ impl OptionsUi {
                 VoltModsAction::Toggle(_) => {}
                 VoltModsAction::Settings(i) => {
                     let is_native = s.mods.installed.get(i).is_some_and(|m| m.native.is_some());
-                    self.push(Page::NativeMod(i));
-                    events.push(if is_native {
-                        Event::NativeSettings(i)
+                    if is_native {
+                        self.push(Page::NativeMod(i));
+                        events.push(Event::NativeSettings(i));
                     } else {
-                        Event::ModSettings(i)
-                    });
+                        events.push(Event::ModSettings(i));
+                    }
                 }
                 VoltModsAction::OpenFolder => events.push(Event::OpenModFolder),
                 VoltModsAction::Done => events.extend(self.back(s)),
@@ -5967,8 +5967,12 @@ impl OptionsUi {
                         Act::ModSettings(i) => {
                             self.focus = None;
                             self.can_change_value = false;
-                            self.push(Page::NativeMod(i));
-                            events.push(Event::NativeSettings(i));
+                            if s.mods.installed.get(i).is_some_and(|m| m.native.is_some()) {
+                                self.push(Page::NativeMod(i));
+                                events.push(Event::NativeSettings(i));
+                            } else {
+                                events.push(Event::ModSettings(i));
+                            }
                         }
                         Act::NativeKey(i, k) => {
                             self.selected_key = Some(NATIVE_KEY);

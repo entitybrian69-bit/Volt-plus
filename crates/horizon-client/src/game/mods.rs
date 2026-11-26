@@ -297,9 +297,21 @@ pub(super) fn content_root(
     #[cfg(target_os = "android")]
     for root in super::android_bundled::candidate_profile_roots() {
         for sub in [mod_list::DIR, "mods", mod_list::NATIVE_DIR] {
-            for found in horizon_mods::find(&root.join(sub)) {
+            let folder = root.join(sub);
+            for found in horizon_mods::find(&folder) {
                 if !paths.contains(&found) {
                     paths.push(found);
+                }
+            }
+            if let Ok(rd) = std::fs::read_dir(&folder) {
+                for entry in rd.flatten() {
+                    let p = entry.path();
+                    if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("hnmod"))
+                        && !paths.contains(&p)
+                        && Package::read(&p).is_ok()
+                    {
+                        paths.push(p);
+                    }
                 }
             }
         }
@@ -319,11 +331,13 @@ pub(super) fn content_root(
         if !native.contains(path) && native_ids.contains(&m.id) && !dev.contains(path) {
             continue;
         }
+        let live_disabled = horizon_client::mod_list::is_live_disabled(&m.id);
         let on = if native.contains(path) {
-            !disabled.contains(&m.id)
+            !disabled.contains(&m.id) && live_disabled != Some(true)
         } else {
-            enabled.contains(&m.id)
-                || (!disabled.contains(&m.id) && cfg!(target_os = "android"))
+            (enabled.contains(&m.id)
+                || live_disabled == Some(false)
+                || (!disabled.contains(&m.id) && live_disabled != Some(true) && cfg!(target_os = "android")))
         } || dev.contains(path);
         if !on
             || !m.capabilities.contains(&Capability::Registries)
@@ -824,24 +838,90 @@ impl Game<'_> {
                 paths.push(found);
             }
         }
+        #[cfg(target_os = "android")]
+        for root in super::android_bundled::candidate_profile_roots() {
+            for sub in [mod_list::DIR, "mods", mod_list::NATIVE_DIR] {
+                let folder = root.join(sub);
+                for found in horizon_mods::find(&folder) {
+                    if !paths.contains(&found) {
+                        paths.push(found);
+                    }
+                }
+                if let Ok(rd) = std::fs::read_dir(&folder) {
+                    for entry in rd.flatten() {
+                        let p = entry.path();
+                        if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("hnmod"))
+                            && !paths.contains(&p)
+                            && horizon_mods::Package::read(&p).is_ok()
+                        {
+                            paths.push(p);
+                        }
+                    }
+                }
+            }
+        }
         paths.retain(|p| !dev.contains(p));
         paths.extend(dev.iter().cloned());
+        // Deduplicate by manifest id (keeping the first discovered path per id, with dev last).
+        let mut seen_ids = std::collections::HashSet::new();
+        let mut deduped = Vec::with_capacity(paths.len());
+        for p in paths.into_iter().rev() {
+            if let Ok(pkg) = horizon_mods::Package::read(&p) {
+                if seen_ids.insert(pkg.manifest.id) {
+                    deduped.push(p);
+                }
+            } else {
+                deduped.push(p);
+            }
+        }
+        deduped.reverse();
+        let paths = deduped;
         // A dev mod is on whatever the list says.
         let dev_ids: Vec<String> = dev
             .iter()
             .filter_map(|p| horizon_mods::Package::read(p).ok())
             .map(|p| p.manifest.id)
             .collect();
-        // A native mod of the same id (one built into this game) takes over.
-        let mut native = Vec::new();
-        self.native_mods(&mut native);
+        // Only compiled-in native mods (`mod_api` + Android's 4 official bundled modules)
+        // take over from a `.hmod` of the same id. Dynamic `.hnmod` bundles must NEVER disable
+        // a real `.hmod` WASM/content package.
+        let is_compiled_native = |id: &str| -> bool {
+            horizon_client::mod_api::mod_ids().contains(&id)
+                || (cfg!(target_os = "android")
+                    && horizon_client::mod_list::ANDROID_BUNDLED
+                        .iter()
+                        .any(|(bid, _, _)| *bid == id))
+        };
         let enabled = &self.settings.mods.enabled;
+        let disabled = &self.settings.mods.disabled;
         let on = |id: &str| {
-            (enabled.contains(id) || dev_ids.iter().any(|d| d == id))
-                && !native.iter().any(|n| n.id == id)
+            let live_disabled = horizon_client::mod_list::is_live_disabled(id);
+            let allowed = enabled.contains(id)
+                || dev_ids.iter().any(|d| d == id)
+                || live_disabled == Some(false)
+                || (cfg!(target_os = "android")
+                    && !disabled.contains(id)
+                    && live_disabled != Some(true));
+            allowed && !is_compiled_native(id)
         };
         let mods = Mods::load_for(self.mod_runs(), &paths, on, vanilla_command);
         self.mods.mods = mods;
+        #[cfg(target_os = "android")]
+        {
+            for e in self.mods.mods.entries() {
+                if e.status != Status::Off
+                    && !matches!(e.status, Status::Failed(_))
+                    && let Some(m) = &e.manifest
+                    && !self.settings.mods.disabled.contains(&m.id)
+                {
+                    self.settings.mods.enabled.insert(m.id.clone());
+                }
+            }
+            horizon_client::mod_list::sync_live_state(
+                &self.settings.mods.enabled,
+                &self.settings.mods.disabled,
+            );
+        }
         let chosen = &self.settings.mods;
         self.mods.mods.set_bindings(|id| chosen.keys_of(id));
         // Entries were replaced wholesale: a screen's owner index is stale.

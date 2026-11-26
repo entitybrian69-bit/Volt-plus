@@ -387,6 +387,23 @@ pub(super) fn parse_dynamic_hnmod(path: &std::path::Path) -> Option<DynamicHnmod
     );
     features.extend(inferred);
 
+    // Guard against legacy `.hnmod` bundles on disk that picked up `"wrench"` or
+    // `"eating_animation"` from older transpiler boilerplate.
+    let id_low = mod_id.to_ascii_lowercase();
+    let meta_low = format!(
+        "{} {} {}",
+        id_low,
+        title.to_ascii_lowercase(),
+        description.to_ascii_lowercase()
+    );
+    if !id_low.contains("wrench") && !meta_low.contains("wrench") {
+        features.remove("wrench");
+    }
+    if !id_low.contains("eating") && !meta_low.contains("eatinganimation") && !meta_low.contains("foodanimation") {
+        features.remove("eating_animation");
+        features.remove("eatinganimation");
+    }
+
     // Populate authentic keybinds per mod type
     if features.contains("wrench") {
         // Wrench uses right-click on blocks, no keybind needed (just like official wrench)
@@ -425,7 +442,23 @@ pub(super) fn parse_dynamic_hnmod(path: &std::path::Path) -> Option<DynamicHnmod
     }
 
     if custom_buttons.is_empty() {
-        custom_buttons.push("Active in Game: ON".to_owned());
+        let short_name = title
+            .strip_suffix(&format!(" {version}"))
+            .unwrap_or(&title)
+            .trim();
+        if !items.is_empty() || !blocks.is_empty() {
+            custom_buttons.push(format!("{short_name} Effects & Gear Perks"));
+            if !items.is_empty() {
+                custom_buttons.push(format!("Custom Items ({} registered) Tooltips", items.len()));
+            }
+            if !blocks.is_empty() {
+                custom_buttons.push(format!("Custom Blocks ({} registered) Worldgen", blocks.len()));
+            }
+            custom_buttons.push(format!("Show {short_name} HUD Status"));
+        } else {
+            custom_buttons.push(format!("{short_name} Features Active"));
+            custom_buttons.push(format!("Show {short_name} HUD Overlay"));
+        }
     }
 
     if commands.is_empty() {
@@ -507,7 +540,9 @@ fn ensure_dynamic_mods_loaded(game: &Game<'_>, force: bool) {
             };
             for entry in rd.flatten() {
                 let p = entry.path();
-                if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("hnmod") || e.eq_ignore_ascii_case("hmod")) {
+                // Only load `.hnmod` source/native bundles here; `.hmod` packages execute
+                // natively in `horizon_mods::Mods` and `apply_content_mods`.
+                if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("hnmod")) {
                     hnmod_paths.push((root.clone(), p));
                 }
             }
@@ -1062,7 +1097,10 @@ pub(super) fn native_settings(game: &mut Game<'_>, mod_id: &str, buttons: &mut V
     };
     let on_off = |b: bool| if b { "ON" } else { "OFF" };
 
-    if m.features.contains("wrench") {
+    if m.features.contains("wrench")
+        && (m.id.to_ascii_lowercase().contains("wrench")
+            || m.title.to_ascii_lowercase().contains("wrench"))
+    {
         let item = wr_wrench_item(game.native_setting(mod_id, "item").as_deref());
         let apart = game
             .native_setting(mod_id, "take-apart")
@@ -1261,7 +1299,12 @@ pub(super) fn native_settings(game: &mut Game<'_>, mod_id: &str, buttons: &mut V
         for (idx, lbl) in m.custom_buttons.iter().enumerate() {
             let key = format!("opt_{idx}");
             let val = setting_bool(game, mod_id, &key, true);
-            buttons.push(format!("{lbl}: {}", on_off(val)));
+            let clean_lbl = lbl
+                .strip_suffix(": ON")
+                .or_else(|| lbl.strip_suffix(": OFF"))
+                .unwrap_or(lbl)
+                .trim();
+            buttons.push(format!("{clean_lbl}: {}", on_off(val)));
         }
         return;
     }
@@ -1269,7 +1312,7 @@ pub(super) fn native_settings(game: &mut Game<'_>, mod_id: &str, buttons: &mut V
     let enabled = setting_bool(game, mod_id, "enabled", true);
     let show_hud = setting_bool(game, mod_id, "show_hud", true);
     buttons.push(format!("{}: {}", m.title, on_off(enabled)));
-    buttons.push(format!("Show status on HUD: {}", on_off(show_hud)));
+    buttons.push(format!("Show {} status on HUD: {}", m.title, on_off(show_hud)));
 }
 
 pub(super) fn native_settings_click(game: &mut Game<'_>, mod_id: &str, button: usize) {
@@ -1282,15 +1325,18 @@ pub(super) fn native_settings_click(game: &mut Game<'_>, mod_id: &str, button: u
         smartf3_click::run(&mut *game, mod_id, button);
     }
 
-    let features_and_custom = runtime()
-        .lock()
-        .ok()
-        .and_then(|g| g.mods.get(mod_id).map(|m| (m.features.clone(), m.custom_buttons.clone())));
-    let Some((features, custom_buttons)) = features_and_custom else {
-        return;
+    let (features, custom_buttons, mod_title) = match runtime().lock() {
+        Ok(g) => match g.mods.get(mod_id) {
+            Some(m) => (m.features.clone(), m.custom_buttons.clone(), m.title.clone()),
+            None => return,
+        },
+        Err(_) => return,
     };
 
-    if features.contains("wrench") {
+    if features.contains("wrench")
+        && (mod_id.to_ascii_lowercase().contains("wrench")
+            || mod_title.to_ascii_lowercase().contains("wrench"))
+    {
         match button {
             0 => {
                 let item = wr_wrench_item(game.native_setting(mod_id, "item").as_deref());

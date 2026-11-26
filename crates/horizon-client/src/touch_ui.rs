@@ -4966,7 +4966,9 @@ impl TouchUi {
                     "No song playing"
                 };
                 let np_sub = if snap.has_track() {
-                    if snap.buffering {
+                    if !snap.status.is_empty() {
+                        snap.status.clone()
+                    } else if snap.buffering {
                         "Buffering audio stream...".to_owned()
                     } else if !snap.active_playlist.is_empty() {
                         format!("{}  •  Playlist: {}", snap.current_artist, snap.active_playlist)

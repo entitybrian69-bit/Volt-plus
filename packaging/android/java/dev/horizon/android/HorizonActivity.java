@@ -37,13 +37,16 @@ public final class HorizonActivity extends android.app.NativeActivity {
     public String wallpaperStatus() { return WallpaperPlayer.get().status(); }
 
     public void musicPlayQueue(
+            String[] ids,
             String[] urls,
+            String[] fallbacks,
             String[] titles,
             String[] artists,
             long[] durationsMs,
             int startIndex,
             String playlistName) {
-        MusicPlayer.get().playQueue(urls, titles, artists, durationsMs, startIndex, playlistName);
+        MusicPlayer.get().setCacheDir(getCacheDir());
+        MusicPlayer.get().playQueue(ids, urls, fallbacks, titles, artists, durationsMs, startIndex, playlistName);
     }
     public void musicTogglePause() { MusicPlayer.get().togglePause(); }
     public void musicNext() { MusicPlayer.get().next(); }

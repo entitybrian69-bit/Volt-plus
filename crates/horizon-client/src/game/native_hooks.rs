@@ -11140,13 +11140,32 @@ impl Game<'_> {
     pub(super) fn list_native_mods(&mut self) {
         let mut mods = Vec::new();
         self.native_mods(&mut mods);
-        // A WebAssembly mod of the same id doesn't run (`start_mods`): the
-        // native row stands for it, and alone toggles its `mod.<id>` line.
-        self.settings
-            .mods
-            .installed
-            .retain(|row| row.native.is_none() && !mods.iter().any(|m| m.id == row.id));
+        #[cfg(feature = "mods")]
+        let wasm_running = |id: &str| -> bool {
+            self.mods.mods.entries().iter().any(|e| {
+                e.run.is_some()
+                    && e.manifest.as_ref().is_some_and(|m| m.id == id)
+            })
+        };
+        #[cfg(not(feature = "mods"))]
+        let wasm_running = |_id: &str| -> bool { false };
+        let is_compiled_native = |id: &str| -> bool {
+            mod_api::mod_ids().contains(&id)
+                || (cfg!(target_os = "android")
+                    && mod_list::ANDROID_BUNDLED.iter().any(|(bid, _, _)| *bid == id))
+        };
+        // A WebAssembly mod overridden by a compiled-in native mod doesn't run (`start_mods`),
+        // and a content-only `.hmod` paired with a `.hnmod` uses the native row for hooks/settings.
+        // Running WASM `.hmod`s keep their own row and Settings screen.
+        self.settings.mods.installed.retain(|row| {
+            row.native.is_none()
+                && (!mods.iter().any(|m| m.id == row.id)
+                    || (wasm_running(&row.id) && !is_compiled_native(&row.id)))
+        });
         for m in mods {
+            if wasm_running(&m.id) && !is_compiled_native(&m.id) {
+                continue;
+            }
             let mut buttons = Vec::new();
             self.native_settings(&m.id, &mut buttons);
             let page = NativePage {

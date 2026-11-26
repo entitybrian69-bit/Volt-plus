@@ -1085,9 +1085,11 @@ fn music_play_queue(tracks: &[horizon_client::internet_music::MusicTrack], start
     let Ok(mut env) = ui.vm.attach_current_thread() else {
         return;
     };
-    let res = env.with_local_frame(16, |env| -> jni::errors::Result<()> {
+    let res = env.with_local_frame(24, |env| -> jni::errors::Result<()> {
         let n = tracks.len() as i32;
+        let ids = env.new_object_array(n, "java/lang/String", JObject::null())?;
         let urls = env.new_object_array(n, "java/lang/String", JObject::null())?;
+        let fallbacks = env.new_object_array(n, "java/lang/String", JObject::null())?;
         let titles = env.new_object_array(n, "java/lang/String", JObject::null())?;
         let artists = env.new_object_array(n, "java/lang/String", JObject::null())?;
         let durs_vec: Vec<i64> = tracks
@@ -1098,15 +1100,21 @@ fn music_play_queue(tracks: &[horizon_client::internet_music::MusicTrack], start
         env.set_long_array_region(&durs, 0, &durs_vec)?;
         for (i, t) in tracks.iter().enumerate() {
             let idx = i as i32;
+            let id = env.new_string(&t.id)?;
             let u = env.new_string(&t.stream_url)?;
+            let fb = env.new_string(t.fallback_urls.join("\n"))?;
             let ti = env.new_string(&t.title)?;
             let ar = env.new_string(&t.artist)?;
+            env.set_object_array_element(&ids, idx, id)?;
             env.set_object_array_element(&urls, idx, u)?;
+            env.set_object_array_element(&fallbacks, idx, fb)?;
             env.set_object_array_element(&titles, idx, ti)?;
             env.set_object_array_element(&artists, idx, ar)?;
         }
         let pl = env.new_string(playlist_name)?;
+        let ids_obj = JObject::from(ids);
         let urls_obj = JObject::from(urls);
+        let fallbacks_obj = JObject::from(fallbacks);
         let titles_obj = JObject::from(titles);
         let artists_obj = JObject::from(artists);
         let durs_obj = JObject::from(durs);
@@ -1114,9 +1122,11 @@ fn music_play_queue(tracks: &[horizon_client::internet_music::MusicTrack], start
         env.call_method(
             &ui.activity,
             "musicPlayQueue",
-            "([Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[JILjava/lang/String;)V",
+            "([Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[JILjava/lang/String;)V",
             &[
+                JValue::Object(&ids_obj),
                 JValue::Object(&urls_obj),
+                JValue::Object(&fallbacks_obj),
                 JValue::Object(&titles_obj),
                 JValue::Object(&artists_obj),
                 JValue::Object(&durs_obj),

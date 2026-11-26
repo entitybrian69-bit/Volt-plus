@@ -459,15 +459,39 @@ pub fn infer_features_from_id_and_signals(
 ) -> BTreeSet<String> {
     let mut features = class_signals.clone();
     let id_low = mod_id.to_ascii_lowercase();
-    let combined = format!(
-        "{} {} {} {}",
+    let is_generated_template = rust_src.contains("All Ported Features Active")
+        || rust_src.contains("Pure logic & settings state")
+        || rust_src.contains("horizon-inproc-v2")
+        || rust_src.contains("Auto-compiled Java Mod");
+    let combined = if is_generated_template {
+        format!(
+            "{} {} {}",
+            id_low,
+            title.to_ascii_lowercase(),
+            description.to_ascii_lowercase()
+        )
+    } else {
+        format!(
+            "{} {} {} {}",
+            id_low,
+            title.to_ascii_lowercase(),
+            description.to_ascii_lowercase(),
+            rust_src.to_ascii_lowercase()
+        )
+    };
+    let meta_only = format!(
+        "{} {} {}",
         id_low,
         title.to_ascii_lowercase(),
-        description.to_ascii_lowercase(),
-        rust_src.to_ascii_lowercase()
+        description.to_ascii_lowercase()
     );
 
-    if id_low == "wrench" || combined.contains("wrench") || combined.contains("takes_apart") {
+    if id_low == "wrench"
+        || id_low.ends_with("_wrench")
+        || id_low.starts_with("wrench_")
+        || meta_only.contains("wrench")
+        || (!is_generated_template && rust_src.to_ascii_lowercase().contains("takes_apart"))
+    {
         features.insert("wrench".to_owned());
     }
     if id_low == "treefall"
@@ -614,8 +638,10 @@ pub fn infer_features_from_id_and_signals(
         features.insert("light_overlay".to_owned());
     }
     if id_low == "eatinganimation"
-        || id_low.contains("food")
-        || id_low.contains("eat")
+        || id_low == "eating_animation"
+        || id_low.contains("eatinganimation")
+        || id_low.contains("eating_animation")
+        || id_low.contains("foodanimation")
         || combined.contains("eatinganimation")
         || combined.contains("foodanimation")
         || combined.contains("notenoughanimations")
@@ -1248,7 +1274,7 @@ pub fn transpile_jar_to_horizon_mods_with_progress(
                     if lower.contains("tooltip") || lower.contains("appendhovertext") {
                         class_signals.insert("tooltip".to_owned());
                     }
-                    if lower.contains("wrench") || lower.contains("rotate") {
+                    if lower.contains("wrench") {
                         class_signals.insert("wrench".to_owned());
                     }
                     if lower.contains("dynamiclight") {
@@ -1653,6 +1679,28 @@ fn build_hnmod_from_jar(
         custom_commands,
     );
 
+    let mut custom_buttons: Vec<String> = Vec::new();
+    let clean_title = title.trim();
+    if !items.is_empty() || !blocks.is_empty() {
+        custom_buttons.push(format!("{clean_title} Effects & Gear Perks"));
+        if !items.is_empty() {
+            custom_buttons.push(format!(
+                "Custom Items ({} registered) Tooltips",
+                items.len()
+            ));
+        }
+        if !blocks.is_empty() {
+            custom_buttons.push(format!(
+                "Custom Blocks ({} registered) Worldgen",
+                blocks.len()
+            ));
+        }
+        custom_buttons.push(format!("Show {clean_title} HUD Status"));
+    } else {
+        custom_buttons.push(format!("{clean_title} Active"));
+        custom_buttons.push(format!("Show {clean_title} HUD Overlay"));
+    }
+
     let compiled_json = serde_json::json!({
         "id": mod_id,
         "title": title,
@@ -1662,6 +1710,7 @@ fn build_hnmod_from_jar(
         "abi": "horizon-inproc-v2",
         "hooks_api": 415,
         "features": features,
+        "custom_buttons": custom_buttons,
         "items": items,
         "blocks": blocks,
         "keys": custom_keys,

@@ -2394,7 +2394,7 @@ impl Catalog {
                             let Some((id, title, direct_url, kind, source)) = tasks.get(i) else {
                                 break;
                             };
-                            let mut icon_url = direct_url
+                            let icon_url = direct_url
                                 .clone()
                                 .or_else(|| batch_urls.get(id).cloned());
                             let mut found_summary = None;
@@ -2425,21 +2425,22 @@ impl Catalog {
                                 }
                             }
 
-                            // Fallback to exact-match Modrinth lookup only for non-CurseForge items
-                            // that are not Horizon's own bundled/native catalog mods.
-                            let skip_modrinth_fallback = *source == browser::SourceId::CurseForge
-                                || is_horizon_builtin_or_catalog_mod(id);
-                            if !skip_modrinth_fallback
+                            // Fallback to Modrinth icon lookup whenever direct & mirror URLs failed
+                            // (or none was provided) so mods like Vast Ores / Vast Depths /
+                            // Sophisticated Backpacks display their real artwork instead of tiles.
+                            let mut resolved_icon_url: Option<String> = None;
+                            if *source != browser::SourceId::CurseForge
                                 && let Some(hit) = lookup_modrinth_by_name(title, *kind)
                             {
-                                icon_url = hit.icon;
+                                resolved_icon_url = hit.icon;
                                 if *source != browser::SourceId::Horizon
+                                    && !is_horizon_builtin_or_catalog_mod(id)
                                     && !hit.summary.trim().is_empty()
                                 {
                                     found_summary = Some(hit.summary);
                                 }
                             }
-                            if let Some(url) = icon_url
+                            if let Some(url) = resolved_icon_url
                                 && let Ok((w, h, rgba)) = browser::images::fetch_rgba_fast_with_alias(
                                     home,
                                     id,
@@ -2615,14 +2616,29 @@ impl Catalog {
                 versions,
             });
 
-            if need_icon && let Some(url) = icon_url {
-                let fetched = browser::images::fetch(&home, &url, browser::images::ROW).or_else(
-                    |err| match horizon_icon_mirror_url(&url) {
-                        Some(mirror) => browser::images::fetch(&home, &mirror, browser::images::ROW),
-                        None => Err(err),
-                    },
-                );
-                if let Ok(path) = fetched
+            if need_icon {
+                let mut fetched = icon_url.as_deref().map(|url| {
+                    browser::images::fetch(&home, url, browser::images::ROW).or_else(|err| {
+                        match horizon_icon_mirror_url(url) {
+                            Some(mirror) => {
+                                browser::images::fetch(&home, &mirror, browser::images::ROW)
+                            }
+                            None => Err(err),
+                        }
+                    })
+                });
+                if !fetched.as_ref().is_some_and(Result::is_ok)
+                    && project.source != browser::SourceId::CurseForge
+                    && let Some(m_hit) = lookup_modrinth_by_name(&project.title, project.kind)
+                    && let Some(m_icon) = m_hit.icon
+                {
+                    fetched = Some(browser::images::fetch(
+                        &home,
+                        &m_icon,
+                        browser::images::ROW,
+                    ));
+                }
+                if let Some(Ok(path)) = fetched
                     && let Ok((w, h, rgba)) = horizon_client::hud::decode(&path)
                 {
                     let _ = tx.send(ModalUpdate::Icon(project.id.clone(), w, h, rgba));
@@ -2989,10 +3005,22 @@ impl Catalog {
                         let mut compiled_any = false;
                         for e in &entries {
                             let p = game.join(&e.file);
-                            if (e.file.ends_with(".hnmod") || e.file.ends_with(".hmod")) && p.is_file() {
-                                if horizon_client::jar_transpiler::compile_hnmod_bundle_realtime(&p, &game).is_ok() {
-                                    compiled_any = true;
-                                }
+                            if !p.is_file() {
+                                continue;
+                            }
+                            // Real .hmod packages (WASM and/or content) execute directly in
+                            // `horizon_mods::Mods` + `apply_content_mods`: never wrap them in a
+                            // shadowing `.hnmod` bundle.
+                            if e.file.ends_with(".hmod")
+                                && horizon_mods::Package::read(&p).is_ok()
+                            {
+                                compiled_any = true;
+                                continue;
+                            }
+                            if (e.file.ends_with(".hnmod") || e.file.ends_with(".hmod"))
+                                && horizon_client::jar_transpiler::compile_hnmod_bundle_realtime(&p, &game).is_ok()
+                            {
+                                compiled_any = true;
                             }
                         }
                         if !compiled_any {
@@ -3000,6 +3028,7 @@ impl Catalog {
                         }
                         let clean_id = horizon_client::jar_transpiler::sanitize_mod_id(&project.id);
                         horizon_client::jar_transpiler::enable_mod_in_profile(&game, &clean_id);
+                        horizon_client::jar_transpiler::enable_mod_in_profile(&game, &project.id);
                         entries.len()
                     }
                     Err(_) => {
@@ -4098,23 +4127,67 @@ fn is_horizon_builtin_or_catalog_mod(id: &str) -> bool {
             .any(|(cid, _, _, _)| cid == id)
 }
 
+fn clean_modrinth_search_title(title: &str) -> String {
+    let base = title.split('(').next().unwrap_or(title);
+    let base = base.split(" - ").next().unwrap_or(base);
+    let base = base.split(" | ").next().unwrap_or(base);
+    let base = if let Some(idx) = base.to_ascii_lowercase().find(" and ") {
+        if base.to_ascii_lowercase().contains("in one") || base.len() > 28 {
+            &base[..idx]
+        } else {
+            base
+        }
+    } else {
+        base
+    };
+    base.trim().to_owned()
+}
+
 fn lookup_modrinth_by_name(title: &str, kind: Kind) -> Option<Project> {
-    let clean_title = title.split('(').next().unwrap_or(title).trim();
-    let target_key = normalize_mod_key(clean_title);
+    let clean_title = clean_modrinth_search_title(title);
+    let target_key = normalize_mod_key(&clean_title);
     if target_key.is_empty() {
         return None;
     }
-    let mut query = Query::new(clean_title, kind);
+    let mut query = Query::new(&clean_title, kind);
     query.everything = true;
-    query.limit = 8;
+    query.limit = 10;
     let hits = if kind == Kind::Shader {
         browser::modrinth::search_shader_packs(&query).ok()?
     } else {
         browser::modrinth::Modrinth.search(&query).ok()?
     };
-    hits.into_iter().find(|p| {
+    if let Some(exact) = hits.iter().find(|p| {
         normalize_mod_key(&p.title) == target_key || normalize_mod_key(&p.slug) == target_key
-    })
+    }) {
+        return Some(exact.clone());
+    }
+    if target_key.len() >= 5
+        && let Some(prefix) = hits.iter().find(|p| {
+            let pk = normalize_mod_key(&p.title);
+            let sk = normalize_mod_key(&p.slug);
+            p.icon.is_some()
+                && ((pk.len() >= 5 && (pk.starts_with(&target_key) || target_key.starts_with(&pk)))
+                    || (sk.len() >= 5 && (sk.starts_with(&target_key) || target_key.starts_with(&sk))))
+        })
+    {
+        return Some(prefix.clone());
+    }
+    let words: Vec<String> = clean_title
+        .split_whitespace()
+        .map(|w| normalize_mod_key(w))
+        .filter(|w| w.len() >= 3)
+        .collect();
+    if !words.is_empty() {
+        return hits.into_iter().find(|p| {
+            if p.icon.is_none() {
+                return false;
+            }
+            let hay = format!("{} {}", normalize_mod_key(&p.title), normalize_mod_key(&p.slug));
+            words.iter().all(|w| hay.contains(w))
+        });
+    }
+    None
 }
 
 fn clean_markdown_body(raw: &str) -> String {

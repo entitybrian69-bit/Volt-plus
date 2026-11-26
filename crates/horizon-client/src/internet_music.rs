@@ -40,6 +40,8 @@ pub struct MusicTrack {
     pub artist: String,
     pub duration_secs: u64,
     pub stream_url: String,
+    #[serde(default)]
+    pub fallback_urls: Vec<String>,
     pub icon_url: Option<String>,
     pub source: String,
     #[serde(default)]
@@ -313,6 +315,7 @@ fn rescan_offline_playlists(home: &Path) -> (Vec<MusicTrack>, Vec<MusicTrack>) {
                 icon_url: None,
                 source: "Offline".to_owned(),
                 play_count: 0,
+                fallback_urls: Vec::new(),
             });
         }
     }
@@ -333,6 +336,7 @@ fn rescan_offline_playlists(home: &Path) -> (Vec<MusicTrack>, Vec<MusicTrack>) {
                 icon_url: None,
                 source: EXPORTED_PLAYLIST_NAME.to_owned(),
                 play_count: 0,
+                fallback_urls: Vec::new(),
             }
         })
         .collect();
@@ -734,17 +738,13 @@ pub fn start_download_track(track: MusicTrack) {
 }
 
 fn download_track_blocking(home: &Path, track: &MusicTrack) -> Result<(), String> {
-    if !track.stream_url.starts_with("https://") {
+    if !track.stream_url.starts_with("https://") && !track.stream_url.starts_with("http://") {
         return Err("Track is already local".to_owned());
     }
     let dir = downloaded_dir(home);
     std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create download folder: {e}"))?;
 
-    let agent = http_agent();
-    let resp = agent
-        .get(&track.stream_url)
-        .call()
-        .map_err(|e| format!("Download failed: {e}"))?;
+    let (resp, _final_url) = open_track_audio_stream(track)?;
     let total_bytes = resp
         .header("Content-Length")
         .and_then(|s| s.parse::<u64>().ok());
@@ -795,11 +795,16 @@ fn download_track_blocking(home: &Path, track: &MusicTrack) -> Result<(), String
         }
     }
     drop(file);
+    if written == 0 {
+        let _ = std::fs::remove_file(&part_path);
+        return Err("Empty audio stream received".to_owned());
+    }
     std::fs::rename(&part_path, &final_path)
         .map_err(|e| format!("Cannot finalize download: {e}"))?;
 
     let mut offline_track = track.clone();
     offline_track.stream_url = final_path.to_string_lossy().into_owned();
+    offline_track.fallback_urls.clear();
     offline_track.source = DOWNLOADED_PLAYLIST_NAME.to_owned();
 
     let mut meta = load_downloaded_meta(home);
@@ -1135,22 +1140,47 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
+const STREAM_USER_AGENT: &str =
+    "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
+
+static AUDIUS_HOST_CACHE: OnceLock<Mutex<Option<(Instant, Vec<String>)>>> = OnceLock::new();
+
 fn http_agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .resolver(horizon_port_pack::net::PreferIpv4Resolver)
-        .user_agent("VoltPlus/1.0.1 (https://github.com/entitybrian69-bit/volt-plus)")
+        .user_agent(STREAM_USER_AGENT)
         .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(20))
+        .timeout_read(Duration::from_secs(25))
+        .redirects(10)
+        .build()
+}
+
+fn no_redirect_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .resolver(horizon_port_pack::net::PreferIpv4Resolver)
+        .user_agent(STREAM_USER_AGENT)
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(Duration::from_secs(30))
+        .redirects(0)
         .build()
 }
 
 fn audius_hosts(agent: &ureq::Agent) -> Vec<String> {
-    let mut hosts = vec!["https://api.audius.co".to_owned()];
+    let cache = AUDIUS_HOST_CACHE.get_or_init(|| Mutex::new(None));
+    if let Ok(guard) = cache.lock()
+        && let Some((at, cached)) = guard.as_ref()
+        && at.elapsed() < Duration::from_secs(300)
+        && !cached.is_empty()
+    {
+        return cached.clone();
+    }
+
+    let mut hosts = Vec::new();
     if let Ok(resp) = agent.get("https://api.audius.co").call()
         && let Ok(val) = resp.into_json::<serde_json::Value>()
         && let Some(arr) = val.get("data").and_then(|d| d.as_array())
     {
-        for item in arr.iter().take(4) {
+        for item in arr.iter().take(6) {
             if let Some(url) = item.as_str()
                 && url.starts_with("https://")
             {
@@ -1161,7 +1191,188 @@ fn audius_hosts(agent: &ureq::Agent) -> Vec<String> {
             }
         }
     }
+    if !hosts.iter().any(|h| h == "https://api.audius.co") {
+        hosts.push("https://api.audius.co".to_owned());
+    }
+    if let Ok(mut guard) = cache.lock() {
+        *guard = Some((Instant::now(), hosts.clone()));
+    }
     hosts
+}
+
+fn push_unique_url(out: &mut Vec<String>, candidate: &str) {
+    let trimmed = candidate.trim();
+    if (trimmed.starts_with("https://") || trimmed.starts_with("http://"))
+        && !out.iter().any(|existing| existing == trimmed)
+    {
+        out.push(trimmed.to_owned());
+    }
+}
+
+fn extract_audius_track_id(track: &MusicTrack) -> Option<String> {
+    if let Some(rest) = track.id.strip_prefix("audius:")
+        && !rest.is_empty()
+    {
+        return Some(rest.to_owned());
+    }
+    if let Some(idx) = track.stream_url.find("/v1/tracks/") {
+        let rest = &track.stream_url[idx + "/v1/tracks/".len()..];
+        let tid = rest.split(['/', '?']).next().unwrap_or("").trim();
+        if !tid.is_empty() {
+            return Some(tid.to_owned());
+        }
+    }
+    None
+}
+
+fn concise_ureq_error(err: &ureq::Error) -> String {
+    match err {
+        ureq::Error::Status(code, _) => format!("HTTP {code}"),
+        ureq::Error::Transport(t) => format!("{:?}", t.kind()),
+    }
+}
+
+fn is_valid_audio_content_type(ct: &str) -> bool {
+    let low = ct.trim().to_ascii_lowercase();
+    if low.is_empty() {
+        return true;
+    }
+    !low.contains("text/html")
+        && !low.contains("application/json")
+        && !low.contains("application/xml")
+        && !low.contains("text/plain")
+        && !low.contains("mpegurl")
+}
+
+fn open_single_url_with_redirects(
+    agent: &ureq::Agent,
+    start_url: &str,
+) -> Result<(ureq::Response, String), String> {
+    let mut current = start_url.to_owned();
+    for _hop in 0..10 {
+        let resp = agent
+            .get(&current)
+            .set("Accept", "audio/mpeg, audio/*;q=0.9, */*;q=0.8")
+            .call();
+        match resp {
+            Ok(r) => {
+                let status = r.status();
+                if (300..400).contains(&status) {
+                    if let Some(loc) = r.header("Location") {
+                        let base = url::Url::parse(&current).map_err(|e| e.to_string())?;
+                        let mut next = base
+                            .join(loc.trim())
+                            .map_err(|e| e.to_string())?
+                            .to_string();
+                        if next.starts_with("http://") {
+                            next = format!("https://{}", &next["http://".len()..]);
+                        }
+                        current = next;
+                        continue;
+                    }
+                    return Err(format!("Redirect HTTP {status} without Location"));
+                }
+                if !(200..300).contains(&status) {
+                    return Err(format!("HTTP {status}"));
+                }
+                let ct = r.header("Content-Type").unwrap_or("");
+                if !is_valid_audio_content_type(ct) {
+                    return Err(format!("Unexpected content-type ({ct})"));
+                }
+                return Ok((r, current));
+            }
+            Err(ureq::Error::Status(status, r)) => {
+                if (300..400).contains(&status)
+                    && let Some(loc) = r.header("Location")
+                {
+                    let base = url::Url::parse(&current).map_err(|e| e.to_string())?;
+                    let mut next = base
+                        .join(loc.trim())
+                        .map_err(|e| e.to_string())?
+                        .to_string();
+                    if next.starts_with("http://") {
+                        next = format!("https://{}", &next["http://".len()..]);
+                    }
+                    current = next;
+                    continue;
+                }
+                return Err(format!("HTTP {status}"));
+            }
+            Err(err) => {
+                return Err(concise_ureq_error(&err));
+            }
+        }
+    }
+    Err("Too many redirects".to_owned())
+}
+
+fn open_track_audio_stream(track: &MusicTrack) -> Result<(ureq::Response, String), String> {
+    let api_agent = http_agent();
+    let stream_agent = no_redirect_agent();
+    let mut candidates = Vec::new();
+    push_unique_url(&mut candidates, &track.stream_url);
+    for u in &track.fallback_urls {
+        push_unique_url(&mut candidates, u);
+    }
+
+    let mut last_err = String::new();
+    for url in &candidates {
+        match open_single_url_with_redirects(&stream_agent, url) {
+            Ok(hit) => return Ok(hit),
+            Err(err) => last_err = err,
+        }
+    }
+
+    if let Some(tid) = extract_audius_track_id(track) {
+        let mut dynamic = Vec::new();
+        for host in audius_hosts(&api_agent).into_iter().take(5) {
+            // 1. Ask discovery node for the signed content-node URL via no_redirect=true
+            let nr_url = format!("{host}/v1/tracks/{tid}/stream?no_redirect=true&app_name=VoltPlus");
+            if let Ok(resp) = api_agent.get(&nr_url).call()
+                && let Ok(val) = resp.into_json::<serde_json::Value>()
+            {
+                if let Some(u) = val.get("data").and_then(|d| d.as_str()) {
+                    push_unique_url(&mut dynamic, u);
+                }
+            }
+            // 2. Ask track metadata for stream.url + stream.mirrors
+            let meta_url = format!("{host}/v1/tracks/{tid}?app_name=VoltPlus");
+            if let Ok(resp) = api_agent.get(&meta_url).call()
+                && let Ok(val) = resp.into_json::<serde_json::Value>()
+            {
+                if let Some(u) = val.pointer("/data/stream/url").and_then(|v| v.as_str()) {
+                    push_unique_url(&mut dynamic, u);
+                }
+                if let Some(arr) = val.pointer("/data/stream/mirrors").and_then(|v| v.as_array()) {
+                    for m in arr {
+                        if let Some(u) = m.as_str() {
+                            push_unique_url(&mut dynamic, u);
+                        }
+                    }
+                }
+            }
+            // 3. Direct /stream endpoint on this discovery host
+            push_unique_url(
+                &mut dynamic,
+                &format!("{host}/v1/tracks/{tid}/stream?app_name=VoltPlus"),
+            );
+        }
+        for url in dynamic {
+            if candidates.contains(&url) {
+                continue;
+            }
+            match open_single_url_with_redirects(&stream_agent, &url) {
+                Ok(hit) => return Ok(hit),
+                Err(err) => last_err = err,
+            }
+        }
+    }
+
+    Err(if last_err.is_empty() {
+        "Audio stream unavailable".to_owned()
+    } else {
+        format!("Audio unavailable ({last_err})")
+    })
 }
 
 fn parse_audius_tracks(host: &str, json: &serde_json::Value) -> Vec<MusicTrack> {
@@ -1170,6 +1381,11 @@ fn parse_audius_tracks(host: &str, json: &serde_json::Value) -> Vec<MusicTrack> 
     };
     let mut out = Vec::new();
     for item in items {
+        if item.get("is_streamable").and_then(|v| v.as_bool()) == Some(false)
+            || item.pointer("/access/stream").and_then(|v| v.as_bool()) == Some(false)
+        {
+            continue;
+        }
         let Some(id) = item.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) else {
             continue;
         };
@@ -1204,13 +1420,34 @@ fn parse_audius_tracks(host: &str, json: &serde_json::Value) -> Vec<MusicTrack> 
             .and_then(|v| v.as_str())
             .filter(|u| u.starts_with("https://"))
             .map(ToOwned::to_owned);
-        let stream_url = format!("{host}/v1/tracks/{id}/stream?app_name=VoltPlus");
+
+        let mut candidates = Vec::new();
+        if let Some(direct) = item.pointer("/stream/url").and_then(|v| v.as_str()) {
+            push_unique_url(&mut candidates, direct);
+        }
+        if let Some(mirrors) = item.pointer("/stream/mirrors").and_then(|v| v.as_array()) {
+            for m in mirrors {
+                if let Some(u) = m.as_str() {
+                    push_unique_url(&mut candidates, u);
+                }
+            }
+        }
+        push_unique_url(
+            &mut candidates,
+            &format!("{host}/v1/tracks/{id}/stream?app_name=VoltPlus"),
+        );
+        push_unique_url(
+            &mut candidates,
+            &format!("https://api.audius.co/v1/tracks/{id}/stream?app_name=VoltPlus"),
+        );
+        let stream_url = candidates.remove(0);
         out.push(MusicTrack {
             id: format!("audius:{id}"),
             title: title.to_owned(),
             artist,
             duration_secs,
             stream_url,
+            fallback_urls: candidates,
             icon_url,
             source: "Audius".to_owned(),
             play_count,
@@ -1432,6 +1669,7 @@ fn search_archive_org_paged(
             icon_url: Some(format!("https://archive.org/services/img/{ident}")),
             source: "Internet Archive".to_owned(),
             play_count: 0,
+            fallback_urls: Vec::new(),
         });
     }
     apply_sort(&mut tracks, sort);
@@ -1467,6 +1705,7 @@ pub fn search_online_tracks_paged(
                 icon_url: None,
                 source: "Direct URL".to_owned(),
                 play_count: 0,
+                fallback_urls: Vec::new(),
             }],
             has_next: false,
         });
