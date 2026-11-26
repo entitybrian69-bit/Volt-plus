@@ -241,13 +241,32 @@ jobs:
         run: gh run download "$GITHUB_RUN_ID" --pattern 'volt-plus-debug-*-arm*' --dir apks --repo "$GITHUB_REPOSITORY"
       - name: Merge into universal debug APK and sign
         run: |
+          set -x
+          set -o pipefail
           arm64=$(find apks -path '*arm64-v8a*' -name '*.apk' | head -n 1)
           armv7=$(find apks -path '*armeabi-v7a*' -name '*.apk' | head -n 1)
+          echo "arm64=$arm64"; echo "armv7=$armv7"
+          ls -la apks/ "$arm64" "$armv7"
           test -n "$arm64" && test -n "$armv7"
           mkdir -p dist
           python3 tools/universal_apk.py --arm64 "$arm64" --armv7 "$armv7" \
             --out "dist/Volt-Plus-Debug.${GITHUB_RUN_NUMBER}.${GITHUB_SHA:0:12}-universal.apk" \
-            --build-tools "$ANDROID_HOME/build-tools/35.0.0" --sign
+            --build-tools "$ANDROID_HOME/build-tools/35.0.0" --sign 2>&1 | tee "$RUNNER_TEMP/universal.log"
+      - name: Say why the universal debug APK failed
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          path = Path(os.environ['RUNNER_TEMP']) / 'universal.log'
+          text = path.read_text(errors='replace') if path.exists() else 'no log was written'
+          text = re.sub(r'\x1b\[[0-9;]*m', '', text)
+          sensitive = [v for k, v in os.environ.items() if v and ('PASSWORD' in k or 'TOKEN' in k or 'KEYSTORE' in k)]
+          for value in sensitive:
+              text = text.replace(value, '[redacted]')
+          message = text[-3000:].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::error::' + message)
+          PY
       - name: Checksums, notices and summary
         env:
           PROFILE: ${{ inputs.profile || 'fast' }}
