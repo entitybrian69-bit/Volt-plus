@@ -410,11 +410,11 @@ impl Game<'_> {
         }
         let main_shield = self
             .stack_in(self.selected)
-            .filter(|s| s.item == "minecraft:shield");
+            .filter(|s| &*s.item == "minecraft:shield");
         let off_shield = self
             .offhand
             .as_ref()
-            .filter(|s| s.item == "minecraft:shield");
+            .filter(|s| &*s.item == "minecraft:shield");
         let Some(shield_stack) = off_shield.or(main_shield) else {
             return;
         };
@@ -470,7 +470,7 @@ impl Game<'_> {
         } else {
             let active = self.using.is_some_and(|(slot, _)| {
                 self.stack_in(slot)
-                    .is_some_and(|s| s.item == "minecraft:shield")
+                    .is_some_and(|s| &*s.item == "minecraft:shield")
             });
             let lbl = if active { "BLK" } else { "RDY" };
             batch.text(atlas, lbl, bx + 15.0, by + 6.0, border, true);
