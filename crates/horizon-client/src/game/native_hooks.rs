@@ -11141,16 +11141,21 @@ impl Game<'_> {
         let mut mods = Vec::new();
         self.native_mods(&mut mods);
         #[cfg(feature = "mods")]
-        let wasm_running = |id: &str| -> bool {
-            self.mods.mods.entries().iter().any(|e| {
+        let wasm_running_ids: std::collections::HashSet<String> = self
+            .mods
+            .mods
+            .entries()
+            .iter()
+            .filter(|e| {
                 matches!(
                     e.status,
                     horizon_mods::Status::Running | horizon_mods::Status::Elsewhere
-                ) && e.manifest.as_ref().is_some_and(|m| m.id == id)
+                )
             })
-        };
+            .filter_map(|e| e.manifest.as_ref().map(|m| m.id.clone()))
+            .collect();
         #[cfg(not(feature = "mods"))]
-        let wasm_running = |_id: &str| -> bool { false };
+        let wasm_running_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
         let is_compiled_native = |id: &str| -> bool {
             mod_api::mod_ids().contains(&id)
                 || (cfg!(target_os = "android")
@@ -11162,10 +11167,10 @@ impl Game<'_> {
         self.settings.mods.installed.retain(|row| {
             row.native.is_none()
                 && (!mods.iter().any(|m| m.id == row.id)
-                    || (wasm_running(&row.id) && !is_compiled_native(&row.id)))
+                    || (wasm_running_ids.contains(&row.id) && !is_compiled_native(&row.id)))
         });
         for m in mods {
-            if wasm_running(&m.id) && !is_compiled_native(&m.id) {
+            if wasm_running_ids.contains(&m.id) && !is_compiled_native(&m.id) {
                 continue;
             }
             let mut buttons = Vec::new();
