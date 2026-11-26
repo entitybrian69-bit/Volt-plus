@@ -355,7 +355,7 @@ impl Game<'_> {
         if cfg.fast_place && self.use_delay > 0 {
             let holding_crystal_or_obi = |s: &ItemStack| {
                 matches!(
-                    s.item,
+                    &*s.item,
                     "minecraft:end_crystal" | "minecraft:obsidian"
                 )
             };

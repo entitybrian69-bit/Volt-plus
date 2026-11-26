@@ -7333,7 +7333,7 @@ impl Game<'_> {
         {
             let crystal_or_obi = |s: &ItemStack| {
                 matches!(
-                    s.item.as_str(),
+                    &*s.item,
                     "minecraft:end_crystal" | "minecraft:obsidian"
                 )
             };
