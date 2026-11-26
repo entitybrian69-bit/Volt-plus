@@ -3,14 +3,15 @@
 //! and controlled from the `Volt+ Extras` tab in the Control Hub.
 use super::Game;
 use horizon_client::{
+    brewing,
     extras::{
         AppleSkinConfig, ShieldColorPreset, ShieldDisplayMode, UkuAnchor, UkuDurability, UkuSide,
         UkuStyle,
     },
     hud::{HudAtlas, HudBatch, rgba},
     hud_layout,
+    items::ItemStack,
 };
-use horizon_world::inventory::ItemStack;
 use std::time::{Duration, Instant};
 
 impl Game<'_> {
@@ -633,8 +634,8 @@ impl Game<'_> {
         let card_w = if cfg.potion_compact { 62.0 } else { 112.0 };
 
         for (visible, eff) in effects.iter().enumerate() {
-            let beneficial = horizon_client_core::potions::effect(eff.id)
-                .is_some_and(|d| d.category == horizon_client_core::potions::Category::Beneficial);
+            let beneficial = brewing::effect(eff.id)
+                .is_some_and(|d| d.category == brewing::Category::Beneficial);
             let x = match cfg.potion_anchor {
                 horizon_client::extras::UkuPotionAnchor::TopRight => wi as f32 - card_w - 6.0,
                 horizon_client::extras::UkuPotionAnchor::TopLeft
@@ -661,7 +662,7 @@ impl Game<'_> {
             };
             batch.fill(atlas, x, y, 2.0, row_h, accent);
 
-            let sprite = horizon_client_core::potions::sprite(eff.id);
+            let sprite = brewing::sprite(eff.id);
             let icon_sz = if cfg.potion_compact { 14.0 } else { 18.0 };
             batch.sprite_scaled(
                 atlas,
