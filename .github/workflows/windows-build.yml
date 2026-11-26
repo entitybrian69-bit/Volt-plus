@@ -1,0 +1,79 @@
+name: windows-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Cargo profile (fast = quick, release = slow + optimized)"
+        type: choice
+        default: fast
+        options: [fast, release]
+  push:
+    branches: [android]
+    paths:
+      - ".github/workflows/windows-build.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  client:
+    name: Game client (.exe)
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      PROFILE: ${{ inputs.profile || 'fast' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        shell: bash
+        run: |
+          rustup show
+          cargo --version
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: client-${{ env.PROFILE }}
+      - name: Build horizon-client
+        shell: bash
+        run: cargo build --profile "$PROFILE" -p horizon-client --features mods
+      - name: Collect files
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/$PROFILE/horizon-client.exe" dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: volt-plus-client-windows-x64-${{ env.PROFILE }}
+          path: dist/*
+          if-no-files-found: error
+
+  launcher:
+    name: Launcher (.exe)
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        shell: bash
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: launcher
+          key: launcher
+      - name: Build launcher
+        shell: bash
+        working-directory: launcher
+        run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: volt-plus-launcher-windows-x64
+          path: launcher/target/release/*.exe
+          if-no-files-found: error
