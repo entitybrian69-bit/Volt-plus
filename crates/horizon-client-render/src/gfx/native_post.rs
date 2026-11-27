@@ -101,13 +101,47 @@ pub struct NativePost {
     format: wgpu::TextureFormat,
 }
 
+/// Which optional group-3 bindings the pack's non-post stages (`material`, `weather`) read.
+/// Keeping unused bindings out of `NativeFrame.layout` ensures mobile backends with a
+/// 16-texture `FRAGMENT` stage limit (GLES 3.0/3.2 and 16-texture Vulkan drivers) do not reject
+/// the combined terrain + frame pipeline layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameBindings {
+    pub reflection: bool,
+    pub shadow: bool,
+    pub translucent_shadow: bool,
+    pub opaque_depth: bool,
+    pub opaque_color: bool,
+    pub block_light: bool,
+    pub pbr: bool,
+}
+
+impl FrameBindings {
+    #[allow(dead_code)]
+    pub const fn all() -> Self {
+        Self {
+            reflection: true,
+            shadow: true,
+            translucent_shadow: true,
+            opaque_depth: true,
+            opaque_color: true,
+            block_light: true,
+            pbr: true,
+        }
+    }
+}
+
 /// The `frame` every stage of a pack reads (group 3, binding 0), written once a frame, and
 /// what the material stage reads besides.
 pub struct NativeFrame {
     pub(super) buffer: wgpu::Buffer,
     pub(super) layers: wgpu::Buffer,
-    /// Group 3 of the sky and material stages.
+    /// Group 3 of the material and weather stages.
     pub layout: wgpu::BindGroupLayout,
+    /// Minimal group 3 of the sky stage (`frame` uniform + pack `[[textures]]` only).
+    pub sky_layout: wgpu::BindGroupLayout,
+    pub sky_group: wgpu::BindGroup,
+    pub bindings: FrameBindings,
     /// The pack's `[[textures]]` and their samplers, bound for every stage.
     pub textures: Vec<(wgpu::TextureView, wgpu::Sampler)>,
     /// The colour of block light around the camera (`[[lights]]`), bindings 9 and 10.
@@ -239,6 +273,7 @@ fn eased(value: f32, target: f32, half_life: f32, dt: f32) -> f32 {
 impl NativeFrame {
     /// The frame of a pack with the `[shadow]` settings `shadow`, if any, and the
     /// block light colours `lights`.
+    #[allow(dead_code)]
     pub fn new(
         device: &wgpu::Device,
         shadow: Option<&horizon_shader_api::manifest::Shadow>,
@@ -246,16 +281,16 @@ impl NativeFrame {
         lights: super::block_light::LightTable,
         pbr: Option<&[wgpu::Texture; 2]>,
     ) -> Self {
-        Self::new_optimized(device, shadow, textures, lights, pbr, true)
+        Self::new_for_pack(device, shadow, textures, lights, pbr, FrameBindings::all())
     }
 
-    pub fn new_optimized(
+    pub fn new_for_pack(
         device: &wgpu::Device,
         shadow: Option<&horizon_shader_api::manifest::Shadow>,
         textures: Vec<(wgpu::TextureView, wgpu::Sampler)>,
         lights: super::block_light::LightTable,
         pbr: Option<&[wgpu::Texture; 2]>,
-        translucent_shadow: bool,
+        bindings: FrameBindings,
     ) -> Self {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Native shader pack frame"),
@@ -269,43 +304,84 @@ impl NativeFrame {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let mut sky_entries = vec![frame_entry(wgpu::ShaderStages::VERTEX_FRAGMENT)];
+        sky_entries.extend(pack_texture_entries(textures.len()));
+        let sky_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Native shader pack sky frame"),
+            entries: &sky_entries,
+        });
+        let mut sky_group_entries = vec![wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }];
+        sky_group_entries.extend(pack_texture_group_entries(&textures));
+        let sky_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Native shader pack sky frame"),
+            layout: &sky_layout,
+            entries: &sky_group_entries,
+        });
+
         let mut entries = vec![
             frame_entry(wgpu::ShaderStages::VERTEX_FRAGMENT),
             layers_entry(wgpu::ShaderStages::VERTEX_FRAGMENT),
-            texture_entry(1, wgpu::TextureSampleType::Float { filterable: true }),
-            sampler_entry(2),
-            texture_entry(3, wgpu::TextureSampleType::Depth),
-            comparison_entry(4),
-            texture_entry(6, wgpu::TextureSampleType::Depth),
-            texture_entry(7, wgpu::TextureSampleType::Depth),
-            texture_entry(8, wgpu::TextureSampleType::Float { filterable: true }),
-            texture_entry(11, wgpu::TextureSampleType::Float { filterable: false }),
-            pbr_entry(12),
-            pbr_entry(13),
         ];
-        let block_light_entries = [
-            wgpu::BindGroupLayoutEntry {
-                binding: 9,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D3,
-                    multisampled: false,
+        if bindings.reflection {
+            entries.push(texture_entry(
+                1,
+                wgpu::TextureSampleType::Float { filterable: true },
+            ));
+        }
+        if bindings.reflection || bindings.block_light {
+            entries.push(sampler_entry(2));
+        }
+        if bindings.shadow {
+            entries.push(texture_entry(3, wgpu::TextureSampleType::Depth));
+            entries.push(comparison_entry(4));
+        }
+        if bindings.opaque_depth {
+            entries.push(texture_entry(6, wgpu::TextureSampleType::Depth));
+        }
+        if bindings.translucent_shadow {
+            entries.push(texture_entry(7, wgpu::TextureSampleType::Depth));
+            entries.push(texture_entry(
+                8,
+                wgpu::TextureSampleType::Float { filterable: true },
+            ));
+        }
+        if bindings.opaque_color {
+            entries.push(texture_entry(
+                11,
+                wgpu::TextureSampleType::Float { filterable: false },
+            ));
+        }
+        if bindings.pbr {
+            entries.push(pbr_entry(12));
+            entries.push(pbr_entry(13));
+        }
+        if bindings.block_light {
+            entries.extend([
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        multisampled: false,
+                    },
+                    count: None,
                 },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 10,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            },
-        ];
-        entries.extend(block_light_entries);
+            ]);
+        }
         entries.extend(pack_texture_entries(textures.len()));
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Native shader pack frame"),
@@ -329,7 +405,7 @@ impl NativeFrame {
         let shadow_map = super::native_shadow::ShadowMap::new_with_translucent(
             device,
             shadow,
-            translucent_shadow,
+            bindings.translucent_shadow,
         );
         let block_light = super::block_light::BlockLight::new(device, lights);
         let array_view = |texture: &wgpu::Texture| {
@@ -362,6 +438,7 @@ impl NativeFrame {
         let group = Self::group(
             device,
             &layout,
+            bindings,
             &buffer,
             &layers,
             (&blank, &reflection_sampler),
@@ -378,6 +455,9 @@ impl NativeFrame {
             buffer,
             layers,
             layout,
+            sky_layout,
+            sky_group,
+            bindings,
             group,
             opaque_depth,
             opaque_color,
@@ -389,7 +469,7 @@ impl NativeFrame {
             reflects: false,
             reads_opaque_depth: false,
             reads_opaque_color: false,
-            reads_translucent_shadow: translucent_shadow,
+            reads_translucent_shadow: bindings.translucent_shadow,
             last: None,
             eye: [f32::NAN; 4],
             history_reset: true,
@@ -415,6 +495,7 @@ impl NativeFrame {
     fn group(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
+        bindings: FrameBindings,
         buffer: &wgpu::Buffer,
         layers: &wgpu::Buffer,
         (reflection, sampler): (&wgpu::TextureView, &wgpu::Sampler),
@@ -435,57 +516,79 @@ impl NativeFrame {
                 binding: 5,
                 resource: layers.as_entire_binding(),
             },
-            wgpu::BindGroupEntry {
+        ];
+        if bindings.reflection {
+            entries.push(wgpu::BindGroupEntry {
                 binding: 1,
                 resource: wgpu::BindingResource::TextureView(reflection),
-            },
-            wgpu::BindGroupEntry {
+            });
+        }
+        if bindings.reflection || bindings.block_light {
+            entries.push(wgpu::BindGroupEntry {
                 binding: 2,
                 resource: wgpu::BindingResource::Sampler(sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::TextureView(&shadow.view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: wgpu::BindingResource::Sampler(&shadow.sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 7,
-                resource: wgpu::BindingResource::TextureView(&shadow.translucent_view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 8,
-                resource: wgpu::BindingResource::TextureView(&shadow.color_view),
-            },
-            wgpu::BindGroupEntry {
+            });
+        }
+        if bindings.shadow {
+            entries.extend([
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&shadow.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&shadow.sampler),
+                },
+            ]);
+        }
+        if bindings.translucent_shadow {
+            entries.extend([
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(&shadow.translucent_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: wgpu::BindingResource::TextureView(&shadow.color_view),
+                },
+            ]);
+        }
+        if bindings.opaque_depth {
+            entries.push(wgpu::BindGroupEntry {
                 binding: 6,
                 resource: wgpu::BindingResource::TextureView(&opaque_depth),
-            },
-            wgpu::BindGroupEntry {
+            });
+        }
+        if bindings.opaque_color {
+            entries.push(wgpu::BindGroupEntry {
                 binding: 11,
                 resource: wgpu::BindingResource::TextureView(&opaque_color),
-            },
-            wgpu::BindGroupEntry {
-                binding: 12,
-                resource: wgpu::BindingResource::TextureView(&pbr[0]),
-            },
-            wgpu::BindGroupEntry {
-                binding: 13,
-                resource: wgpu::BindingResource::TextureView(&pbr[1]),
-            },
-        ];
-        entries.extend([
-            wgpu::BindGroupEntry {
-                binding: 9,
-                resource: wgpu::BindingResource::TextureView(&block_light.view),
-            },
-            wgpu::BindGroupEntry {
-                binding: 10,
-                resource: block_light.grid.as_entire_binding(),
-            },
-        ]);
+            });
+        }
+        if bindings.pbr {
+            entries.extend([
+                wgpu::BindGroupEntry {
+                    binding: 12,
+                    resource: wgpu::BindingResource::TextureView(&pbr[0]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 13,
+                    resource: wgpu::BindingResource::TextureView(&pbr[1]),
+                },
+            ]);
+        }
+        if bindings.block_light {
+            entries.extend([
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: wgpu::BindingResource::TextureView(&block_light.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: block_light.grid.as_entire_binding(),
+                },
+            ]);
+        }
         entries.extend(pack_texture_group_entries(textures));
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Native shader pack frame"),
@@ -530,6 +633,9 @@ impl NativeFrame {
     /// Binds `view` as this frame's `reflection` (`None`: the blank). The mirror is drawn
     /// before the stages read it.
     pub fn set_reflection(&mut self, device: &wgpu::Device, view: Option<&wgpu::TextureView>) {
+        if !self.bindings.reflection {
+            return;
+        }
         let view = view.unwrap_or(&self.blank);
         if *view != self.reflection {
             self.reflection = view.clone();
@@ -541,6 +647,7 @@ impl NativeFrame {
         self.group = Self::group(
             device,
             &self.layout,
+            self.bindings,
             &self.buffer,
             &self.layers,
             (&self.reflection, &self.reflection_sampler),

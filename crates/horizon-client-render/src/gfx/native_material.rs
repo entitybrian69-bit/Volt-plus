@@ -10,14 +10,14 @@
 
 use horizon_shader_api::{StageKind, check::CheckedStage, stages::GROUP};
 
-use super::native_post::{NativeFrame, present_constants};
+use super::native_post::{FrameBindings, NativeFrame, present_constants};
 use super::wgsl_prefix::{TERRAIN, prefixed, section};
 
 const PREFIX: &str = "horizon_terrain_";
 
 /// The entries around the pack's `material`: vanilla's vertex work without the lightmap
 /// product, then the material, the alpha test and fog as `fs_solid` and `fs_translucent` do.
-const ENTRIES: &str = "
+const ENTRIES_HEAD: &str = "
 @group(3) @binding(5) var<uniform> horizon_terrain_layer_kinds: array<vec4<u32>, 256>;
 override horizon_terrain_volt_pack: bool = false;
 override horizon_terrain_wave_plants: bool = false;
@@ -168,10 +168,6 @@ fn horizon_material_vertex(position: vec3<f32>, uv: vec2<f32>, layer: u32, color
     return horizon_material_vertex(position, horizon_terrain_terrain_uv(uv, origin.w), layer,
         color, light, origin.xyz);
 }
-// The prelude's `block_normal_map` and `block_specular_map`: the resource packs' LabPBR maps
-// in the pack's frame group (3), one array each, a blank 1x1 without them.
-@group(3) @binding(12) var horizon_pbr_normals: texture_2d_array<f32>;
-@group(3) @binding(13) var horizon_pbr_specular: texture_2d_array<f32>;
 fn horizon_block_sprite(uv: vec2<f32>, layer: u32, lod: f32) -> vec4<f32> {
     let s = horizon_terrain_sprite_sampler;
     let idx = layer & 0x7fffu;
@@ -190,6 +186,13 @@ fn horizon_block_sprite(uv: vec2<f32>, layer: u32, lod: f32) -> vec4<f32> {
 fn horizon_block_sprite_size() -> vec2<f32> {
     return vec2<f32>(textureDimensions(horizon_terrain_sprites).xy);
 }
+";
+
+// The prelude's `block_normal_map` and `block_specular_map`: the resource packs' LabPBR maps
+// in the pack's frame group (3), one array each, a blank 1x1 without them.
+const PBR_LIVE: &str = "
+@group(3) @binding(12) var horizon_pbr_normals: texture_2d_array<f32>;
+@group(3) @binding(13) var horizon_pbr_specular: texture_2d_array<f32>;
 fn horizon_block_pbr_present() -> bool {
     return textureDimensions(horizon_pbr_normals).x > 1u;
 }
@@ -209,6 +212,21 @@ fn horizon_block_pbr(uv: vec2<f32>, layer: u32, lod: f32, map: u32) -> vec4<f32>
     }
     return textureSampleLevel(horizon_pbr_specular, s, uv, i32(layer), l);
 }
+";
+
+const PBR_STUB_MATERIAL: &str = "
+fn horizon_block_pbr_present() -> bool {
+    return false;
+}
+fn horizon_block_pbr_size() -> vec2<f32> {
+    return vec2<f32>(16.0);
+}
+fn horizon_block_pbr(uv: vec2<f32>, layer: u32, lod: f32, map: u32) -> vec4<f32> {
+    return select(vec4<f32>(0.5, 0.5, 1.0, 1.0), vec4<f32>(0.0), map == 1u);
+}
+";
+
+const ENTRIES_TAIL: &str = "
 fn horizon_material_color(in: HorizonMaterialOut, translucent: bool) -> vec4<f32> {
     let albedo = horizon_terrain_sprite(in.uv, in.layer & 0x7fffu);
     horizon_block_layer = in.layer & 0x7fffu;
@@ -243,6 +261,8 @@ fn horizon_material_color(in: HorizonMaterialOut, translucent: bool) -> vec4<f32
 pub struct TerrainShape<'a> {
     /// The terrain's group 0.
     pub globals: &'a wgpu::BindGroupLayout,
+    /// The sky's minimal group 0 (`Globals` uniform only, 0 sampled textures).
+    pub sky_globals: &'a wgpu::BindGroupLayout,
     /// The flat draws' group 1, where they run (`flat.rs`).
     pub flat: Option<&'a wgpu::BindGroupLayout>,
     /// terrain.wgsl's `SPRITE_ARRAYS` and `SPRITE_SPLIT`.
@@ -401,31 +421,109 @@ fn vertex_shim(material_source: &str, vertex_stage: Option<&CheckedStage>) -> St
     out
 }
 
-fn shader_source(
+fn strip_unused_frame_bindings(source: &str, bindings: FrameBindings) -> String {
+    let mut out = source.to_owned();
+    if !bindings.reflection {
+        out = out.replace("@group(3) @binding(1) var reflection: texture_2d<f32>;\n", "");
+    }
+    if !bindings.reflection && !bindings.block_light {
+        out = out.replace("@group(3) @binding(2) var reflection_sampler: sampler;\n", "");
+    }
+    if !bindings.shadow {
+        out = out
+            .replace("@group(3) @binding(3) var shadow_map: texture_depth_2d;\n", "")
+            .replace("@group(3) @binding(4) var shadow_sampler: sampler_comparison;\n", "");
+    }
+    if !bindings.translucent_shadow {
+        out = out
+            .replace(
+                "@group(3) @binding(7) var shadow_map_translucent: texture_depth_2d;\n",
+                "",
+            )
+            .replace("@group(3) @binding(8) var shadow_color: texture_2d<f32>;\n", "");
+    }
+    if !bindings.opaque_depth {
+        out = out.replace("@group(3) @binding(6) var opaque_depth: texture_depth_2d;\n", "");
+    }
+    if !bindings.opaque_color {
+        out = out.replace("@group(3) @binding(11) var opaque_color: texture_2d<f32>;\n", "");
+    }
+    if !bindings.block_light {
+        out = out
+            .replace(
+                "@group(3) @binding(9) var block_light_colors: texture_3d<f32>;\n",
+                "",
+            )
+            .replace(
+                "@group(3) @binding(10) var<uniform> block_light_grid: vec4<f32>;\n",
+                "",
+            );
+        for helper in [
+            "fn block_light_color(position: vec3<f32>) -> vec4<f32> {\n    let size = vec3<f32>(textureDimensions(block_light_colors));\n    let uvw = (position - block_light_grid.xyz) / (block_light_grid.w * size);\n    if any(uvw < vec3<f32>(0.0)) || any(uvw > vec3<f32>(1.0)) {\n        return vec4<f32>(0.0);\n    }\n    let c = textureSampleLevel(block_light_colors, reflection_sampler, uvw, 0.0);\n    return vec4<f32>(c.rgb * 4.0, c.a);\n}",
+            "fn block_light_color(position: vec3<f32>) -> vec4<f32> {\n    let size = vec3<f32>(textureDimensions(block_light_colors));\n    let uvw = (position - block_light_grid.xyz) / (block_light_grid.w * size);\n    if any(uvw < vec3<f32>(0.0)) || any(uvw > vec3<f32>(1.0)) {\n        return vec4<f32>(0.0);\n    }\n    let c = textureSampleLevel(block_light_colors, reflection_sampler, uvw, 0.0);\n    return vec4<f32>(horizon_decode(c.rgb * 4.0), c.a);\n}",
+        ] {
+            out = out.replace(
+                helper,
+                "fn block_light_color(position: vec3<f32>) -> vec4<f32> {\n    return vec4<f32>(0.0);\n}",
+            );
+        }
+    }
+    out
+}
+
+fn shader_source_with(
     source: &str,
     vertex: Option<&CheckedStage>,
     tags: &[(u32, u32)],
     materials: &[(u32, u32)],
+    bindings: FrameBindings,
 ) -> String {
+    let filtered = strip_unused_frame_bindings(source, bindings);
+    let pbr = if bindings.pbr {
+        PBR_LIVE
+    } else {
+        PBR_STUB_MATERIAL
+    };
     format!(
-        "{source}\n{}\n// Horizon's terrain (terrain.wgsl)\n{}{}{}{ENTRIES}",
-        vertex_shim(source, vertex),
+        "{filtered}\n{}\n// Horizon's terrain (terrain.wgsl)\n{}{}{}{ENTRIES_HEAD}{pbr}{ENTRIES_TAIL}",
+        vertex_shim(&filtered, vertex),
         vanilla_terrain(),
         layer_table("horizon_sprite_tags", tags),
         layer_table("horizon_sprite_material", materials)
     )
 }
 
+#[cfg(test)]
+fn shader_source(
+    source: &str,
+    vertex: Option<&CheckedStage>,
+    tags: &[(u32, u32)],
+    materials: &[(u32, u32)],
+) -> String {
+    shader_source_with(source, vertex, tags, materials, FrameBindings::all())
+}
+
 /// The material's naga module, its errors in the stage's file.
+fn module_with(
+    stage: &CheckedStage,
+    vertex: Option<&CheckedStage>,
+    tags: &[(u32, u32)],
+    materials: &[(u32, u32)],
+    bindings: FrameBindings,
+) -> Result<naga::Module, String> {
+    let text = shader_source_with(&stage.source, vertex, tags, materials, bindings);
+    naga::front::wgsl::parse_str(&text)
+        .map_err(|e| format!("{}: {}", stage.file, e.emit_to_string(&text)))
+}
+
+#[cfg(test)]
 fn module(
     stage: &CheckedStage,
     vertex: Option<&CheckedStage>,
     tags: &[(u32, u32)],
     materials: &[(u32, u32)],
 ) -> Result<naga::Module, String> {
-    let text = shader_source(&stage.source, vertex, tags, materials);
-    naga::front::wgsl::parse_str(&text)
-        .map_err(|e| format!("{}: {}", stage.file, e.emit_to_string(&text)))
+    module_with(stage, vertex, tags, materials, FrameBindings::all())
 }
 
 impl NativeMaterial {
@@ -439,7 +537,13 @@ impl NativeMaterial {
         constants: &[(String, f64)],
         fog: bool,
     ) -> Result<Self, String> {
-        let module = module(stage, vertex_stage, shape.sprite_tags, shape.sprite_materials)?;
+        let module = module_with(
+            stage,
+            vertex_stage,
+            shape.sprite_tags,
+            shape.sprite_materials,
+            frame.bindings,
+        )?;
         let mut constants = present_constants(&module, constants);
         let sprite_names = [
             "horizon_terrain_SPRITE_ARRAYS",

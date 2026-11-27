@@ -104,7 +104,7 @@ fn build(
         .map_err(|e| format!("{}: {}", stage.file, e.emit_to_string(&text)))?;
     let mut groups: [Option<&wgpu::BindGroupLayout>; GROUP as usize + 1] = Default::default();
     groups[0] = Some(globals);
-    groups[GROUP as usize] = Some(&frame.layout);
+    groups[GROUP as usize] = Some(&frame.sky_layout);
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Native shader pack sky"),
         bind_group_layouts: &groups,
@@ -148,10 +148,10 @@ impl NativeSky {
         })
     }
 
-    /// Draws the sky in a pass whose group 0 is the terrain's.
+    /// Draws the sky in a pass whose group 0 is the sky globals (`Globals` uniform only).
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>, frame: &NativeFrame) {
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(GROUP, &frame.group, &[]);
+        pass.set_bind_group(GROUP, &frame.sky_group, &[]);
         pass.draw(0..3, 0..1);
     }
 }
@@ -326,7 +326,7 @@ mod tests {
                 });
                 pass.set_bind_group(0, &globals_group, &[]);
                 pass.set_pipeline(&pipeline);
-                pass.set_bind_group(GROUP, &frame.group, &[]);
+                pass.set_bind_group(GROUP, &frame.sky_group, &[]);
                 pass.draw(0..3, 0..1);
             }
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {

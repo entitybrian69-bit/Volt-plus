@@ -248,7 +248,7 @@ impl AnimState {
     }
 
     pub fn is_active(&self) -> bool {
-        if !self.intro_done || self.reveal_start.is_some_and(|t| t.elapsed().as_secs_f32() < 0.35) {
+        if !self.intro_done || self.reveal_start.is_some_and(|t| t.elapsed().as_secs_f32() < 1.6) {
             return true;
         }
         if horizon_client::ui_theme::motion::reduced_motion() {
@@ -1434,14 +1434,15 @@ impl Launcher {
         if r.suspended {
             return Ok(());
         }
-        // The video plays in a separate activity before the native window exists.
-        if !self.anim.intro_done {
-            self.anim.intro_done = true;
-            self.anim.reveal_start = Some(std::time::Instant::now());
-            self.anim.trigger_page_transition();
-        }
-        let reveal = if horizon_client::ui_theme::motion::reduced_motion() { 1.0 }
-            else { self.anim.reveal_start.map_or(1.0, |t| (t.elapsed().as_secs_f32() / 0.35).min(1.0)) };
+        // Start the 1.6s rise-from-below reveal after the first frame actually presents so
+        // frame-0 wallpaper/atlas/GPU initialization never consumes the animation window.
+        let reveal = if horizon_client::ui_theme::motion::reduced_motion() {
+            1.0
+        } else {
+            self.anim
+                .reveal_start
+                .map_or(0.0, |t| (t.elapsed().as_secs_f32() / 1.6).min(1.0))
+        };
         custom_background_poll(&self.home);
         self.targets.clear();
         SLIDER_TRACK_TARGETS.with(|t| t.borrow_mut().clear());
@@ -2795,10 +2796,16 @@ impl Launcher {
 
         let rendered = r.render(&game::loading_frame(&b));
         self.recycle_wallpaper_buffer(&mut b);
-        if !rendered? && !b.patches.is_empty() {
+        let rendered = rendered?;
+        if !rendered && !b.patches.is_empty() {
             // A suspended/lost surface skips the frame, including its glyph
             // uploads. Rebuild them next time instead of caching invisible text.
             horizon_client::ui_theme::reset_atlas();
+        }
+        if rendered && !self.anim.intro_done {
+            self.anim.intro_done = true;
+            self.anim.reveal_start = Some(std::time::Instant::now());
+            self.anim.trigger_page_transition();
         }
         Ok(())
     }

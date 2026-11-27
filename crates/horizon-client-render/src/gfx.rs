@@ -740,6 +740,9 @@ pub struct Renderer {
     solid_mirror: wgpu::RenderPipeline,
     mirror_globals: wgpu::Buffer,
     mirror_group: wgpu::BindGroup,
+    sky_globals_layout: wgpu::BindGroupLayout,
+    sky_globals_group: wgpu::BindGroup,
+    sky_mirror_globals_group: wgpu::BindGroup,
     mirror: Option<MirrorTarget>,
     entity_pipeline: wgpu::RenderPipeline,
     hdr_mark_pipeline: wgpu::RenderPipeline,
@@ -2732,6 +2735,35 @@ impl Renderer {
             &lightmap_sampler,
             &emission_stats.view,
         );
+        let sky_globals_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Native sky globals"),
+                entries: &[entry(
+                    0,
+                    vf,
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                )],
+            });
+        let sky_globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Native sky globals"),
+            layout: &sky_globals_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: globals.as_entire_binding(),
+            }],
+        });
+        let sky_mirror_globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Native mirror sky globals"),
+            layout: &sky_globals_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: mirror_globals.as_entire_binding(),
+            }],
+        });
         let index_quads = 1 << 16;
         let indices = Self::quad_indices(&device, index_quads);
         let instance_capacity = 4096;
@@ -3904,6 +3936,9 @@ impl Renderer {
             solid_mirror,
             mirror_globals,
             mirror_group,
+            sky_globals_layout,
+            sky_globals_group,
+            sky_mirror_globals_group,
             mirror: None,
             entity_pipeline,
             hdr_mark_pipeline,
@@ -5717,6 +5752,7 @@ impl Renderer {
         };
         let terrain = native_material::TerrainShape {
             globals: &self.terrain_layout,
+            sky_globals: &self.sky_globals_layout,
             flat: self.flat.as_ref().map(|f| &f.draw_layout),
             sprites: self.terrain_sprites,
             format: self.config.format.remove_srgb_suffix(),
@@ -7844,7 +7880,7 @@ impl Renderer {
                 timestamp_writes: native.timing.as_mut().and_then(|t| t.writes(&sky.label)),
                 ..Default::default()
             });
-            pass.set_bind_group(0, &self.group, &[]);
+            pass.set_bind_group(0, &self.sky_globals_group, &[]);
             sky.draw(&mut pass, &native.frame);
         }
         // The water mirror, for one of Horizon's own packs that reads it: the world as a
@@ -7940,7 +7976,11 @@ impl Renderer {
                         .as_ref()
                         .and_then(|n| Some((n.sky.as_ref()?, &n.frame)))
                     {
-                        Some((sky, native)) => sky.draw(&mut pass, native),
+                        Some((sky, native)) => {
+                            pass.set_bind_group(0, &self.sky_mirror_globals_group, &[]);
+                            sky.draw(&mut pass, native);
+                            pass.set_bind_group(0, &self.mirror_group, &[]);
+                        }
                         None => {
                             pass.set_pipeline(&self.sky);
                             pass.draw(0..3, 0..1);
@@ -8051,7 +8091,11 @@ impl Renderer {
                         .as_ref()
                         .and_then(|n| Some((n.sky.as_ref()?, &n.frame)))
                     {
-                        Some((sky, native)) => sky.draw(&mut pass, native),
+                        Some((sky, native)) => {
+                            pass.set_bind_group(0, &self.sky_globals_group, &[]);
+                            sky.draw(&mut pass, native);
+                            pass.set_bind_group(0, &self.group, &[]);
+                        }
                         None => {
                             pass.set_pipeline(&self.sky);
                             pass.draw(0..3, 0..1);

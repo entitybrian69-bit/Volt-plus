@@ -4,7 +4,7 @@
 use horizon_shader_api::{Report, StageKind};
 
 use super::native_material::{NativeMaterial, TerrainShape};
-use super::native_post::{NativeFrame, NativePost};
+use super::native_post::{FrameBindings, NativeFrame, NativePost};
 use super::native_shadow::NativeShadow;
 use super::native_sky::NativeSky;
 use super::pack_timing::PassTiming;
@@ -38,7 +38,7 @@ impl NativePack {
         constants: &[(String, f64)],
         lights: super::block_light::LightTable,
     ) -> Result<(Self, Vec<String>), String> {
-        let (globals, format) = (terrain.globals, terrain.format);
+        let format = terrain.format;
         let textures = super::native_post::pack_textures(device, queue, &report);
         let settings = report
             .shadow
@@ -48,32 +48,14 @@ impl NativePack {
             .stages
             .iter()
             .any(|s| s.reads("shadow_map_translucent") || s.reads("shadow_color"));
-        let mut frame = NativeFrame::new_optimized(
-            device,
-            settings.as_ref(),
-            textures,
-            lights,
-            terrain.pbr,
-            reads_translucent_shadow,
-        );
-        frame.reads_opaque_depth = report
-            .stages
-            .iter()
-            .find(|s| s.kind == StageKind::Material)
-            .is_some_and(|s| s.reads("opaque_depth"));
-        frame.reads_opaque_color = report
-            .stages
-            .iter()
-            .find(|s| s.kind == StageKind::Material)
-            .is_some_and(|s| s.reads("opaque_color"));
-        let shadow = report
-            .shadow
-            .as_ref()
-            .map(|s| NativeShadow::new(device, terrain, &frame, &s.solid_materials))
-            .transpose()?;
-        // The mirror is drawn for a material that reads it, while `[reflection] option` is on.
+        let reads_non_post = |name: &str| {
+            report
+                .stages
+                .iter()
+                .any(|s| s.kind != StageKind::Post && s.reads(name))
+        };
         let option = report.reflection.as_ref().and_then(|r| r.option.as_ref());
-        frame.reflects = report
+        let reflects = report
             .stages
             .iter()
             .find(|s| s.kind == StageKind::Material)
@@ -84,6 +66,54 @@ impl NativePack {
                     .find(|(k, _)| k == id)
                     .is_none_or(|(_, v)| *v != 0.0)
             });
+        let material_prelude = StageKind::Material.prelude(report.manifest.api);
+        let uses_pbr = terrain.pbr.is_some()
+            && report
+                .stages
+                .iter()
+                .find(|s| s.kind == StageKind::Material)
+                .is_some_and(|s| {
+                    let body = s.source.strip_prefix(&material_prelude).unwrap_or(&s.source);
+                    body.contains("block_normal_map")
+                        || body.contains("block_specular_map")
+                        || body.contains("block_pbr_maps")
+                        || body.contains("block_pbr_size")
+                });
+        let bindings = FrameBindings {
+            reflection: reads_non_post("reflection"),
+            shadow: settings.is_some()
+                || reads_non_post("shadow_map")
+                || reads_non_post("shadow_sampler"),
+            translucent_shadow: report
+                .stages
+                .iter()
+                .any(|s| {
+                    s.kind != StageKind::Post
+                        && (s.reads("shadow_map_translucent") || s.reads("shadow_color"))
+                }),
+            opaque_depth: reads_non_post("opaque_depth"),
+            opaque_color: reads_non_post("opaque_color"),
+            block_light: reads_non_post("block_light_colors") || reads_non_post("block_light_grid"),
+            pbr: uses_pbr,
+        };
+        let mut frame = NativeFrame::new_for_pack(
+            device,
+            settings.as_ref(),
+            textures,
+            lights,
+            terrain.pbr,
+            bindings,
+        );
+        frame.reads_opaque_depth = bindings.opaque_depth;
+        frame.reads_opaque_color = bindings.opaque_color;
+        frame.reads_translucent_shadow = reads_translucent_shadow;
+        let shadow = report
+            .shadow
+            .as_ref()
+            .map(|s| NativeShadow::new(device, terrain, &frame, &s.solid_materials))
+            .transpose()?;
+        // The mirror is drawn for a material that reads it, while `[reflection] option` is on.
+        frame.reflects = reflects;
         let fog = report.material_fog;
         let keeps = |key: fn(&horizon_shader_api::Stage) -> Option<bool>| {
             report.sky.as_ref().and_then(key).unwrap_or(true)
@@ -119,7 +149,16 @@ impl NativePack {
         let sky = others
             .iter()
             .find(|s| s.kind == StageKind::Sky)
-            .map(|stage| NativeSky::new(device, globals, &frame, stage, constants, format))
+            .map(|stage| {
+                NativeSky::new(
+                    device,
+                    terrain.sky_globals,
+                    &frame,
+                    stage,
+                    constants,
+                    format,
+                )
+            })
             .transpose()?;
         let vertex_stage = others.iter().find(|s| s.kind == StageKind::Vertex);
         let material = others

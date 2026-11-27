@@ -36,6 +36,9 @@ pub(super) struct NativeShaders {
     pub volt_built_at: Option<Instant>,
     /// Whether the resource pack's sprite wave/material table was uploaded to the GPU.
     pub volt_layers_uploaded: bool,
+    /// Dimension for which a failing `.zip` shader pack fell back to Android compatibility
+    /// (`None` when active `.zip` pack or no fallback has fired), preventing recompile loops.
+    pub fallback_dim: Option<i32>,
 }
 
 impl NativeShaders {
@@ -343,9 +346,13 @@ impl Game<'_> {
         let tags = pack.manifest.sprite_tags(sprites());
         let materials = pack.manifest.sprite_materials(sprites());
         let lights = horizon_client::gfx::block_light::LightTable::default();
-        renderer
-            .set_native_shader_pack(Some((report, constants, tags, materials, lights)))
-            .is_ok()
+        match renderer.set_native_shader_pack(Some((report, constants, tags, materials, lights))) {
+            Ok(_) => true,
+            Err(err) => {
+                log::warn!("shader pack {name}: Android compatibility fallback failed: {err}");
+                false
+            }
+        }
     }
     /// Builds the pack at `path` when its files changed since it was last read.
     pub(super) fn tick_native_shader_pack(&mut self, path: &Path) {
@@ -485,6 +492,7 @@ impl Game<'_> {
                 self.native_shaders.volt_fingerprint = Some(fp);
                 self.native_shaders.volt_built_at = Some(now);
                 log::warn!("Volt Shaders build failed: {err}");
+                self.system_message(Text::colored(format!("Volt Shaders failed: {err}"), RED));
             }
         }
     }

@@ -298,6 +298,7 @@ impl Game<'_> {
                 } else {
                     self.pack_ids = None;
                     if cfg!(target_os = "android") {
+                        self.native_shaders.fallback_dim = Some(dimension);
                         self.apply_android_shader_fallback(name);
                     }
                 }
@@ -307,6 +308,17 @@ impl Game<'_> {
                 log::warn!("shader pack {name}: {e}");
                 if let Some(renderer) = &mut self.renderer {
                     renderer.set_shader_pack(dimension, None, &[]);
+                }
+                if cfg!(target_os = "android") {
+                    self.native_shaders.fallback_dim = Some(dimension);
+                    if self.apply_android_shader_fallback(name) {
+                        log::info!("shader pack {name}: activated Horizon mobile compatibility shader");
+                    } else {
+                        self.system_message(Text::colored(
+                            format!("Shader pack {name} could not be loaded: {e}"),
+                            0xFF5555,
+                        ));
+                    }
                 }
             }
             Err(panic) => {
@@ -374,10 +386,11 @@ impl Game<'_> {
             if horizon_shader_api::package::is_pack(&path) {
                 // One of Horizon's own packs (game/native_shaders.rs).
                 self.tick_native_shader_pack(&path);
-            } else if self
-                .renderer
-                .as_ref()
-                .is_some_and(|r| r.shader_pack_dimension() != Some(dimension))
+            } else if self.native_shaders.fallback_dim != Some(dimension)
+                && self
+                    .renderer
+                    .as_ref()
+                    .is_some_and(|r| r.shader_pack_dimension() != Some(dimension))
             {
                 if cfg!(target_os = "android") {
                     let mut cpu_finished = None;
@@ -548,6 +561,7 @@ impl Game<'_> {
                                 } else {
                                     self.pack_ids = None;
                                     if cfg!(target_os = "android") {
+                                        self.native_shaders.fallback_dim = Some(dimension);
                                         self.apply_android_shader_fallback(&name);
                                     }
                                 }
@@ -682,9 +696,12 @@ impl Game<'_> {
             // while preserving self.settings.horizon.shader_pack so the user's chosen shader does not turn off automatically.
             renderer.set_shader_pack(dimension, None, &[]);
         }
-        if cfg!(target_os = "android") && self.apply_android_shader_fallback(name) {
-            log::info!("shader pack {name}: activated Horizon mobile compatibility shader");
-            return;
+        if cfg!(target_os = "android") {
+            self.native_shaders.fallback_dim = Some(dimension);
+            if self.apply_android_shader_fallback(name) {
+                log::info!("shader pack {name}: activated Horizon mobile compatibility shader");
+                return;
+            }
         }
         self.system_message(Text::colored(
             format!("Shader pack {name} could not be loaded and was turned off"),
