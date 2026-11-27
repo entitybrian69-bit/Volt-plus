@@ -2,6 +2,7 @@ use crate::hud::{HudAtlas, HudBatch, rgba};
 use crate::ui::{Caret, Scroll, list_background, scrollbar, separators};
 use horizon_protocol::connection::{VpnEndpoint, active_vpn, set_active_vpn, test_vpn_endpoint};
 use serde::{Deserialize, Serialize};
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -363,7 +364,7 @@ pub struct Screen {
     shared: Arc<Mutex<SharedState>>,
     pub filter: FilterTab,
     pub selected: Option<usize>,
-    pub scroll: Scroll,
+    pub scroll: Cell<Scroll>,
     pub adding_custom: bool,
     pub custom_input: String,
     pub focused_at: Instant,
@@ -408,7 +409,7 @@ impl Screen {
             shared,
             filter: FilterTab::All,
             selected: None,
-            scroll: Scroll::default(),
+            scroll: Cell::new(Scroll::default()),
             adding_custom: false,
             custom_input: String::new(),
             focused_at: Instant::now(),
@@ -598,7 +599,7 @@ impl Screen {
     }
 
     pub fn draw(
-        &mut self,
+        &self,
         atlas: &HudAtlas,
         batch: &mut HudBatch,
         caret: &mut Caret,
@@ -666,7 +667,9 @@ impl Screen {
         let (top, bottom, left) = Self::list_area(w, h);
         let visible = self.visible_nodes();
         let content = visible.len() as f32 * ROW_HEIGHT + 4.0;
-        self.scroll.clamp(top, bottom, content);
+        let mut scroll = self.scroll.get();
+        scroll.clamp(top, bottom, content);
+        self.scroll.set(scroll);
 
         list_background(batch, atlas, top, bottom, false);
         let first = batch.vertices.len();
@@ -675,7 +678,7 @@ impl Screen {
         let hovered_row = self.row_at(cursor, (w, h), &visible);
 
         for (row_idx, (real_idx, node)) in visible.iter().enumerate() {
-            let y = top + 2.0 - self.scroll.amount.trunc() + row_idx as f32 * ROW_HEIGHT;
+            let y = top + 2.0 - scroll.amount.trunc() + row_idx as f32 * ROW_HEIGHT;
             if y + ROW_HEIGHT < top || y > bottom {
                 continue;
             }
@@ -805,7 +808,7 @@ impl Screen {
             top,
             bottom,
             content,
-            self.scroll.amount,
+            scroll.amount,
         );
 
         let status = self.shared.lock().unwrap().status.clone();
@@ -831,7 +834,7 @@ impl Screen {
         if x < left || x >= left + ROW_WIDTH || y < top || y >= bottom {
             return None;
         }
-        let rel = y - (top + 2.0 - self.scroll.amount.trunc());
+        let rel = y - (top + 2.0 - self.scroll.get().amount.trunc());
         if rel < 0.0 {
             return None;
         }
@@ -847,10 +850,9 @@ impl Screen {
         let (top, bottom, left) = Self::list_area(w, h);
         let visible = self.visible_nodes();
         let content = visible.len() as f32 * ROW_HEIGHT + 4.0;
-        if self
-            .scroll
-            .press(cursor, left + ROW_WIDTH + 8.0, top, bottom, content)
-        {
+        let mut scroll = self.scroll.get();
+        if scroll.press(cursor, left + ROW_WIDTH + 8.0, top, bottom, content) {
+            self.scroll.set(scroll);
             self.drag_last_y = None;
             self.drag_moved = 0.0;
             return true;
@@ -869,16 +871,19 @@ impl Screen {
         let (w, h) = (size.0.ceil(), size.1.ceil());
         let (top, bottom, _) = Self::list_area(w, h);
         let content = self.visible_nodes().len() as f32 * ROW_HEIGHT + 4.0;
-        if self.scroll.held() {
-            self.scroll.drag(y, top, bottom, content);
+        let mut scroll = self.scroll.get();
+        if scroll.held() {
+            scroll.drag(y, top, bottom, content);
+            self.scroll.set(scroll);
             return;
         }
         if let Some(last_y) = self.drag_last_y {
             let dy = last_y - y;
             self.drag_moved += dy.abs();
             self.drag_last_y = Some(y);
-            self.scroll.amount += dy;
-            self.scroll.clamp(top, bottom, content);
+            scroll.amount += dy;
+            scroll.clamp(top, bottom, content);
+            self.scroll.set(scroll);
         }
     }
 
@@ -892,12 +897,15 @@ impl Screen {
             return;
         }
         let content = self.visible_nodes().len() as f32 * ROW_HEIGHT + 4.0;
-        self.scroll
-            .wheel(delta, ROW_HEIGHT * 1.5, top, bottom, content);
+        let mut scroll = self.scroll.get();
+        scroll.wheel(delta, ROW_HEIGHT * 1.5, top, bottom, content);
+        self.scroll.set(scroll);
     }
 
     pub fn release(&mut self) {
-        self.scroll.release();
+        let mut scroll = self.scroll.get();
+        scroll.release();
+        self.scroll.set(scroll);
         self.drag_last_y = None;
     }
 
@@ -967,17 +975,17 @@ impl Screen {
             Some(103) => true,
             Some(105) => {
                 self.filter = FilterTab::All;
-                self.scroll.amount = 0.0;
+                self.scroll.set(Scroll::default());
                 false
             }
             Some(106) => {
                 self.filter = FilterTab::Tunnels;
-                self.scroll.amount = 0.0;
+                self.scroll.set(Scroll::default());
                 false
             }
             Some(107) => {
                 self.filter = FilterTab::FastDns;
-                self.scroll.amount = 0.0;
+                self.scroll.set(Scroll::default());
                 false
             }
             _ => {

@@ -2222,7 +2222,7 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
                 ),
             ),
             Mode::Multiplayer(_) => return None,
-            Mode::Vpn(_) => ScreenInfo::new("vpn", "VPN Networks".into()),
+            Mode::Vpn(_) => ScreenInfo::new("vpn", "VPN Networks"),
         };
         Some(info)
     }
