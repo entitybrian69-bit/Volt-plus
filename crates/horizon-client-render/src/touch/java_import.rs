@@ -473,22 +473,28 @@ fn decode_pojav_keycode(code: i32, use_android: bool) -> Option<ControlEvent> {
     }
 }
 
-fn collect_pojav_tokens(btn_val: &Value, use_android: bool) -> Vec<String> {
+fn collect_pojav_tokens(btn_val: &Value, use_android: bool, has_extra_token: bool) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut push_code = |c: i32| {
         if let Some(ev) = decode_pojav_keycode(c, use_android)
             && let Some(tok) = token_from_event(ev, "")
             && CustomButton::valid_token(&tok)
-            && !tokens.contains(&tok)
         {
             tokens.push(tok);
+            true
+        } else {
+            false
         }
     };
     if let Some(arr) = btn_val["keycodes"].as_array() {
         for code in arr {
-            if let Some(c) = code.as_i64() {
-                push_code(c as i32);
+            let decoded = code.as_i64().is_some_and(|c| push_code(c as i32));
+            if !decoded && !has_extra_token && tokens.len() < 4 {
+                tokens.push("key.keyboard.unknown".to_owned());
             }
+        }
+        while tokens.len() > 1 && tokens.last().is_some_and(|t| t == "key.keyboard.unknown") {
+            tokens.pop();
         }
     } else if let Some(single) = btn_val["keycode"].as_i64() {
         // Pojav v1 legacy format
@@ -579,11 +585,11 @@ fn push_pojav_button(
     let w_norm = (w_px / REF_W).clamp(0.02, 0.75);
     let h_norm = (h_px / REF_H).clamp(0.02, 0.75);
 
-    let mut tokens = collect_pojav_tokens(btn_val, use_android);
-    if let Some(tok) = extra_token
-        && !tokens.contains(&tok)
-    {
-        tokens.insert(0, tok);
+    let mut tokens = collect_pojav_tokens(btn_val, use_android, extra_token.is_some());
+    if let Some(tok) = extra_token {
+        if !tokens.contains(&tok) {
+            tokens.insert(0, tok);
+        }
     }
 
     let name = btn_val["name"].as_str().unwrap_or("").trim().to_owned();
@@ -1067,7 +1073,6 @@ fn import_zalith(value: &Value, file_name: &str) -> Result<Settings, String> {
                     if let Some(ev) = zalith_event(kind, key)
                         && let Some(tok) = token_from_event(ev, key)
                         && CustomButton::valid_token(&tok)
-                        && !tokens.contains(&tok)
                     {
                         tokens.push(tok);
                     }
@@ -1288,7 +1293,6 @@ fn push_fcl_button(
                 if let Some(parsed) = decode_fcl_keycode(code as i32, use_android)
                     && let Some(tok) = token_from_event(parsed, "")
                     && CustomButton::valid_token(&tok)
-                    && !tokens.contains(&tok)
                 {
                     tokens.push(tok);
                 }
@@ -1800,5 +1804,46 @@ mod tests {
                 thin[3]
             );
         }
+    }
+
+    #[test]
+    fn preserves_all_four_event_slots_including_duplicates_and_sparse_slots() {
+        let pojav = serde_json::json!({
+            "version": 9,
+            "scaledAt": 100.0,
+            "mControlDataList": [
+                {
+                    "name": "Macro",
+                    "keycodes": [9, -4, -4, 8],
+                    "dynamicX": "100",
+                    "dynamicY": "100",
+                    "width": 50.0,
+                    "height": 50.0
+                },
+                {
+                    "name": "Sparse",
+                    "keycodes": [51, 0, 32, 0],
+                    "dynamicX": "200",
+                    "dynamicY": "100",
+                    "width": 50.0,
+                    "height": 50.0
+                }
+            ]
+        });
+        let s = convert_java_control_json(&pojav, "four_slots.json").unwrap().unwrap();
+        assert_eq!(s.custom_buttons[0].key, "key.keyboard.2");
+        assert_eq!(s.custom_buttons[0].second_key, "key.mouse.right");
+        assert_eq!(s.custom_buttons[0].third_key, "key.mouse.right");
+        assert_eq!(s.custom_buttons[0].fourth_key, "key.keyboard.1");
+        assert_eq!(s.custom_buttons[0].active_tokens().len(), 4);
+
+        assert_eq!(s.custom_buttons[1].key, "key.keyboard.w");
+        assert_eq!(s.custom_buttons[1].second_key, "key.keyboard.unknown");
+        assert_eq!(s.custom_buttons[1].third_key, "key.keyboard.d");
+        assert_eq!(s.custom_buttons[1].fourth_key, "");
+        assert_eq!(
+            s.custom_buttons[1].active_tokens(),
+            vec!["key.keyboard.w", "key.keyboard.d"]
+        );
     }
 }

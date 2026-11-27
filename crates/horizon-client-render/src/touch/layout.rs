@@ -855,16 +855,12 @@ impl Settings {
         for button in &mut s.custom_buttons {
             if button.key == "action:key.sneak" {
                 button.key = "key.keyboard.left.shift".into();
-                if button.second_key == "action:key.sneak"
-                    || button.second_key == "key.keyboard.left.shift"
-                {
+                if button.second_key == "action:key.sneak" {
                     button.second_key.clear();
                 }
             } else if button.key == "action:key.sprint" {
                 button.key = "key.keyboard.left.control".into();
-                if button.second_key == "action:key.sprint"
-                    || button.second_key == "key.keyboard.left.control"
-                {
+                if button.second_key == "action:key.sprint" {
                     button.second_key.clear();
                 }
             }

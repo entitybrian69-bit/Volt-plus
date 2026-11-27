@@ -33,6 +33,8 @@ pub(super) struct Pads {
     #[cfg(target_os = "android")]
     pub(super) late_custom_releases: Vec<String>,
     #[cfg(target_os = "android")]
+    pub(super) deferred_custom_events: std::collections::VecDeque<(String, bool)>,
+    #[cfg(target_os = "android")]
     pub(super) held_scroll: Option<(bool, Instant)>,
     #[cfg(target_os = "android")]
     pub(super) hardware_keys: std::collections::HashSet<KeyCode>,
@@ -406,11 +408,16 @@ impl Game<'_> {
             }
         }
         #[cfg(target_os = "android")]
-        for token in std::mem::take(&mut self.pad.late_custom_releases) {
-            if !ticking || self.pad.custom_pressed_at.get(&token) != Some(&self.ticks) {
-                self.android_dispatch_custom_token(&token, false);
-            } else {
-                self.pad.late_custom_releases.push(token);
+        {
+            if !ticking {
+                self.android_drain_deferred_custom_events();
+            }
+            for token in std::mem::take(&mut self.pad.late_custom_releases) {
+                if !ticking || self.pad.custom_pressed_at.get(&token) != Some(&self.ticks) {
+                    self.android_dispatch_custom_token(&token, false);
+                } else {
+                    self.pad.late_custom_releases.push(token);
+                }
             }
         }
         for (button, down) in edges {

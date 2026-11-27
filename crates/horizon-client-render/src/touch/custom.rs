@@ -395,16 +395,33 @@ impl TouchControls {
         let Some(tokens) = self.custom_fingers.remove(&id) else {
             return;
         };
+        let mut released = Vec::new();
         for tok in tokens.into_iter().rev() {
+            if released.contains(&tok) {
+                continue;
+            }
             let still_held = self
                 .custom_fingers
                 .values()
                 .any(|other| other.contains(&tok))
                 || self.latched_custom.contains(&tok);
             if !still_held {
+                released.push(tok.clone());
                 self.custom_events.push((tok, false));
             }
         }
+    }
+    fn is_instant_custom_token(tok: &str) -> bool {
+        matches!(
+            tok,
+            "mouse.virtual.toggle"
+                | "action:horizon.toggle_keyboard"
+                | "action:horizon.open_menu"
+                | "action:horizon.toggle_controls"
+        ) || tok.starts_with("action:horizon.switch_layer:")
+            || tok.starts_with("action:horizon.show_layer:")
+            || tok.starts_with("action:horizon.hide_layer:")
+            || tok.starts_with("action:horizon.send_text:")
     }
     fn activate_custom_button_at(
         &mut self,
@@ -417,9 +434,9 @@ impl TouchControls {
             return false;
         };
         let active = btn.active_tokens();
-        let Some(key) = active.first().cloned() else {
+        if active.is_empty() {
             return false;
-        };
+        }
         let placement = self.custom_placement(index);
         self.clicked = true;
         self.custom_swipe_btn.insert(id, index);
@@ -467,16 +484,42 @@ impl TouchControls {
                     && !t.starts_with("action:horizon.hide_layer:")
             });
             if local_handled && !has_non_local {
-                self.fingers.insert(id, (Role::Ignore, point));
+                if placement.passthrough && !self.in_menu && !self.ctrl_origin_fingers.contains(&id) {
+                    self.passthrough_fingers.insert(id);
+                    self.fingers.insert(
+                        id,
+                        (
+                            Role::Look {
+                                start: point,
+                                since: Instant::now(),
+                                dragged: false,
+                                held_use: false,
+                                committed: false,
+                            },
+                            point,
+                        ),
+                    );
+                } else {
+                    self.fingers.insert(id, (Role::Ignore, point));
+                }
                 return true;
             }
         }
 
-        if placement.toggleable && key != "mouse.virtual.toggle" {
-            let all_latched = active.iter().all(|t| self.latched_custom.contains(t));
+        let has_latchable = active.iter().any(|t| !Self::is_instant_custom_token(t));
+        if placement.toggleable && has_latchable {
+            let latchable: Vec<String> = active
+                .iter()
+                .filter(|t| !Self::is_instant_custom_token(t))
+                .cloned()
+                .collect();
+            let all_latched = latchable.iter().all(|t| self.latched_custom.contains(t));
             let now_on = !all_latched;
             for tok in active {
-                if now_on {
+                if Self::is_instant_custom_token(&tok) {
+                    self.custom_events.push((tok.clone(), true));
+                    self.custom_events.push((tok, false));
+                } else if now_on {
                     if self.latched_custom.insert(tok.clone()) {
                         self.custom_events.push((tok, true));
                     }
@@ -502,7 +545,23 @@ impl TouchControls {
 
         let mut to_emit = Vec::with_capacity(active.len());
         for tok in &active {
-            to_emit.push((tok.clone(), true));
+            let is_repeatable_click = matches!(
+                tok.as_str(),
+                "key.mouse.left"
+                    | "key.mouse.right"
+                    | "key.mouse.middle"
+                    | "mouse.scroll.up"
+                    | "mouse.scroll.down"
+                    | "action:key.attack"
+                    | "action:key.use"
+                    | "action:key.pickItem"
+            ) || Self::is_instant_custom_token(tok);
+            let already_held = !is_repeatable_click
+                && (self.custom_fingers.values().any(|other| other.contains(tok))
+                    || self.latched_custom.contains(tok));
+            if !already_held {
+                to_emit.push((tok.clone(), true));
+            }
         }
         self.custom_fingers.insert(id, active);
         self.custom_events.extend(to_emit);
@@ -884,5 +943,74 @@ mod tests {
         // Slide off button 3 into empty space (0.80, 0.50) -> button 3 releases immediately
         t.update(1, [0.80, 0.50], false, false);
         assert_eq!(t.key_events(), [("key.keyboard.3".into(), false)]);
+    }
+
+    #[test]
+    fn four_event_slots_emit_in_order_including_duplicates_and_toggle_instant_actions() {
+        let mut t = TouchControls::default();
+        t.viewport(1920, 1080);
+
+        let mut macro_btn = CustomButton::new("key.keyboard.2".into(), 0);
+        macro_btn.set_event_slot(1, "key.mouse.right".into());
+        macro_btn.set_event_slot(2, "key.mouse.right".into());
+        macro_btn.set_event_slot(3, "key.keyboard.1".into());
+        for m in 0..3 {
+            macro_btn.layouts[m].center = [0.35, 0.50];
+            macro_btn.layouts[m].size = 0.12;
+        }
+        t.settings.custom_buttons.push(macro_btn);
+
+        let mut toggle_btn = CustomButton::new("key.keyboard.w".into(), 1);
+        toggle_btn.set_event_slot(1, "mouse.virtual.toggle".into());
+        for m in 0..3 {
+            toggle_btn.layouts[m].center = [0.65, 0.50];
+            toggle_btn.layouts[m].size = 0.12;
+            toggle_btn.layouts[m].toggleable = true;
+        }
+        t.settings.custom_buttons.push(toggle_btn);
+
+        // Press 4-slot macro: all 4 slots fire in order, including duplicate mouse.right.
+        t.update(1, [0.35, 0.50], true, false);
+        assert_eq!(
+            t.key_events(),
+            [
+                ("key.keyboard.2".into(), true),
+                ("key.mouse.right".into(), true),
+                ("key.mouse.right".into(), true),
+                ("key.keyboard.1".into(), true),
+            ]
+        );
+        // Release emits each unique token once in reverse order.
+        t.update(1, [0.35, 0.50], false, true);
+        assert_eq!(
+            t.key_events(),
+            [
+                ("key.keyboard.1".into(), false),
+                ("key.mouse.right".into(), false),
+                ("key.keyboard.2".into(), false),
+            ]
+        );
+
+        // Toggleable button with instant token in slot 2 latches W without latching the instant token.
+        t.update(2, [0.65, 0.50], true, false);
+        t.update(2, [0.65, 0.50], false, true);
+        assert_eq!(
+            t.key_events(),
+            [
+                ("key.keyboard.w".into(), true),
+                ("mouse.virtual.toggle".into(), true),
+                ("mouse.virtual.toggle".into(), false),
+            ]
+        );
+        t.update(3, [0.65, 0.50], true, false);
+        t.update(3, [0.65, 0.50], false, true);
+        assert_eq!(
+            t.key_events(),
+            [
+                ("key.keyboard.w".into(), false),
+                ("mouse.virtual.toggle".into(), true),
+                ("mouse.virtual.toggle".into(), false),
+            ]
+        );
     }
 }

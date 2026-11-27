@@ -8095,6 +8095,7 @@ impl Renderer {
                             pass.set_bind_group(0, &self.sky_globals_group, &[]);
                             sky.draw(&mut pass, native);
                             pass.set_bind_group(0, &self.group, &[]);
+                            pack_frame(&mut pass);
                         }
                         None => {
                             pass.set_pipeline(&self.sky);
@@ -8606,6 +8607,7 @@ impl Renderer {
                     );
                     pass = world_pass_after_culling(&mut encoder, world_view, world_depth, true);
                     pass.set_bind_group(0, &self.group, &[]);
+                    pack_frame(&mut pass);
                     pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint32);
                     // HDR output's mark on what shines in the stages, as the classic
                     // pass marks it after drawing it: eyes, the dragon's eyes and rays,

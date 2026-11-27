@@ -5907,6 +5907,8 @@ impl Game<'_> {
         // between CLIENT_TICK_END and a later pong.
         if self.replay.is_none() {
             self.remote_handle_input();
+            #[cfg(target_os = "android")]
+            self.android_drain_deferred_custom_events();
         }
         // Player.tick's ItemCooldowns.tick, in ClientLevel.tickEntities after
         // handleKeybinds: this path replaces `tick_world`'s for a server's

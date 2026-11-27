@@ -7340,6 +7340,8 @@ impl Game<'_> {
         // On the server thread the window is a hub guest: drain its packets
         // here too, before falling-block schedules run (#4510).
         horizon_client::spans::time("tick_local_hand", || self.tick_local_hand())?;
+        #[cfg(target_os = "android")]
+        self.android_drain_deferred_custom_events();
         horizon_client::spans::time("postprocess_chunks", || self.postprocess_chunks())?;
         if running {
             horizon_client::spans::time("tick_lan_packets", || self.tick_lan_packets());

@@ -48,6 +48,10 @@ pub fn use_on_target(world: &mut impl TargetUseWorld, entity: bool) {
 }
 
 impl InteractionInput {
+    pub fn has_pending(&self) -> bool {
+        self.clicks != [0, 0, 0]
+    }
+
     pub fn press(&mut self, button: Button) {
         self.clicks[button as usize] += 1;
     }

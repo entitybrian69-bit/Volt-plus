@@ -208,19 +208,50 @@ impl Launcher {
     }
 
     fn edit_text(&mut self, output: horizon_client::osk::Output) {
-        if let Some(tc) = &mut self.control_editor
-            && horizon_client::touch_ui::apply_editor_or_preset_output(
-                tc.editor.as_mut(),
-                None,
-                &output,
-            )
-        {
+        if let Some(tc) = &mut self.control_editor {
             let game_home = self.catalog.config.game_home(&self.home);
-            let _ = tc.settings.save_to(&game_home.join("horizon-touch.json"));
-            if horizon_client::touch_ui::output_dismisses(&output) {
-                crate::platform::hide();
+            let prev_cwd = std::env::current_dir().ok();
+            let _ = std::env::set_current_dir(&game_home);
+            let mut handled = false;
+            if tc.editor.as_ref().is_some_and(|ed| {
+                ed.picker_step != horizon_client::touch::PickerStep::None || ed.key_picker
+            }) {
+                handled = match &output {
+                    horizon_client::osk::Output::Text(t) => tc.capture_custom_text(t),
+                    horizon_client::osk::Output::Key(code) => tc.capture_custom_key_code(*code),
+                    horizon_client::osk::Output::Backspace => {
+                        tc.capture_custom_key_code(winit::keyboard::KeyCode::Backspace)
+                    }
+                    horizon_client::osk::Output::Enter => {
+                        tc.capture_custom_key_code(winit::keyboard::KeyCode::Enter)
+                    }
+                    horizon_client::osk::Output::Close => false,
+                };
+                if handled {
+                    let _ = tc.settings.save_to(&game_home.join("horizon-touch.json"));
+                    crate::platform::hide();
+                }
             }
-            return;
+            if !handled
+                && (horizon_client::touch_ui::apply_editor_button_label_output(tc, &output)
+                    || horizon_client::touch_ui::apply_editor_or_preset_output(
+                        tc.editor.as_mut(),
+                        None,
+                        &output,
+                    ))
+            {
+                let _ = tc.settings.save_to(&game_home.join("horizon-touch.json"));
+                if horizon_client::touch_ui::output_dismisses(&output) {
+                    crate::platform::hide();
+                }
+                handled = true;
+            }
+            if let Some(prev) = prev_cwd {
+                let _ = std::env::set_current_dir(prev);
+            }
+            if handled {
+                return;
+            }
         }
         if self.login.edit(self.catalog.editing, &output) {
             if matches!(
@@ -1197,7 +1228,12 @@ impl ApplicationHandler for Launcher {
             && let Some(ed) = &mut tc.editor
             && std::mem::take(&mut ed.keyboard_request)
         {
-            let text = if ed.editing_save_desc {
+            let text = if ed.picker_step != horizon_client::touch::PickerStep::None || ed.key_picker
+            {
+                String::new()
+            } else if ed.editing_button_label {
+                ed.button_label_input.clone()
+            } else if ed.editing_save_desc {
                 ed.save_desc_input.clone()
             } else {
                 ed.save_name_input.clone()

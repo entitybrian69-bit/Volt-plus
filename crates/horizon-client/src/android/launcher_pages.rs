@@ -11980,7 +11980,13 @@ impl Launcher {
                 if let Some(ed) = &mut tc.editor
                     && std::mem::take(&mut ed.keyboard_request)
                 {
-                    let text = if ed.editing_save_desc {
+                    let text = if ed.picker_step != horizon_client::touch::PickerStep::None
+                        || ed.key_picker
+                    {
+                        String::new()
+                    } else if ed.editing_button_label {
+                        ed.button_label_input.clone()
+                    } else if ed.editing_save_desc {
                         ed.save_desc_input.clone()
                     } else {
                         ed.save_name_input.clone()
@@ -12078,21 +12084,34 @@ impl Launcher {
             }
             return;
         }
-        let editor_typing = self
+        let editor_mode = self
             .control_editor
             .as_ref()
             .and_then(|tc| tc.editor.as_ref())
-            .is_some_and(|ed| ed.save_dialog_open);
-        if self.catalog.editing.is_none() && !editor_typing {
+            .map(|ed| {
+                (
+                    ed.save_dialog_open || ed.editing_button_label,
+                    ed.picker_step != horizon_client::touch::PickerStep::None || ed.key_picker,
+                )
+            });
+        let (editor_typing, editor_picking) = editor_mode.unwrap_or((false, false));
+        if self.catalog.editing.is_none() && !editor_typing && !editor_picking {
             return;
         }
-        let out = match key.physical_key {
-            PhysicalKey::Code(KeyCode::Backspace) => Some(Output::Backspace),
-            PhysicalKey::Code(KeyCode::Enter) => {
-                crate::platform::hide();
-                Some(Output::Enter)
+        let out = if editor_picking {
+            match key.physical_key {
+                PhysicalKey::Code(code) => Some(Output::Key(code)),
+                _ => key.text.map(|s| Output::Text(s.into())),
             }
-            _ => key.text.map(|s| Output::Text(s.into())),
+        } else {
+            match key.physical_key {
+                PhysicalKey::Code(KeyCode::Backspace) => Some(Output::Backspace),
+                PhysicalKey::Code(KeyCode::Enter) => {
+                    crate::platform::hide();
+                    Some(Output::Enter)
+                }
+                _ => key.text.map(|s| Output::Text(s.into())),
+            }
         };
         if let Some(out) = out {
             self.edit_text(out);

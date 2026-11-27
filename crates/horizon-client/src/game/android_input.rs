@@ -171,9 +171,143 @@ impl Game<'_> {
                 }
             })
     }
+    fn is_hotbar_switch_token(token: &str) -> bool {
+        matches!(
+            token,
+            "key.keyboard.1"
+                | "key.keyboard.2"
+                | "key.keyboard.3"
+                | "key.keyboard.4"
+                | "key.keyboard.5"
+                | "key.keyboard.6"
+                | "key.keyboard.7"
+                | "key.keyboard.8"
+                | "key.keyboard.9"
+                | "action:key.hotbar.1"
+                | "action:key.hotbar.2"
+                | "action:key.hotbar.3"
+                | "action:key.hotbar.4"
+                | "action:key.hotbar.5"
+                | "action:key.hotbar.6"
+                | "action:key.hotbar.7"
+                | "action:key.hotbar.8"
+                | "action:key.hotbar.9"
+                | "mouse.scroll.up"
+                | "mouse.scroll.down"
+                | "mouse.scroll.up.held"
+                | "mouse.scroll.down.held"
+        )
+    }
+
+    fn is_tick_deferred_hand_token(&self, token: &str) -> bool {
+        if matches!(
+            token,
+            "key.mouse.left"
+                | "key.mouse.right"
+                | "key.mouse.middle"
+                | "action:key.attack"
+                | "action:key.use"
+                | "action:key.pickItem"
+        ) {
+            return true;
+        }
+        if self.remote.is_some()
+            && matches!(
+                token,
+                "key.keyboard.f" | "key.keyboard.q" | "action:key.swapOffhand" | "action:key.drop"
+            )
+        {
+            return true;
+        }
+        if let Some(code) = horizon_client::keybinds::key_code(token) {
+            for mapped in self.settings.keys.translate_all(code) {
+                match mapped {
+                    Err(MouseButton::Left | MouseButton::Right | MouseButton::Middle) => {
+                        return true;
+                    }
+                    Ok(KeyCode::KeyF | KeyCode::KeyQ) if self.remote.is_some() => {
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        false
+    }
+
     pub(super) fn android_custom_events(&mut self) {
+        let in_gameplay = self.title.is_none()
+            && self.screen == Screen::Playing
+            && !self.pause
+            && !self.pad_in_menu();
+        let mut hand_action_queued = in_gameplay
+            && (self.attack_clicks > 0
+                || self.use_clicks > 0
+                || self
+                    .remote
+                    .as_ref()
+                    .is_some_and(|r| r.input.has_pending() || !r.pending_keys.is_empty()));
+        let mut deferring = false;
         for (name, down) in self.pad.touch.key_events() {
+            if !in_gameplay {
+                self.android_custom_token_edge(&name, down);
+                continue;
+            }
+            if deferring {
+                self.pad.deferred_custom_events.push_back((name, down));
+                continue;
+            }
+            if down && hand_action_queued && Self::is_hotbar_switch_token(&name) {
+                deferring = true;
+                self.pad.deferred_custom_events.push_back((name, down));
+                continue;
+            }
+            if !down
+                && self
+                    .pad
+                    .deferred_custom_events
+                    .iter()
+                    .any(|(tok, d)| *d && tok == &name)
+            {
+                self.pad.deferred_custom_events.push_back((name, down));
+                continue;
+            }
             self.android_custom_token_edge(&name, down);
+            if down && self.is_tick_deferred_hand_token(&name) {
+                hand_action_queued = true;
+            }
+        }
+    }
+
+    pub(super) fn android_drain_deferred_custom_events(&mut self) {
+        if self.pad.deferred_custom_events.is_empty() {
+            return;
+        }
+        let in_gameplay = self.title.is_none()
+            && self.screen == Screen::Playing
+            && !self.pause
+            && !self.pad_in_menu();
+        if !in_gameplay {
+            while let Some((name, down)) = self.pad.deferred_custom_events.pop_front() {
+                self.android_custom_token_edge(&name, down);
+            }
+            return;
+        }
+        let mut hand_action_queued = self.attack_clicks > 0
+            || self.use_clicks > 0
+            || self
+                .remote
+                .as_ref()
+                .is_some_and(|r| r.input.has_pending() || !r.pending_keys.is_empty());
+        while let Some((name, down)) = self.pad.deferred_custom_events.front().cloned() {
+            if down && hand_action_queued && Self::is_hotbar_switch_token(&name) {
+                break;
+            }
+            self.pad.deferred_custom_events.pop_front();
+            self.android_custom_token_edge(&name, down);
+            if down && self.is_tick_deferred_hand_token(&name) {
+                hand_action_queued = true;
+            }
         }
     }
 
@@ -1612,7 +1746,10 @@ impl Game<'_> {
         if let Some(ed) = self.pad.touch.editor.as_mut()
             && std::mem::take(&mut ed.keyboard_request)
         {
-            let text = if ed.editing_button_label {
+            let text = if ed.picker_step != horizon_client::touch::PickerStep::None || ed.key_picker
+            {
+                String::new()
+            } else if ed.editing_button_label {
                 ed.button_label_input.clone()
             } else if ed.editing_save_desc {
                 ed.save_desc_input.clone()
