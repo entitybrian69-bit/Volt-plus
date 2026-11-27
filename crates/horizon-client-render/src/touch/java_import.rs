@@ -474,22 +474,17 @@ fn decode_pojav_keycode(code: i32, use_android: bool) -> Option<ControlEvent> {
 }
 
 fn collect_pojav_tokens(btn_val: &Value, use_android: bool, has_extra_token: bool) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut push_code = |c: i32| {
-        if let Some(ev) = decode_pojav_keycode(c, use_android)
-            && let Some(tok) = token_from_event(ev, "")
-            && CustomButton::valid_token(&tok)
-        {
-            tokens.push(tok);
-            true
-        } else {
-            false
-        }
+    let decode = |c: i32| {
+        let ev = decode_pojav_keycode(c, use_android)?;
+        let tok = token_from_event(ev, "")?;
+        CustomButton::valid_token(&tok).then_some(tok)
     };
+    let mut tokens = Vec::new();
     if let Some(arr) = btn_val["keycodes"].as_array() {
         for code in arr {
-            let decoded = code.as_i64().is_some_and(|c| push_code(c as i32));
-            if !decoded && !has_extra_token && tokens.len() < 4 {
+            if let Some(tok) = code.as_i64().and_then(|c| decode(c as i32)) {
+                tokens.push(tok);
+            } else if !has_extra_token && tokens.len() < 4 {
                 tokens.push("key.keyboard.unknown".to_owned());
             }
         }
@@ -498,16 +493,16 @@ fn collect_pojav_tokens(btn_val: &Value, use_android: bool, has_extra_token: boo
         }
     } else if let Some(single) = btn_val["keycode"].as_i64() {
         // Pojav v1 legacy format
-        if btn_val["holdShift"].as_bool().unwrap_or(false) {
-            push_code(340);
+        for (cond, code) in [
+            (btn_val["holdShift"].as_bool().unwrap_or(false), 340),
+            (btn_val["holdCtrl"].as_bool().unwrap_or(false), 341),
+            (btn_val["holdAlt"].as_bool().unwrap_or(false), 342),
+            (true, single as i32),
+        ] {
+            if cond && let Some(tok) = decode(code) {
+                tokens.push(tok);
+            }
         }
-        if btn_val["holdCtrl"].as_bool().unwrap_or(false) {
-            push_code(341);
-        }
-        if btn_val["holdAlt"].as_bool().unwrap_or(false) {
-            push_code(342);
-        }
-        push_code(single as i32);
     }
     tokens
 }
