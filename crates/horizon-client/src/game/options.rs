@@ -535,7 +535,7 @@ impl Game<'_> {
             r.gamma = if s.extras.volt.fullbright.enabled {
                 s.gamma
                     .max((s.extras.volt.fullbright.gamma_pct as f32 / 100.0).clamp(1.0, 15.0))
-            } else if s.extras.volt.clear_caves.enabled && s.extras.volt.clear_caves.brighten_darkness {
+            } else if s.extras.volt.clear_caves.enabled && s.extras.volt.clear_caves.smooth_night_vision {
                 s.gamma.max(3.5)
             } else {
                 s.gamma

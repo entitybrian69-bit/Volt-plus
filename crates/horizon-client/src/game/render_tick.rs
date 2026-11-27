@@ -155,7 +155,7 @@ impl Game<'_> {
             }
         }
         let cc = &self.settings.extras.volt.clear_caves;
-        if cc.enabled && cc.clear_cave_fog && fog_type == FogType::Atmospheric {
+        if cc.enabled && cc.remove_void_fog && fog_type == FogType::Atmospheric {
             let sky_light = self.world.light(
                 eye[0].floor() as i32,
                 eye[1].floor() as i32,
@@ -164,6 +164,10 @@ impl Game<'_> {
             if sky_light <= 2 {
                 horizon_client::fog::clear_distance_fog(&mut fog, &input);
             }
+        }
+        if cc.enabled && cc.boost_lava_clarity && fog_type == FogType::Lava {
+            (fog.environmental_start, fog.environmental_end) = (16.0, 96.0);
+            (fog.render_distance_start, fog.render_distance_end) = (16.0, 96.0);
         }
         fog
     }
@@ -287,16 +291,16 @@ impl Game<'_> {
         let in_water =
             fog_type(&self.world, self.res.facts(), eye, self.forward()) == FogType::Water;
         let cv = &self.settings.extras.volt.clean_view;
-        let water = (in_water && !spectator && !(cv.enabled && cv.hide_water_overlay))
+        let water = (in_water && !spectator && !(cv.enabled && cv.hide_ambient_beacons))
             .then(|| (self.eye_brightness(eye), self.yaw, self.pitch));
         // Hud.extractCameraOverlays; the spyglass scope (and its easing) is
         // drawn on the HUD by draw_spyglass.
         let fx = &self.screen_fx;
         let pvp = &self.settings.extras.volt.pvp_visuals;
-        let hide_pumpkin = (pvp.enabled && pvp.hide_pumpkin) || (cv.enabled && cv.hide_pumpkin);
-        let hide_portal = (pvp.enabled && pvp.hide_portal_overlay) || (cv.enabled && cv.hide_portal_overlay);
-        let hide_fire = (pvp.enabled && pvp.low_fire_pct == 0) || (cv.enabled && cv.hide_fire_overlay);
-        let hide_freeze = cv.enabled && cv.hide_freezing;
+        let hide_pumpkin = (pvp.enabled && pvp.hide_pumpkin) || (cv.enabled && cv.hide_self_potions);
+        let hide_portal = (pvp.enabled && pvp.hide_portal_overlay) || (cv.enabled && cv.hide_self_potions);
+        let hide_fire = (pvp.enabled && pvp.low_fire_pct == 0) || (cv.enabled && cv.hide_self_potions);
+        let hide_freeze = cv.enabled && cv.hide_self_potions;
         let overlays = hud_overlays::CameraOverlays {
             vignette: self.settings.vignette.then_some((
                 fx.vignette_brightness,

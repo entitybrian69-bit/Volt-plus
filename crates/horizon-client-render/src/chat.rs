@@ -400,14 +400,14 @@ impl Chat {
         }
         if self.volt_mention.enabled && !plain.is_empty() && !plain.starts_with("[Volt+]") {
             let lower = plain.to_ascii_lowercase();
-            let hit_name = self.volt_mention.highlight_username
+            let hit_name = self.volt_mention.alert_on_username
                 && !self.volt_player_name.is_empty()
                 && lower.contains(&self.volt_player_name.to_ascii_lowercase());
-            let hit_kw = self.volt_mention.keywords.split(',').any(|kw| {
-                let k = kw.trim();
-                !k.is_empty() && lower.contains(&k.to_ascii_lowercase())
-            });
-            if hit_name || hit_kw {
+            let hit_tpa = self.volt_mention.alert_on_tpa_msg
+                && ["tpa", "tpahere", "whispers to you", "-> me", "[pm]"]
+                    .iter()
+                    .any(|kw| lower.contains(kw));
+            if hit_name || hit_tpa {
                 self.volt_mention_triggered = true;
                 self.volt_mention_last = plain;
                 message.content = Text::empty()

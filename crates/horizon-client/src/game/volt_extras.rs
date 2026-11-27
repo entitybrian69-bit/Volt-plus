@@ -1644,10 +1644,10 @@ impl Game<'_> {
         // Chat Mention Ping chime
         if self.ui.chat.volt_mention_triggered {
             self.ui.chat.volt_mention_triggered = false;
-            if self.settings.extras.volt.chat_mention.play_sound {
+            if self.settings.extras.volt.chat_mention.play_ping_chime {
                 self.play_at_feet("minecraft:block.note_block.bell");
             }
-            if self.settings.extras.volt.chat_mention.show_banner {
+            if self.settings.extras.volt.chat_mention.show_popup_banner {
                 let preview: String = self.ui.chat.volt_mention_last.chars().take(42).collect();
                 self.extras.volt.mention_banner = Some((preview, self.ticks + 80));
             }
@@ -1676,7 +1676,7 @@ impl Game<'_> {
                     let sy = self.yaw.to_radians().sin() as f32;
                     let cy = self.yaw.to_radians().cos() as f32;
                     let right_speed = (dx as f32 * (-cy) + dz as f32 * (-sy)) * 20.0;
-                    let strength = f32::from(self.settings.extras.volt.cameraoverhaul.roll_strength_pct) / 100.0;
+                    let strength = f32::from(self.settings.extras.volt.cameraoverhaul.strafe_roll_pct) / 100.0;
                     let target_roll = (right_speed * 0.55 * strength).clamp(-6.5, 6.5);
                     self.extras.volt.camera_roll_deg =
                         self.extras.volt.camera_roll_deg * 0.8 + target_roll * 0.2;
@@ -1697,7 +1697,7 @@ impl Game<'_> {
                     if !raw.is_empty() && raw != self.extras.volt.last_biome {
                         let first_seen = self.extras.volt.last_biome.is_empty();
                         self.extras.volt.last_biome = raw.to_owned();
-                        let cd = u64::from(self.settings.extras.volt.biome_title.cooldown_secs) * 20;
+                        let cd = 100_u64;
                         if !first_seen
                             && self.ticks.saturating_sub(self.extras.volt.last_biome_banner_tick) >= cd
                         {
@@ -1712,7 +1712,7 @@ impl Game<'_> {
                                 })
                                 .collect::<Vec<_>>()
                                 .join(" ");
-                            let dur = u64::from(self.settings.extras.volt.biome_title.duration_secs.max(1)) * 20;
+                            let dur = u64::from(self.settings.extras.volt.biome_title.display_secs.max(1)) * 20;
                             self.extras.volt.biome_banner = Some((pretty, self.ticks + dur));
                             self.extras.volt.last_biome_banner_tick = self.ticks;
                         }
@@ -1722,7 +1722,7 @@ impl Game<'_> {
 
             // Offhand Torch auto-swap in dark caves
             if self.settings.extras.volt.offhand_torch.enabled
-                && self.settings.extras.volt.offhand_torch.auto_swap
+                && self.settings.extras.volt.offhand_torch.auto_place_dark
                 && self.ticks.is_multiple_of(10)
                 && self.offhand.is_none()
             {
@@ -1794,10 +1794,10 @@ impl Game<'_> {
 
         // Low Durability Sound Alert
         if self.settings.extras.volt.durability_warn.enabled
-            && self.settings.extras.volt.durability_warn.play_sound
+            && self.settings.extras.volt.durability_warn.play_chime
             && self.ticks.saturating_sub(self.extras.volt.last_durability_warn_tick) >= 120
         {
-            let thresh = self.settings.extras.volt.durability_warn.threshold_pct;
+            let thresh = self.settings.extras.volt.durability_warn.warn_pct;
             let low_any = self
                 .armor
                 .iter()
@@ -2325,24 +2325,50 @@ impl Game<'_> {
         if v.player_highlight.enabled {
             let [cr, cg, cb] = v.player_highlight.color.rgb();
             let col = 0xFF00_0000 | (u32::from(cr) << 16) | (u32::from(cg) << 8) | u32::from(cb);
-            for (id, _) in self.remote_player_names() {
-                if let Some(m) = self.mobs.iter().find(|m| m.id == id) {
-                    if v.player_highlight.hide_invis && m.invisible {
-                        continue;
+            let max_dist_sq = f64::from(v.player_highlight.range.max(4)).powi(2);
+            if v.player_highlight.highlight_players {
+                for (id, _) in self.remote_player_names() {
+                    if let Some(m) = self.mobs.iter().find(|m| m.id == id) {
+                        if m.invisible {
+                            continue;
+                        }
+                        let d2 = (m.position.x - px).powi(2) + (m.position.z - pz).powi(2);
+                        if d2 > max_dist_sq {
+                            continue;
+                        }
+                        let hw = f64::from(m.kind.width) * 0.52;
+                        let hh = f64::from(m.kind.height);
+                        g.cuboid_on_top(
+                            [m.position.x - hw, m.position.y, m.position.z - hw],
+                            [m.position.x + hw, m.position.y + hh, m.position.z + hw],
+                            col,
+                            2.5,
+                        );
                     }
-                    let hw = f64::from(m.kind.width) * 0.52;
-                    let hh = f64::from(m.kind.height);
-                    g.cuboid_on_top(
-                        [m.position.x - hw, m.position.y, m.position.z - hw],
-                        [m.position.x + hw, m.position.y + hh, m.position.z + hw],
-                        col,
-                        2.5,
-                    );
+                }
+                if let Some(host) = &self.lan {
+                    for (_, m) in &host.models {
+                        if m.invisible {
+                            continue;
+                        }
+                        let hw = f64::from(m.kind.width) * 0.52;
+                        let hh = f64::from(m.kind.height);
+                        g.cuboid_on_top(
+                            [m.position.x - hw, m.position.y, m.position.z - hw],
+                            [m.position.x + hw, m.position.y + hh, m.position.z + hw],
+                            col,
+                            2.5,
+                        );
+                    }
                 }
             }
-            if let Some(host) = &self.lan {
-                for (_, m) in &host.models {
-                    if v.player_highlight.hide_invis && m.invisible {
+            if v.player_highlight.highlight_hostiles {
+                for m in &self.mobs {
+                    if m.kind.category != horizon_client::mobs::Category::Monster || m.invisible {
+                        continue;
+                    }
+                    let d2 = (m.position.x - px).powi(2) + (m.position.z - pz).powi(2);
+                    if d2 > max_dist_sq {
                         continue;
                     }
                     let hw = f64::from(m.kind.width) * 0.52;
@@ -2350,8 +2376,8 @@ impl Game<'_> {
                     g.cuboid_on_top(
                         [m.position.x - hw, m.position.y, m.position.z - hw],
                         [m.position.x + hw, m.position.y + hh, m.position.z + hw],
-                        col,
-                        2.5,
+                        0xFFFF_5555,
+                        2.0,
                     );
                 }
             }
@@ -2366,8 +2392,10 @@ impl Game<'_> {
                 let max_x = f64::from(a[0].max(b[0]) + 1);
                 let max_y = f64::from(a[1].max(b[1]) + 1);
                 let max_z = f64::from(a[2].max(b[2]) + 1);
-                g.cuboid_on_top([min_x, min_y, min_z], [max_x, max_y, max_z], 0xFF55_FFFF, 2.2);
-                if v.litematica_grid.show_grid {
+                if v.litematica_grid.show_3d_box {
+                    g.cuboid_on_top([min_x, min_y, min_z], [max_x, max_y, max_z], 0xFF55_FFFF, 2.2);
+                }
+                if v.litematica_grid.show_grid_lines {
                     let mut gx = min_x;
                     while gx <= max_x + 0.01 {
                         g.line([gx, min_y, min_z], [gx, min_y, max_z], 0x8855_FFFF, 1.0);
@@ -2379,7 +2407,7 @@ impl Game<'_> {
                         gz += 1.0;
                     }
                 }
-            } else if v.litematica_grid.show_grid {
+            } else if v.litematica_grid.show_grid_lines {
                 let bx = px.floor();
                 let by = py.floor() + 0.02;
                 let bz = pz.floor();
@@ -2392,12 +2420,13 @@ impl Game<'_> {
         }
 
         // 10) Chunk Pillars (#76)
-        if v.chunk_pillars.enabled {
+        if v.chunk_pillars.enabled && v.chunk_pillars.draw_corner_pillars {
             let cx0 = px.floor() as i32 >> 4;
             let cz0 = pz.floor() as i32 >> 4;
-            let rad = i32::from(v.chunk_pillars.radius_chunks.clamp(1, 3));
+            let rad = 2_i32;
+            let ph = f64::from(v.chunk_pillars.pillar_height.max(16));
             let y0 = (py - 16.0).max(-64.0);
-            let y1 = py + 48.0;
+            let y1 = py + ph;
             for dcx in -rad..=rad {
                 for dcz in -rad..=rad {
                     let x = f64::from((cx0 + dcx) * 16);
@@ -2965,7 +2994,7 @@ impl Game<'_> {
 
         // Reach distance readout (#59)
         if self.settings.extras.volt.reach_box.enabled
-            && self.settings.extras.volt.reach_box.show_distance
+            && self.settings.extras.volt.reach_box.draw_reach_ring
             && let Some((_, dist)) = self.mob_hit()
         {
             let max_reach = if self.creative { 5.0 } else { 3.0 };

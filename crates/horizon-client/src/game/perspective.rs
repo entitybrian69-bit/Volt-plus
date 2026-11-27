@@ -312,7 +312,7 @@ impl Game<'_> {
             ));
         }
         let pitch_sway = if self.settings.extras.volt.cameraoverhaul.enabled {
-            let sw = f32::from(self.settings.extras.volt.cameraoverhaul.pitch_sway_pct) / 100.0;
+            let sw = f32::from(self.settings.extras.volt.cameraoverhaul.turn_roll_pct) / 100.0;
             self.extras.volt.camera_roll_deg * 0.18 * sw
         } else {
             0.0
