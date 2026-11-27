@@ -327,10 +327,13 @@ impl Game<'_> {
         }
         static DEV_PACK: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
         let dev = DEV_PACK.get_or_init(|| std::env::var("HORIZON_SHADER_PACK").ok());
-        let picked = active_pack(
-            dev.as_deref().unwrap_or(&self.settings.horizon.shader_pack),
-            &self.settings.mods,
-        );
+        let picked = if let Some(dev_name) = dev.as_deref() {
+            dev_name
+        } else if self.settings.extras.volt_shaders.enabled {
+            super::native_shaders::VOLT_SHADERS_PICKED
+        } else {
+            active_pack(&self.settings.horizon.shader_pack, &self.settings.mods)
+        };
         if self.native_shaders.picked != picked {
             // Another pack, or none: drop what ran.
             self.native_shaders = super::native_shaders::NativeShaders::picking(picked);
@@ -343,7 +346,9 @@ impl Game<'_> {
         if picked.is_empty() {
             return PackInputs::default();
         }
-        {
+        if picked == super::native_shaders::VOLT_SHADERS_PICKED {
+            self.tick_volt_shaders();
+        } else {
             let name = picked.to_owned();
             let dimension = match self.dim {
                 Dim::Overworld => 0,

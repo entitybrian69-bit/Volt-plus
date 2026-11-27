@@ -33,6 +33,23 @@ pub(super) struct VoltWaypoint {
     pub color: u32,
 }
 
+enum JeiRecipeView {
+    Crafting {
+        shapeless: bool,
+        grid: [Option<String>; 9],
+        output: String,
+        count: u32,
+    },
+    Cooking {
+        kind: String,
+        input: String,
+        output: String,
+        count: u32,
+        xp: f32,
+        secs: f32,
+    },
+}
+
 /// Floating world-space damage popup tracked per mob.
 #[derive(Clone, Debug)]
 pub(super) struct DamagePopup {
@@ -188,7 +205,7 @@ impl Game<'_> {
         &self,
         batch: &mut HudBatch,
         inputs: &hud_layout::HealthInputs,
-        exhaustion: f32,
+        _exhaustion: f32,
         wi: i32,
         hi: i32,
     ) {
@@ -200,15 +217,6 @@ impl Game<'_> {
         let atlas = &self.gui.atlas;
         let x_right = wi / 2 + 91;
         let y_food = hi - 39;
-
-        if cfg.show_exhaustion_underlay {
-            let ratio = (exhaustion / 4.0).clamp(0.0, 1.0);
-            if ratio > 0.005 {
-                let w = (81.0 * ratio).round().max(1.0);
-                let x = x_right as f32 - w;
-                batch.fill(atlas, x, y_food as f32, w, 9.0, rgba(255, 255, 255, 76));
-            }
-        }
 
         let held_food = self
             .stack_in(self.selected)
@@ -296,19 +304,6 @@ impl Game<'_> {
             }
         } else if cfg.show_saturation_overlay {
             Self::draw_saturation_outlines(batch, atlas, x_right, y_food, inputs.saturation, 255);
-        }
-
-        if cfg.show_debug_stats && inputs.saturation > 0.05 {
-            let txt = format!("S:{:.1}", inputs.saturation);
-            let tw = HudBatch::text_width(atlas, &txt);
-            batch.text(
-                atlas,
-                &txt,
-                x_right as f32 - tw,
-                y_food as f32 - 10.0,
-                rgba(255, 224, 72, 240),
-                true,
-            );
         }
     }
 
@@ -936,6 +931,19 @@ impl Game<'_> {
         self.pad
             .touch_ui
             .sync_volt_extras(&self.settings.extras.volt);
+        self.pad.touch_ui.volt_timelapse_status = if let Some(until) =
+            self.extras.volt.timelapse_countdown_until
+        {
+            let secs = until
+                .saturating_duration_since(Instant::now())
+                .as_secs_f32()
+                .ceil() as u32;
+            Some(format!("In {}s...", secs.max(1)))
+        } else if self.extras.volt.timelapse_active {
+            Some("Active".to_owned())
+        } else {
+            None
+        };
         let rows: Vec<horizon_client::touch_ui::VoltWaypointUiRow> = self
             .extras
             .volt
@@ -1364,16 +1372,7 @@ impl Game<'_> {
         self.sync_volt_touch_ui();
     }
 
-    pub(super) fn volt_toggle_timelapse(&mut self) {
-        let active_or_counting = self.extras.volt.timelapse_active
-            || self.extras.volt.timelapse_countdown_until.is_some();
-        if active_or_counting {
-            self.extras.volt.timelapse_active = false;
-            self.extras.volt.timelapse_countdown_until = None;
-            self.extras.volt.timelapse_started = None;
-            self.volt_push_toast("Time Lapse stopped");
-            return;
-        }
+    pub(super) fn volt_start_timelapse(&mut self) {
         self.settings.extras.volt.cinematic_timelapse.enabled = true;
         if let Some(p) = self.player.as_ref() {
             self.extras.volt.timelapse_anchor =
@@ -1388,14 +1387,40 @@ impl Game<'_> {
             .cinematic_timelapse
             .start_delay_secs;
         if delay == 0 {
+            self.extras.volt.timelapse_countdown_until = None;
             self.extras.volt.timelapse_active = true;
             self.extras.volt.timelapse_started = Some(Instant::now());
-            self.volt_push_toast("Time Lapse STARTED");
         } else {
+            self.extras.volt.timelapse_active = false;
+            self.extras.volt.timelapse_started = None;
             self.extras.volt.timelapse_countdown_until =
                 Some(Instant::now() + Duration::from_secs(u64::from(delay)));
-            self.volt_push_toast(format!("Time Lapse in {delay}s..."));
         }
+    }
+
+    pub(super) fn volt_stop_timelapse(&mut self) {
+        self.extras.volt.timelapse_active = false;
+        self.extras.volt.timelapse_countdown_until = None;
+        self.extras.volt.timelapse_started = None;
+    }
+
+    pub(super) fn volt_sync_timelapse_from_settings(&mut self, was_enabled: bool) {
+        let now_enabled = self.settings.extras.volt.cinematic_timelapse.enabled;
+        if !was_enabled && now_enabled {
+            self.volt_start_timelapse();
+        } else if was_enabled && !now_enabled {
+            self.volt_stop_timelapse();
+        }
+    }
+
+    pub(super) fn volt_toggle_timelapse(&mut self) {
+        let active_or_counting = self.extras.volt.timelapse_active
+            || self.extras.volt.timelapse_countdown_until.is_some();
+        if active_or_counting {
+            self.volt_stop_timelapse();
+            return;
+        }
+        self.volt_start_timelapse();
     }
 
     pub(super) fn volt_trigger_mod_use(&mut self, mod_id: u8) {
@@ -1663,8 +1688,8 @@ impl Game<'_> {
                 self.extras.volt.timelapse_countdown_until = None;
                 self.extras.volt.timelapse_active = true;
                 self.extras.volt.timelapse_started = Some(Instant::now());
-                self.volt_push_toast("Time Lapse STARTED");
             }
+            self.sync_volt_touch_ui();
         }
 
         if let Some(p) = self.player.as_ref() {
@@ -3573,32 +3598,6 @@ impl Game<'_> {
             batch.fill(atlas, x - 8.0, y - 3.0, tw + 16.0, 15.0, rgba(36, 26, 8, 215));
             batch.text(atlas, &txt, x, y, rgba(255, 215, 72, 255), true);
         }
-
-        // Cinematic Time Lapse Countdown / REC Badge (#83)
-        if let Some(until) = self.extras.volt.timelapse_countdown_until {
-            let secs = until
-                .saturating_duration_since(Instant::now())
-                .as_secs_f32()
-                .ceil() as u32;
-            let msg = format!("TIMELAPSE IN {}s", secs.max(1));
-            let tw = HudBatch::text_width(atlas, &msg);
-            let x = (wi as f32 - tw) * 0.5;
-            let y = hi as f32 * 0.34;
-            batch.fill(atlas, x - 12.0, y - 6.0, tw + 24.0, 22.0, rgba(18, 14, 24, 220));
-            batch.text(atlas, &msg, x, y + 1.0, rgba(255, 196, 76, 255), true);
-        } else if self.extras.volt.timelapse_active
-            && !self.settings.extras.volt.cinematic_timelapse.hide_hud
-        {
-            let elapsed = self
-                .extras
-                .volt
-                .timelapse_started
-                .map_or(0, |s| s.elapsed().as_secs());
-            let msg = format!("● REC TIMELAPSE {:02}:{:02}", elapsed / 60, elapsed % 60);
-            let tw = HudBatch::text_width(atlas, &msg);
-            batch.fill(atlas, 8.0, 8.0, tw + 12.0, 14.0, rgba(28, 12, 16, 200));
-            batch.text(atlas, &msg, 14.0, 11.0, rgba(255, 92, 92, 255), true);
-        }
     }
 
     fn draw_standalone_potion_hud(&self, batch: &mut HudBatch, wi: i32, hi: i32) {
@@ -3903,7 +3902,57 @@ impl Game<'_> {
             .collect()
     }
 
-    fn jei_recipes_for(&self, item_id: &str) -> Vec<String> {
+    fn jei_top_offset(&self) -> f32 {
+        let mut top = match self.settings.horizon.overlay {
+            horizon_client::graphics::Overlay::Graph => 82.0,
+            horizon_client::graphics::Overlay::Compact => 40.0,
+            horizon_client::graphics::Overlay::Off => 6.0,
+        };
+        if self.settings.extras.volt.fps_display.enabled
+            && self.settings.extras.volt.fps_display.corner == Corner::TopRight
+        {
+            top = top.max(24.0);
+        }
+        if self.settings.extras.volt.ping_display.enabled
+            && self.settings.extras.volt.ping_display.corner == Corner::TopRight
+        {
+            top = top.max(38.0);
+        }
+        top
+    }
+
+    fn jei_panel_rect(&self, wi: f32, hi: f32) -> [f32; 4] {
+        let pw = (6.0 * 18.0 + 8.0).min(wi * 0.34);
+        let py = self.jei_top_offset();
+        let ph = (hi - py - 6.0).max(112.0);
+        [wi - pw - 6.0, py, pw, ph]
+    }
+
+    fn jei_grid_layout(pw: f32, ph: f32) -> (usize, usize) {
+        let cols = ((pw - 8.0) / 18.0).floor().clamp(4.0, 7.0) as usize;
+        let rows = ((ph - 38.0) / 18.0).floor().max(3.0) as usize;
+        (cols, rows)
+    }
+
+    fn jei_item_label(id: &str) -> String {
+        let raw = id.strip_prefix("minecraft:").unwrap_or(id);
+        let mut out = String::with_capacity(raw.len());
+        for (i, word) in raw.split('_').enumerate() {
+            if i > 0 {
+                out.push(' ');
+            }
+            let mut chs = word.chars();
+            if let Some(first) = chs.next() {
+                for up in first.to_uppercase() {
+                    out.push(up);
+                }
+                out.push_str(chs.as_str());
+            }
+        }
+        out
+    }
+
+    fn jei_recipe_views_for(&self, item_id: &str) -> Vec<JeiRecipeView> {
         let mut out = Vec::new();
         let recipes = self.recipes();
         for (_rid, rec) in &recipes.crafting {
@@ -3915,20 +3964,22 @@ impl Game<'_> {
                     result,
                 } => {
                     if result.item.as_deref() == Some(item_id) {
-                        let mut parts = Vec::new();
-                        for r in 0..*height {
-                            let mut row = Vec::new();
-                            for c in 0..*width {
-                                let cell = cells.get(r * width + c).and_then(|o| o.as_ref());
-                                let name = cell
-                                    .and_then(|ing| ing.1.first())
-                                    .map(|s| s.strip_prefix("minecraft:").unwrap_or(s))
-                                    .unwrap_or("_");
-                                row.push(name);
+                        let mut grid: [Option<String>; 9] = Default::default();
+                        for r in 0..(*height).min(3) {
+                            for c in 0..(*width).min(3) {
+                                if let Some(ing) = cells.get(r * width + c).and_then(|o| o.as_ref())
+                                    && let Some(first) = ing.1.first()
+                                {
+                                    grid[r * 3 + c] = Some(first.clone());
+                                }
                             }
-                            parts.push(row.join("+"));
                         }
-                        out.push(format!("Craft ({width}×{height}): {}", parts.join(" / ")));
+                        out.push(JeiRecipeView::Crafting {
+                            shapeless: false,
+                            grid,
+                            output: item_id.to_owned(),
+                            count: result.count.max(1),
+                        });
                     }
                 }
                 Recipe::Shapeless {
@@ -3936,12 +3987,18 @@ impl Game<'_> {
                     result,
                 } => {
                     if result.item.as_deref() == Some(item_id) {
-                        let list: Vec<&str> = ingredients
-                            .iter()
-                            .filter_map(|ing| ing.1.first())
-                            .map(|s| s.strip_prefix("minecraft:").unwrap_or(s))
-                            .collect();
-                        out.push(format!("Shapeless: {}", list.join(" + ")));
+                        let mut grid: [Option<String>; 9] = Default::default();
+                        for (idx, ing) in ingredients.iter().take(9).enumerate() {
+                            if let Some(first) = ing.1.first() {
+                                grid[idx] = Some(first.clone());
+                            }
+                        }
+                        out.push(JeiRecipeView::Crafting {
+                            shapeless: true,
+                            grid,
+                            output: item_id.to_owned(),
+                            count: result.count.max(1),
+                        });
                     }
                 }
                 Recipe::Special(_) => {}
@@ -3951,6 +4008,8 @@ impl Game<'_> {
             kind,
             ingredient,
             result,
+            experience,
+            time,
             ..
         } in &recipes.cooking
         {
@@ -3958,19 +4017,36 @@ impl Game<'_> {
                 let in_item = ingredient
                     .1
                     .first()
-                    .map(|s| s.strip_prefix("minecraft:").unwrap_or(s))
-                    .unwrap_or("?");
+                    .cloned()
+                    .unwrap_or_else(|| "minecraft:air".to_owned());
                 let k = kind.strip_prefix("minecraft:").unwrap_or(kind);
-                out.push(format!("{k}: {in_item} -> {}", item_id.strip_prefix("minecraft:").unwrap_or(item_id)));
+                out.push(JeiRecipeView::Cooking {
+                    kind: Self::jei_item_label(k),
+                    input: in_item,
+                    output: item_id.to_owned(),
+                    count: result.count.max(1),
+                    xp: *experience,
+                    secs: (*time as f32 / 20.0).max(0.5),
+                });
             }
         }
         out
     }
 
-    fn jei_panel_rect(wi: f32, hi: f32) -> [f32; 4] {
-        let pw = 128.0_f32.min(wi * 0.34);
-        let ph = (hi - 36.0).clamp(160.0, 290.0);
-        [wi - pw - 6.0, (hi - ph) * 0.5, pw, ph]
+    fn draw_mc_slot(batch: &mut HudBatch, atlas: &HudAtlas, x: f32, y: f32, size: f32) {
+        batch.fill(atlas, x, y, size, size, rgba(139, 139, 139, 255));
+        batch.fill(atlas, x, y, size - 1.0, 1.0, rgba(55, 55, 55, 255));
+        batch.fill(atlas, x, y, 1.0, size - 1.0, rgba(55, 55, 55, 255));
+        batch.fill(atlas, x + 1.0, y + size - 1.0, size - 1.0, 1.0, rgba(255, 255, 255, 230));
+        batch.fill(atlas, x + size - 1.0, y + 1.0, 1.0, size - 1.0, rgba(255, 255, 255, 230));
+    }
+
+    fn jei_recipe_rect(px: f32, hi: f32) -> [f32; 4] {
+        let rw = 148.0_f32.min((px - 12.0).max(120.0));
+        let rh = 114.0_f32;
+        let rx = (px - rw - 8.0).max(6.0);
+        let ry = ((hi - rh) * 0.5).max(16.0);
+        [rx, ry, rw, rh]
     }
 
     pub(super) fn draw_volt_jei_overlay(&self, batch: &mut HudBatch) {
@@ -3978,56 +4054,37 @@ impl Game<'_> {
             return;
         }
         let atlas = &self.gui.atlas;
-        let [px, py, pw, ph] = Self::jei_panel_rect(batch.width, batch.height);
-        batch.fill(atlas, px, py, pw, ph, rgba(16, 18, 24, 225));
-        batch.fill(atlas, px, py, pw, 1.5, rgba(105, 195, 255, 220));
-        batch.fill(atlas, px, py + ph - 1.0, pw, 1.0, rgba(80, 90, 110, 210));
-
-        // Title + Close
-        batch.text(atlas, "JEI Items", px + 6.0, py + 5.0, rgba(235, 244, 255, 255), true);
-        batch.fill(atlas, px + pw - 16.0, py + 4.0, 12.0, 12.0, rgba(90, 28, 32, 220));
-        batch.text(atlas, "x", px + pw - 13.0, py + 6.0, rgba(255, 210, 210, 255), true);
-
-        // Search box
-        let s_col = if self.extras.volt.jei_search_focused {
-            rgba(38, 48, 68, 240)
-        } else {
-            rgba(26, 30, 40, 220)
-        };
-        batch.fill(atlas, px + 6.0, py + 19.0, pw - 12.0, 15.0, s_col);
-        let search_txt = if self.extras.volt.jei_search.is_empty() {
-            "Search items..."
-        } else {
-            &self.extras.volt.jei_search
-        };
-        batch.text(
-            atlas,
-            search_txt,
-            px + 10.0,
-            py + 23.0,
-            if self.extras.volt.jei_search.is_empty() {
-                rgba(140, 150, 170, 255)
-            } else {
-                rgba(255, 255, 255, 255)
-            },
-            true,
-        );
-
+        let [px, py, pw, ph] = self.jei_panel_rect(batch.width, batch.height);
         let items = self.jei_filtered_items();
-        let cols = 6usize;
-        let rows = ((ph - 62.0) / 18.0).floor().max(3.0) as usize;
-        let per_page = cols * rows;
-        let pages = items.len().div_ceil(per_page.max(1)).max(1);
+        let (cols, rows) = Self::jei_grid_layout(pw, ph);
+        let per_page = (cols * rows).max(1);
+        let pages = items.len().div_ceil(per_page).max(1);
         let page = self.extras.volt.jei_page.min(pages - 1);
+
+        // Top pagination bar (<  1/N  >) matching classic JEI layout
+        let prev_col = if page > 0 { rgba(52, 56, 68, 225) } else { rgba(28, 30, 38, 185) };
+        let next_col = if page + 1 < pages { rgba(52, 56, 68, 225) } else { rgba(28, 30, 38, 185) };
+        batch.fill(atlas, px, py, 16.0, 14.0, prev_col);
+        batch.fill(atlas, px, py, 16.0, 1.0, rgba(160, 168, 184, 210));
+        batch.text(atlas, "<", px + 5.0, py + 3.0, u32::MAX, true);
+
+        let ptxt = format!("{}/{}", page + 1, pages);
+        let ptw = HudBatch::text_width(atlas, &ptxt);
+        batch.text(atlas, &ptxt, px + (pw - ptw) * 0.5, py + 3.0, u32::MAX, true);
+
+        batch.fill(atlas, px + pw - 16.0, py, 16.0, 14.0, next_col);
+        batch.fill(atlas, px + pw - 16.0, py, 16.0, 1.0, rgba(160, 168, 184, 210));
+        batch.text(atlas, ">", px + pw - 11.0, py + 3.0, u32::MAX, true);
+
+        // Clean transparent right-side item grid (no dark card, no per-slot boxes)
         let start = page * per_page;
         let end = (start + per_page).min(items.len());
-        let gx = px + 8.0;
-        let gy = py + 38.0;
-
+        let gx = px + 4.0;
+        let gy = py + 18.0;
         for (i, item_id) in items[start..end].iter().enumerate() {
             let col = i % cols;
             let row = i / cols;
-            let sx = gx + col as f32 * 19.0;
+            let sx = gx + col as f32 * 18.0;
             let sy = gy + row as f32 * 18.0;
             let selected = self
                 .extras
@@ -4035,18 +4092,9 @@ impl Game<'_> {
                 .jei_selected_item
                 .as_deref()
                 .is_some_and(|s| s == item_id);
-            batch.fill(
-                atlas,
-                sx,
-                sy,
-                16.0,
-                16.0,
-                if selected {
-                    rgba(96, 185, 255, 110)
-                } else {
-                    rgba(255, 255, 255, 20)
-                },
-            );
+            if selected {
+                batch.fill(atlas, sx, sy, 16.0, 16.0, rgba(255, 255, 255, 68));
+            }
             let stack = ItemStack {
                 item: Arc::from(item_id.as_str()),
                 count: 1,
@@ -4056,56 +4104,185 @@ impl Game<'_> {
             self.draw_item_model(batch, &stack, sx, sy);
         }
 
-        // Pagination footer
-        let fy = py + ph - 18.0;
-        batch.fill(atlas, px + 6.0, fy, 24.0, 13.0, rgba(32, 36, 48, 225));
-        batch.text(atlas, "<", px + 15.0, fy + 3.0, u32::MAX, true);
-        let ptxt = format!("{}/{}", page + 1, pages);
-        let ptw = HudBatch::text_width(atlas, &ptxt);
-        batch.text(atlas, &ptxt, px + (pw - ptw) * 0.5, fy + 3.0, rgba(210, 220, 235, 255), true);
-        batch.fill(atlas, px + pw - 30.0, fy, 24.0, 13.0, rgba(32, 36, 48, 225));
-        batch.text(atlas, ">", px + pw - 21.0, fy + 3.0, u32::MAX, true);
-
-        // Selected Item Recipe Popup (to the left of the JEI sidebar)
-        if let Some(ref sel) = self.extras.volt.jei_selected_item {
-            let recs = self.jei_recipes_for(sel);
-            let rw = 190.0_f32.min(px - 10.0).max(120.0);
-            let rx = (px - rw - 6.0).max(6.0);
-            let ry = py + 18.0;
-            let line_count = recs.len().clamp(1, 5);
-            let rh = 34.0 + line_count as f32 * 13.0;
-            batch.fill(atlas, rx, ry, rw, rh, rgba(14, 16, 22, 238));
-            batch.fill(atlas, rx, ry, rw, 1.5, rgba(255, 214, 92, 230));
-            let title = sel.strip_prefix("minecraft:").unwrap_or(sel);
-            let stack = ItemStack {
-                item: Arc::from(sel.as_str()),
-                count: 1,
-                damage: 0,
-                extra: None,
-            };
-            self.draw_item_model(batch, &stack, rx + 5.0, ry + 5.0);
-            batch.text(atlas, title, rx + 25.0, ry + 8.0, rgba(255, 224, 120, 255), true);
-            if recs.is_empty() {
-                batch.text(
-                    atlas,
-                    "No crafting/smelting recipe",
-                    rx + 8.0,
-                    ry + 28.0,
-                    rgba(175, 182, 198, 255),
-                    true,
-                );
+        // Bottom framed search bar + clear/close icon button
+        let fy = py + ph - 16.0;
+        let sw = (pw - 19.0).max(40.0);
+        batch.fill(atlas, px, fy, sw, 15.0, rgba(6, 8, 12, 210));
+        let border_c = if self.extras.volt.jei_search_focused {
+            rgba(120, 200, 255, 240)
+        } else {
+            rgba(156, 162, 174, 220)
+        };
+        batch.fill(atlas, px, fy, sw, 1.0, border_c);
+        batch.fill(atlas, px, fy + 14.0, sw, 1.0, border_c);
+        batch.fill(atlas, px, fy, 1.0, 15.0, border_c);
+        batch.fill(atlas, px + sw - 1.0, fy, 1.0, 15.0, border_c);
+        let search_txt = if self.extras.volt.jei_search.is_empty() {
+            "Search..."
+        } else {
+            &self.extras.volt.jei_search
+        };
+        batch.text(
+            atlas,
+            search_txt,
+            px + 4.0,
+            fy + 3.5,
+            if self.extras.volt.jei_search.is_empty() {
+                rgba(135, 142, 158, 255)
             } else {
-                for (ri, line) in recs.iter().take(5).enumerate() {
-                    let trimmed: String = line.chars().take(34).collect();
-                    batch.text(
-                        atlas,
-                        &trimmed,
-                        rx + 8.0,
-                        ry + 27.0 + ri as f32 * 13.0,
-                        rgba(228, 236, 248, 255),
-                        true,
-                    );
+                u32::MAX
+            },
+            true,
+        );
+        let bx = px + pw - 16.0;
+        batch.fill(atlas, bx, fy, 16.0, 15.0, rgba(46, 50, 62, 225));
+        batch.fill(atlas, bx, fy, 16.0, 1.0, rgba(156, 162, 174, 220));
+        let btn_lbl = if !self.extras.volt.jei_search.is_empty() { "×" } else { "x" };
+        batch.text(atlas, btn_lbl, bx + 5.0, fy + 3.5, rgba(225, 232, 245, 255), true);
+
+        // Visual Crafting / Smelting Recipe Guide Popup
+        if let Some(ref sel) = self.extras.volt.jei_selected_item {
+            let recs = self.jei_recipe_views_for(sel);
+            let [rx, ry, rw, rh] = Self::jei_recipe_rect(px, batch.height);
+
+            // Classic MC light-gray recipe panel with crisp bevel
+            batch.fill(atlas, rx, ry, rw, rh, rgba(198, 198, 198, 248));
+            batch.fill(atlas, rx, ry, rw, 1.5, rgba(255, 255, 255, 240));
+            batch.fill(atlas, rx, ry, 1.5, rh, rgba(255, 255, 255, 240));
+            batch.fill(atlas, rx, ry + rh - 1.5, rw, 1.5, rgba(85, 85, 85, 245));
+            batch.fill(atlas, rx + rw - 1.5, ry, 1.5, rh, rgba(85, 85, 85, 245));
+
+            // Close [x] button
+            batch.fill(atlas, rx + rw - 16.0, ry + 4.0, 12.0, 12.0, rgba(120, 48, 48, 235));
+            batch.text(atlas, "x", rx + rw - 12.5, ry + 6.0, u32::MAX, true);
+
+            let title = Self::jei_item_label(sel);
+            let short_title: String = title.chars().take(20).collect();
+            batch.text(atlas, &short_title, rx + 7.0, ry + 6.0, rgba(44, 44, 44, 255), false);
+
+            if recs.is_empty() {
+                Self::draw_mc_slot(batch, atlas, rx + (rw - 22.0) * 0.5, ry + 34.0, 22.0);
+                let st = ItemStack {
+                    item: Arc::from(sel.as_str()),
+                    count: 1,
+                    damage: 0,
+                    extra: None,
+                };
+                self.draw_item_model(batch, &st, rx + (rw - 22.0) * 0.5 + 3.0, ry + 37.0);
+                let msg = "No recipe";
+                let mw = HudBatch::text_width(atlas, msg);
+                batch.text(atlas, msg, rx + (rw - mw) * 0.5, ry + 66.0, rgba(72, 72, 72, 255), false);
+            } else {
+                let r_idx = self.extras.volt.jei_recipe_idx % recs.len();
+                let view = &recs[r_idx];
+                let cat_lbl = match view {
+                    JeiRecipeView::Crafting { shapeless: false, .. } => "Crafting",
+                    JeiRecipeView::Crafting { shapeless: true, .. } => "Shapeless",
+                    JeiRecipeView::Cooking { kind, .. } => kind.as_str(),
+                };
+                batch.text(atlas, cat_lbl, rx + 7.0, ry + 18.0, rgba(78, 78, 78, 255), false);
+
+                if recs.len() > 1 {
+                    let p_x = rx + rw - 54.0;
+                    let p_y = ry + 17.0;
+                    batch.fill(atlas, p_x, p_y, 12.0, 11.0, rgba(130, 130, 130, 230));
+                    batch.text(atlas, "<", p_x + 3.5, p_y + 1.5, u32::MAX, true);
+                    let rp = format!("{}/{}", r_idx + 1, recs.len());
+                    batch.text(atlas, &rp, p_x + 14.0, p_y + 1.5, rgba(44, 44, 44, 255), false);
+                    batch.fill(atlas, p_x + 34.0, p_y, 12.0, 11.0, rgba(130, 130, 130, 230));
+                    batch.text(atlas, ">", p_x + 37.5, p_y + 1.5, u32::MAX, true);
                 }
+
+                match view {
+                    JeiRecipeView::Crafting { grid, output, count, .. } => {
+                        let gx0 = rx + 10.0;
+                        let gy0 = ry + 33.0;
+                        for row in 0..3 {
+                            for col in 0..3 {
+                                let sx = gx0 + col as f32 * 18.0;
+                                let sy = gy0 + row as f32 * 18.0;
+                                Self::draw_mc_slot(batch, atlas, sx, sy, 18.0);
+                                if let Some(ing_id) = &grid[row * 3 + col] {
+                                    let st = ItemStack {
+                                        item: Arc::from(ing_id.as_str()),
+                                        count: 1,
+                                        damage: 0,
+                                        extra: None,
+                                    };
+                                    self.draw_item_model(batch, &st, sx + 1.0, sy + 1.0);
+                                }
+                            }
+                        }
+                        // Crafting arrow ->
+                        let ax = gx0 + 58.0;
+                        let ay = gy0 + 23.0;
+                        batch.fill(atlas, ax, ay + 3.0, 11.0, 3.0, rgba(96, 96, 96, 255));
+                        batch.fill(atlas, ax + 9.0, ay + 1.0, 3.0, 7.0, rgba(96, 96, 96, 255));
+                        batch.fill(atlas, ax + 12.0, ay + 3.0, 2.0, 3.0, rgba(96, 96, 96, 255));
+
+                        // Result slot
+                        let ox = gx0 + 78.0;
+                        let oy = gy0 + 15.0;
+                        Self::draw_mc_slot(batch, atlas, ox, oy, 24.0);
+                        let out_st = ItemStack {
+                            item: Arc::from(output.as_str()),
+                            count: *count,
+                            damage: 0,
+                            extra: None,
+                        };
+                        self.draw_item_model(batch, &out_st, ox + 4.0, oy + 4.0);
+                        if *count > 1 {
+                            let ctxt = count.to_string();
+                            let ctw = HudBatch::text_width(atlas, &ctxt);
+                            batch.text(atlas, &ctxt, ox + 22.0 - ctw, oy + 14.0, u32::MAX, true);
+                        }
+                    }
+                    JeiRecipeView::Cooking { input, output, count, xp, secs, .. } => {
+                        let ix = rx + 24.0;
+                        let iy = ry + 36.0;
+                        Self::draw_mc_slot(batch, atlas, ix, iy, 18.0);
+                        let in_st = ItemStack {
+                            item: Arc::from(input.as_str()),
+                            count: 1,
+                            damage: 0,
+                            extra: None,
+                        };
+                        self.draw_item_model(batch, &in_st, ix + 1.0, iy + 1.0);
+                        // Flame indicator
+                        batch.fill(atlas, ix + 3.0, iy + 22.0, 12.0, 10.0, rgba(255, 136, 32, 235));
+                        batch.fill(atlas, ix + 6.0, iy + 24.0, 6.0, 6.0, rgba(255, 224, 96, 245));
+                        // Arrow
+                        let ax = ix + 28.0;
+                        let ay = iy + 6.0;
+                        batch.fill(atlas, ax, ay + 3.0, 14.0, 3.0, rgba(96, 96, 96, 255));
+                        batch.fill(atlas, ax + 12.0, ay + 1.0, 3.0, 7.0, rgba(96, 96, 96, 255));
+                        // Output slot
+                        let ox = ix + 52.0;
+                        let oy = iy - 3.0;
+                        Self::draw_mc_slot(batch, atlas, ox, oy, 24.0);
+                        let out_st = ItemStack {
+                            item: Arc::from(output.as_str()),
+                            count: *count,
+                            damage: 0,
+                            extra: None,
+                        };
+                        self.draw_item_model(batch, &out_st, ox + 4.0, oy + 4.0);
+                        if *count > 1 {
+                            let ctxt = count.to_string();
+                            let ctw = HudBatch::text_width(atlas, &ctxt);
+                            batch.text(atlas, &ctxt, ox + 22.0 - ctw, oy + 14.0, u32::MAX, true);
+                        }
+                        let meta_txt = format!("{secs:.0}s  •  {xp:.1} XP");
+                        batch.text(atlas, &meta_txt, rx + 12.0, ry + 78.0, rgba(64, 64, 64, 255), false);
+                    }
+                }
+            }
+
+            if self.creative {
+                let gx = rx + rw - 44.0;
+                let gy = ry + rh - 18.0;
+                batch.fill(atlas, gx, gy, 36.0, 13.0, rgba(62, 118, 64, 235));
+                batch.text(atlas, "Give", gx + 8.0, gy + 2.5, u32::MAX, true);
             }
         }
     }
@@ -4114,57 +4291,142 @@ impl Game<'_> {
         if !self.volt_jei_visible() {
             return false;
         }
-        let [px, py, pw, ph] = Self::jei_panel_rect(w, h);
+        let [px, py, pw, ph] = self.jei_panel_rect(w, h);
         let (cx, cy) = self.cursor;
+
+        // First check recipe popup interactions if open
+        if let Some(sel) = self.extras.volt.jei_selected_item.clone() {
+            let [rx, ry, rw, rh] = Self::jei_recipe_rect(px, h);
+            if cx >= rx && cx <= rx + rw && cy >= ry && cy <= ry + rh {
+                self.extras.volt.jei_search_focused = false;
+                if cx >= rx + rw - 17.0 && cy <= ry + 17.0 {
+                    self.extras.volt.jei_selected_item = None;
+                    return true;
+                }
+                if self.creative && cx >= rx + rw - 44.0 && cy >= ry + rh - 18.0 {
+                    let _ = self.give(ItemStack {
+                        item: Arc::from(sel.as_str()),
+                        count: 1,
+                        damage: 0,
+                        extra: None,
+                    });
+                    return true;
+                }
+                let recs = self.jei_recipe_views_for(&sel);
+                if recs.len() > 1 {
+                    let p_x = rx + rw - 54.0;
+                    let p_y = ry + 17.0;
+                    if cy >= p_y - 2.0 && cy <= p_y + 13.0 {
+                        if cx >= p_x && cx <= p_x + 14.0 {
+                            self.extras.volt.jei_recipe_idx =
+                                (self.extras.volt.jei_recipe_idx + recs.len() - 1) % recs.len();
+                            return true;
+                        }
+                        if cx >= p_x + 32.0 && cx <= p_x + 48.0 {
+                            self.extras.volt.jei_recipe_idx =
+                                (self.extras.volt.jei_recipe_idx + 1) % recs.len();
+                            return true;
+                        }
+                    }
+                }
+                if !recs.is_empty() {
+                    let r_idx = self.extras.volt.jei_recipe_idx % recs.len();
+                    match &recs[r_idx] {
+                        JeiRecipeView::Crafting { grid, .. } => {
+                            let gx0 = rx + 10.0;
+                            let gy0 = ry + 33.0;
+                            for row in 0..3 {
+                                for col in 0..3 {
+                                    let sx = gx0 + col as f32 * 18.0;
+                                    let sy = gy0 + row as f32 * 18.0;
+                                    if cx >= sx && cx <= sx + 18.0 && cy >= sy && cy <= sy + 18.0 {
+                                        if let Some(ing_id) = &grid[row * 3 + col] {
+                                            self.extras.volt.jei_selected_item = Some(ing_id.clone());
+                                            self.extras.volt.jei_recipe_idx = 0;
+                                        }
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                        JeiRecipeView::Cooking { input, .. } => {
+                            let ix = rx + 24.0;
+                            let iy = ry + 36.0;
+                            if cx >= ix && cx <= ix + 18.0 && cy >= iy && cy <= iy + 18.0 {
+                                self.extras.volt.jei_selected_item = Some(input.clone());
+                                self.extras.volt.jei_recipe_idx = 0;
+                                return true;
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+        }
+
         if cx < px || cx > px + pw || cy < py || cy > py + ph {
             self.extras.volt.jei_search_focused = false;
             return false;
         }
-        // Close button
-        if cx >= px + pw - 16.0 && cx <= px + pw - 4.0 && cy >= py + 4.0 && cy <= py + 16.0 {
-            self.extras.volt.jei_open = false;
-            self.extras.volt.jei_search_focused = false;
-            self.extras.volt.jei_selected_item = None;
-            return true;
-        }
-        // Search bar
-        if cx >= px + 6.0 && cx <= px + pw - 6.0 && cy >= py + 19.0 && cy <= py + 34.0 {
-            self.extras.volt.jei_search_focused = true;
-            return true;
-        }
-        self.extras.volt.jei_search_focused = false;
 
         let items = self.jei_filtered_items();
-        let cols = 6usize;
-        let rows = ((ph - 62.0) / 18.0).floor().max(3.0) as usize;
-        let per_page = cols * rows;
-        let pages = items.len().div_ceil(per_page.max(1)).max(1);
+        let (cols, rows) = Self::jei_grid_layout(pw, ph);
+        let per_page = (cols * rows).max(1);
+        let pages = items.len().div_ceil(per_page).max(1);
         let page = self.extras.volt.jei_page.min(pages - 1);
 
-        // Footer pagination
-        let fy = py + ph - 18.0;
-        if cy >= fy && cy <= fy + 14.0 {
-            if cx >= px + 6.0 && cx <= px + 30.0 && page > 0 {
+        // Top pagination bar
+        if cy >= py && cy <= py + 15.0 {
+            self.extras.volt.jei_search_focused = false;
+            if cx <= px + 20.0 && page > 0 {
                 self.extras.volt.jei_page = page - 1;
-            } else if cx >= px + pw - 30.0 && cx <= px + pw - 6.0 && page + 1 < pages {
+            } else if cx >= px + pw - 20.0 && page + 1 < pages {
                 self.extras.volt.jei_page = page + 1;
             }
             return true;
         }
 
+        // Bottom search bar & clear/close button
+        let fy = py + ph - 16.0;
+        let sw = (pw - 19.0).max(40.0);
+        if cy >= fy - 1.0 && cy <= fy + 16.0 {
+            if cx >= px + pw - 16.0 {
+                self.extras.volt.jei_search_focused = false;
+                if !self.extras.volt.jei_search.is_empty() {
+                    self.extras.volt.jei_search.clear();
+                    self.extras.volt.jei_page = 0;
+                } else {
+                    self.extras.volt.jei_open = false;
+                    self.extras.volt.jei_selected_item = None;
+                }
+                return true;
+            }
+            if cx <= px + sw {
+                self.extras.volt.jei_search_focused = true;
+                #[cfg(target_os = "android")]
+                crate::platform::show(&self.extras.volt.jei_search);
+                return true;
+            }
+        }
+        self.extras.volt.jei_search_focused = false;
+
         // Item grid
         let start = page * per_page;
         let end = (start + per_page).min(items.len());
-        let gx = px + 8.0;
-        let gy = py + 38.0;
+        let gx = px + 4.0;
+        let gy = py + 18.0;
         for (i, item_id) in items[start..end].iter().enumerate() {
             let col = i % cols;
             let row = i / cols;
-            let sx = gx + col as f32 * 19.0;
+            let sx = gx + col as f32 * 18.0;
             let sy = gy + row as f32 * 18.0;
             if cx >= sx && cx <= sx + 17.0 && cy >= sy && cy <= sy + 17.0 {
-                self.extras.volt.jei_selected_item = Some(item_id.clone());
-                self.extras.volt.jei_recipe_idx = 0;
+                if self.extras.volt.jei_selected_item.as_deref() == Some(item_id.as_str()) {
+                    self.extras.volt.jei_selected_item = None;
+                } else {
+                    self.extras.volt.jei_selected_item = Some(item_id.clone());
+                    self.extras.volt.jei_recipe_idx = 0;
+                }
                 if self.creative && self.modifiers.shift_key() {
                     let _ = self.give(ItemStack {
                         item: Arc::from(item_id.as_str()),
@@ -4183,14 +4445,14 @@ impl Game<'_> {
         if !self.volt_jei_visible() {
             return false;
         }
-        let [px, py, pw, ph] = Self::jei_panel_rect(w, h);
+        let [px, py, pw, ph] = self.jei_panel_rect(w, h);
         let (cx, cy) = self.cursor;
         if cx < px || cx > px + pw || cy < py || cy > py + ph {
             return false;
         }
         let items = self.jei_filtered_items();
-        let rows = ((ph - 62.0) / 18.0).floor().max(3.0) as usize;
-        let per_page = (6 * rows).max(1);
+        let (cols, rows) = Self::jei_grid_layout(pw, ph);
+        let per_page = (cols * rows).max(1);
         let pages = items.len().div_ceil(per_page).max(1);
         if delta < 0.0 && self.extras.volt.jei_page + 1 < pages {
             self.extras.volt.jei_page += 1;

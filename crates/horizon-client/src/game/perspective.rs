@@ -563,6 +563,9 @@ impl Game<'_> {
     /// The model's old pitch is the player's `xRotO`, which the turn moves
     /// with `xRot` (`turn_rotation`).
     pub(super) fn turn_player(&mut self, xo: f64, yo: f64) {
+        if self.extras.volt.timelapse_active {
+            return;
+        }
         if let Some(replay) = self.replay.as_mut() {
             if matches!(
                 replay.camera_mode,
@@ -610,7 +613,10 @@ impl Game<'_> {
         if self.replay.is_some() {
             return false;
         }
-        !self.camera_type.first_person() || self.sleeping.is_some()
+        !self.camera_type.first_person()
+            || self.sleeping.is_some()
+            || self.extras.volt.timelapse_active
+            || self.extras.volt.freecam_active
     }
     /// Whether the player's own model shows in the world view (its body or,
     /// while invisible, only its armour and held items).

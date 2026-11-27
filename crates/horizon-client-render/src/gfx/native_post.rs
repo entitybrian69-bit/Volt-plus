@@ -105,6 +105,7 @@ pub struct NativePost {
 /// what the material stage reads besides.
 pub struct NativeFrame {
     pub(super) buffer: wgpu::Buffer,
+    pub(super) layers: wgpu::Buffer,
     /// Group 3 of the sky and material stages.
     pub layout: wgpu::BindGroupLayout,
     /// The pack's `[[textures]]` and their samplers, bound for every stage.
@@ -201,6 +202,22 @@ fn frame_entry(visibility: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
+const LAYER_TABLE_BYTES: u64 =
+    (horizon_shader_api::volt_shaders::LAYER_KINDS_VECS * std::mem::size_of::<[u32; 4]>()) as u64;
+
+fn layers_entry(visibility: wgpu::ShaderStages) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: 5,
+        visibility,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: wgpu::BufferSize::new(LAYER_TABLE_BYTES),
+        },
+        count: None,
+    }
+}
+
 /// The size of the water mirror for a world of `size`: half of it.
 pub fn reflection_size(size: [u32; 2]) -> [u32; 2] {
     size.map(|s| s.div_ceil(2).max(1))
@@ -246,8 +263,15 @@ impl NativeFrame {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let layers = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Volt shader sprite layer kinds"),
+            size: LAYER_TABLE_BYTES,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let mut entries = vec![
             frame_entry(wgpu::ShaderStages::VERTEX_FRAGMENT),
+            layers_entry(wgpu::ShaderStages::VERTEX_FRAGMENT),
             texture_entry(1, wgpu::TextureSampleType::Float { filterable: true }),
             sampler_entry(2),
             texture_entry(3, wgpu::TextureSampleType::Depth),
@@ -339,6 +363,7 @@ impl NativeFrame {
             device,
             &layout,
             &buffer,
+            &layers,
             (&blank, &reflection_sampler),
             &shadow_map,
             (&opaque_depth, &opaque_color),
@@ -351,6 +376,7 @@ impl NativeFrame {
             block_light,
             pbr,
             buffer,
+            layers,
             layout,
             group,
             opaque_depth,
@@ -390,6 +416,7 @@ impl NativeFrame {
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         buffer: &wgpu::Buffer,
+        layers: &wgpu::Buffer,
         (reflection, sampler): (&wgpu::TextureView, &wgpu::Sampler),
         shadow: &super::native_shadow::ShadowMap,
         (opaque_depth, opaque_color): (&wgpu::Texture, &wgpu::Texture),
@@ -403,6 +430,10 @@ impl NativeFrame {
             wgpu::BindGroupEntry {
                 binding: 0,
                 resource: buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: layers.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
                 binding: 1,
@@ -511,6 +542,7 @@ impl NativeFrame {
             device,
             &self.layout,
             &self.buffer,
+            &self.layers,
             (&self.reflection, &self.reflection_sampler),
             &self.shadow_map,
             (&self.opaque_depth, &self.opaque_color),
@@ -518,6 +550,15 @@ impl NativeFrame {
             &self.block_light,
             &self.pbr,
         );
+    }
+
+    /// Uploads the 4-bit per-sprite wave/material class table once when a pack is activated.
+    pub fn write_layer_kinds(
+        &self,
+        queue: &wgpu::Queue,
+        kinds: &[[u32; 4]; horizon_shader_api::volt_shaders::LAYER_KINDS_VECS],
+    ) {
+        queue.write_buffer(&self.layers, 0, bytemuck::cast_slice(kinds.as_slice()));
     }
 
     /// Writes this frame's inputs, for a world of `size`.

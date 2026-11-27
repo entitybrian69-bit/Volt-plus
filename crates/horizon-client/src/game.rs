@@ -13426,9 +13426,13 @@ impl Game<'_> {
     /// both hands in view space, converted to camera-relative world space.
     fn hand_geometry(&mut self, alpha: f64) -> Vec<Vertex> {
         let mut out = Vec::new();
-        // GameRenderer.renderItemInHand: F1 hides the hand with the HUD.
+        // GameRenderer.renderItemInHand: F1 hides the hand with the HUD, and
+        // detached cinematic/freecam cameras never render the floating first-person hand.
         if self.spectator()
-            || self.ui.hide_gui
+            || self.volt_effective_hide_gui()
+            || self.extras.volt.timelapse_active
+            || self.extras.volt.freecam_active
+            || self.view.detached
             || self.sleeping.is_some()
             || !self.camera_type.first_person()
             || self
@@ -18381,6 +18385,30 @@ impl Game<'_> {
                     let PhysicalKey::Code(key) = event.physical_key else {
                         return Ok(());
                     };
+                    #[cfg(target_os = "android")]
+                    if event.state == ElementState::Pressed
+                        && self.pad.touch_ui.floating_menu
+                        && self.pad.touch_ui.volt_extras_search_focused
+                    {
+                        match key {
+                            KeyCode::Escape | KeyCode::Enter | KeyCode::NumpadEnter => {
+                                self.pad.touch_ui.volt_extras_search_focused = false;
+                            }
+                            KeyCode::Backspace => {
+                                self.pad.touch_ui.volt_extras_search.pop();
+                                self.pad.touch_ui.hub_scroll = 0.0;
+                            }
+                            _ => {
+                                if let Some(txt) = event.text.as_deref() {
+                                    for ch in txt.chars().filter(|c| !c.is_control()) {
+                                        self.pad.touch_ui.volt_extras_search.push(ch);
+                                    }
+                                    self.pad.touch_ui.hub_scroll = 0.0;
+                                }
+                            }
+                        }
+                        return Ok(());
+                    }
                     if event.state == ElementState::Pressed
                         && self.volt_jei_key(key, event.text.as_deref())
                     {

@@ -927,6 +927,8 @@ pub struct Renderer {
     pack_post: Option<(i32, Option<pack_post::PackPost>)>,
     /// The post passes of one of Horizon's own shader packs; never beside `pack_post`'s.
     native: Option<native_pack::NativePack>,
+    /// Per-sprite material/wave kind nibble table uploaded to `NativeFrame::layers` for Volt Shaders.
+    native_layer_kinds: Box<[[u32; 4]; horizon_shader_api::volt_shaders::LAYER_KINDS_VECS]>,
     /// Time the shader pack's passes on the GPU (F3, or `HORIZON_SHADER_PACK_TIMING`).
     pass_timing: bool,
     /// The entity vertices Horizon draws itself while a shader pack draws the others.
@@ -4027,6 +4029,7 @@ impl Renderer {
             hdr_marker: None,
             pack_post: None,
             native: None,
+            native_layer_kinds: Box::new([[0; 4]; horizon_shader_api::volt_shaders::LAYER_KINDS_VECS]),
             pass_timing: pack_timing::PassTiming::logging(),
             pack_entity_rest: Vec::new(),
             cloud_bindings,
@@ -5728,11 +5731,24 @@ impl Renderer {
             lights,
         )?;
         self.native = pack.draws().then_some(pack);
-        if self.native.is_some() {
+        if let Some(native) = &self.native {
+            native
+                .frame
+                .write_layer_kinds(&self.queue, &self.native_layer_kinds);
             self.pack_post = None;
             self.pack_atlas = None;
         }
         Ok(labels)
+    }
+    /// Uploads the packed per-sprite wave/material class nibble table for Volt Shaders.
+    pub fn set_native_layer_kinds(
+        &mut self,
+        kinds: &[[u32; 4]; horizon_shader_api::volt_shaders::LAYER_KINDS_VECS],
+    ) {
+        *self.native_layer_kinds = *kinds;
+        if let Some(native) = &self.native {
+            native.frame.write_layer_kinds(&self.queue, kinds);
+        }
     }
     /// What a shader pack's gbuffers programs read from Horizon's geometry: the sky's, and
     /// terrain's in the pack's block atlas (made here when missing; none when it does not fit).

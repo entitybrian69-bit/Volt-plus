@@ -638,12 +638,12 @@ impl Default for AppleSkinConfig {
         Self {
             enabled: false,
             show_saturation_overlay: true,
-            show_exhaustion_underlay: true,
+            show_exhaustion_underlay: false,
             show_held_food_preview: true,
             show_health_regen_overlay: true,
             show_food_tooltip: true,
             always_show_tooltip: false,
-            show_debug_stats: true,
+            show_debug_stats: false,
             highlight_full_bar: false,
             pulse_speed_pct: 100,
         }

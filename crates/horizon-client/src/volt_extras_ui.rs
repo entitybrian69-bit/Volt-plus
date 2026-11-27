@@ -90,6 +90,40 @@ pub fn filtered_mod_indices(cat_idx: u8) -> Vec<u8> {
         .collect()
 }
 
+pub fn filtered_mod_indices_with(
+    v: &VoltExtras,
+    cat_idx: u8,
+    query: &str,
+    filter_mode: u8,
+    sort_enabled_first: bool,
+) -> Vec<u8> {
+    let cat = VoltModCategory::TABS
+        .get(usize::from(cat_idx))
+        .copied()
+        .unwrap_or(VoltModCategory::All);
+    let q = query.trim().to_ascii_lowercase();
+    let mut out: Vec<u8> = VOLT_MODS
+        .iter()
+        .filter(|m| cat == VoltModCategory::All || m.category == cat)
+        .filter(|m| match filter_mode {
+            1 => volt_mod_enabled(v, m.id),
+            2 => !volt_mod_enabled(v, m.id),
+            _ => true,
+        })
+        .filter(|m| {
+            q.is_empty()
+                || m.title.to_ascii_lowercase().contains(&q)
+                || m.summary.to_ascii_lowercase().contains(&q)
+                || m.key.to_ascii_lowercase().contains(&q)
+        })
+        .map(|m| m.id)
+        .collect();
+    if sort_enabled_first {
+        out.sort_by_key(|&id| (!volt_mod_enabled(v, id), id));
+    }
+    out
+}
+
 pub fn active_mod_count(v: &VoltExtras) -> usize {
     (0..VOLT_MODS.len())
         .filter(|&i| volt_mod_enabled(v, i as u8))
@@ -936,12 +970,11 @@ fn base_mod_setting_rows(v: &VoltExtras, idx: u8) -> Vec<SettingRow> {
         _ => {
             let c = &v.cinematic_timelapse;
             vec![
-                r_val("Start / Stop Time Lapse", "Begin countdown & launch cinematic timelapse", "Start / Stop".into()),
-                r_val("Time Lapse Start Delay", "Seconds countdown before timelapse starts (0/3/5/10/15/30)", format!("{}s", c.start_delay_secs)),
+                r_val("Start / Stop Time Lapse", "Launch or stop cinematic timelapse (countdown only shown here)", "Start / Stop".into()),
+                r_val("Time Lapse Start Delay", "Countdown delay before timelapse starts (0/3/5/10/15/30s)", format!("{}s", c.start_delay_secs)),
                 r_val("Camera Path Mode", "Smooth camera motion path during timelapse", c.path_mode.label().to_owned()),
                 r_val("Motion Speed", "Camera orbit / pan speed degrees per sec", format!("{}°/s", c.orbit_speed_deg)),
                 r_tog("Hide HUD While Active", "Hide touch buttons & bars during timelapse", c.hide_hud),
-                r_tog("Show Countdown Timer", "Display live 'Starts in Xs' overlay before start", c.show_countdown),
             ]
         }
     }
@@ -1733,7 +1766,6 @@ pub fn click_mod_setting_row(v: &mut VoltExtras, idx: u8, row: usize) -> Option<
             };
         }
         (83, 4) => v.cinematic_timelapse.hide_hud = !v.cinematic_timelapse.hide_hud,
-        (83, 5) => v.cinematic_timelapse.show_countdown = !v.cinematic_timelapse.show_countdown,
         _ => {}
     }
     None

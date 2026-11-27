@@ -1367,7 +1367,9 @@ impl Game<'_> {
                     }
                 }
                 InGameMenuAction::UpdateVoltExtras(volt) => {
+                    let was_timelapse = self.settings.extras.volt.cinematic_timelapse.enabled;
                     self.settings.extras.volt = volt;
+                    self.volt_sync_timelapse_from_settings(was_timelapse);
                     self.settings.extras.save(std::path::Path::new("."));
                     self.apply_ui_settings();
                     self.sync_volt_touch_ui();
@@ -1375,6 +1377,10 @@ impl Game<'_> {
                 InGameMenuAction::VoltQuickAction(act) => {
                     self.volt_extras_quick_action(act);
                     self.settings.extras.save(std::path::Path::new("."));
+                }
+                InGameMenuAction::FocusVoltExtrasSearch => {
+                    self.pad.touch_ui.volt_extras_search_focused = true;
+                    crate::platform::show(&self.pad.touch_ui.volt_extras_search);
                 }
             }
             return Ok(true);
@@ -1696,6 +1702,94 @@ impl Game<'_> {
             if self.android_preset_typing(&out) {
                 continue;
             }
+            if self.pad.touch_ui.floating_menu && self.pad.touch_ui.volt_extras_search_focused {
+                match &out {
+                    Output::Text(t) => {
+                        for ch in t.chars() {
+                            if ch == '\n' || ch == '\r' {
+                                self.pad.touch_ui.volt_extras_search_focused = false;
+                                crate::platform::hide();
+                                break;
+                            } else if !ch.is_control() {
+                                self.pad.touch_ui.volt_extras_search.push(ch);
+                                self.pad.touch_ui.hub_scroll = 0.0;
+                            }
+                        }
+                    }
+                    Output::Backspace => {
+                        self.pad.touch_ui.volt_extras_search.pop();
+                        self.pad.touch_ui.hub_scroll = 0.0;
+                    }
+                    Output::Enter | Output::Close => {
+                        self.pad.touch_ui.volt_extras_search_focused = false;
+                        crate::platform::hide();
+                    }
+                    Output::Key(code) => {
+                        use winit::keyboard::KeyCode;
+                        match code {
+                            KeyCode::Backspace => {
+                                self.pad.touch_ui.volt_extras_search.pop();
+                                self.pad.touch_ui.hub_scroll = 0.0;
+                            }
+                            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Escape => {
+                                self.pad.touch_ui.volt_extras_search_focused = false;
+                                crate::platform::hide();
+                            }
+                            _ => {
+                                if let Some(ch) = horizon_client::touch_ui::key_code_to_char(*code) {
+                                    self.pad.touch_ui.volt_extras_search.push(ch);
+                                    self.pad.touch_ui.hub_scroll = 0.0;
+                                }
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+            if self.volt_jei_visible() && self.extras.volt.jei_search_focused {
+                match &out {
+                    Output::Text(t) => {
+                        for ch in t.chars() {
+                            if ch == '\n' || ch == '\r' {
+                                self.extras.volt.jei_search_focused = false;
+                                crate::platform::hide();
+                                break;
+                            } else if !ch.is_control() {
+                                self.extras.volt.jei_search.push(ch);
+                                self.extras.volt.jei_page = 0;
+                            }
+                        }
+                    }
+                    Output::Backspace => {
+                        self.extras.volt.jei_search.pop();
+                        self.extras.volt.jei_page = 0;
+                    }
+                    Output::Enter | Output::Close => {
+                        self.extras.volt.jei_search_focused = false;
+                        crate::platform::hide();
+                    }
+                    Output::Key(code) => {
+                        use winit::keyboard::KeyCode;
+                        match code {
+                            KeyCode::Backspace => {
+                                self.extras.volt.jei_search.pop();
+                                self.extras.volt.jei_page = 0;
+                            }
+                            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Escape => {
+                                self.extras.volt.jei_search_focused = false;
+                                crate::platform::hide();
+                            }
+                            _ => {
+                                if let Some(ch) = horizon_client::touch_ui::key_code_to_char(*code) {
+                                    self.extras.volt.jei_search.push(ch);
+                                    self.extras.volt.jei_page = 0;
+                                }
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
             if self.pad.touch_ui.floating_menu && self.pad.touch_ui.music_editing_search {
                 match &out {
                     Output::Text(t) => {
@@ -1776,6 +1870,7 @@ impl Game<'_> {
         }
         if !self.pad.touch_ui.floating_menu {
             self.pad.touch_ui.music_editing_search = false;
+            self.pad.touch_ui.volt_extras_search_focused = false;
         }
         // Title screens also use Playing: their focused text fields must keep
         // the IME until the user confirms or closes the editor.
@@ -1784,6 +1879,8 @@ impl Game<'_> {
             && self.pad.touch_ui.custom_input_picker == horizon_client::touch::PickerStep::None
             && self.pad.touch_ui.volt_key_picker.is_none()
             && !self.pad.touch_ui.music_editing_search
+            && !self.pad.touch_ui.volt_extras_search_focused
+            && !(self.volt_jei_visible() && self.extras.volt.jei_search_focused)
             && crate::platform::active()
         {
             crate::platform::hide();

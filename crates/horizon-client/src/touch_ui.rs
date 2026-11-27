@@ -74,6 +74,16 @@ pub struct TouchUi {
     pub volt_extras_config_mod: Option<u8>,
     /// Active Volt+ Extras category filter tab (`0=All, 1=PvP, 2=HUD, 3=Camera, 4=World, 5=Utility`).
     pub volt_extras_cat: u8,
+    /// Search query inside Volt+ Extras Control Hub tab.
+    pub volt_extras_search: String,
+    /// Whether the Volt+ Extras search bar is focused for typing / Android OSK.
+    pub volt_extras_search_focused: bool,
+    /// Volt+ Extras enabled filter (`0=All, 1=Enabled, 2=Disabled`).
+    pub volt_extras_filter: u8,
+    /// When true, sort enabled mods to the top of the list.
+    pub volt_extras_sort_enabled: bool,
+    /// Live status/countdown string for Cinematic Time Lapse Configure screen (`None` when idle).
+    pub volt_timelapse_status: Option<String>,
     /// Step state for per-mod Toggle/Use Keybind picker `(mod_id, is_use, step)`.
     pub volt_key_picker: Option<(u8, bool, crate::touch::PickerStep)>,
     /// Whether the Waypoint Manager modal is open inside Control Hub.
@@ -153,6 +163,11 @@ impl Default for TouchUi {
             volt_extras: crate::extras::VoltExtras::default(),
             volt_extras_config_mod: None,
             volt_extras_cat: 0,
+            volt_extras_search: String::new(),
+            volt_extras_search_focused: false,
+            volt_extras_filter: 0,
+            volt_extras_sort_enabled: false,
+            volt_timelapse_status: None,
             volt_key_picker: None,
             volt_waypoint_manager: false,
             volt_waypoints_page: 0,
@@ -285,6 +300,7 @@ pub enum InGameMenuAction {
     MusicDownloadSearchResult(usize),
     UpdateVoltExtras(crate::extras::VoltExtras),
     VoltQuickAction(crate::extras::VoltQuickAction),
+    FocusVoltExtrasSearch,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -3602,6 +3618,7 @@ impl TouchUi {
             9 => {
                 let body_y = body_top - self.hub_scroll;
                 if let Some(mod_idx) = self.volt_extras_config_mod {
+                    self.volt_extras_search_focused = false;
                     let back_btn = [cx, body_y, (cw - 60.0).max(120.0), 32.0];
                     let master_sw = [cx + cw - 52.0, body_y + 5.0, 40.0, 22.0];
                     if inside(master_sw) {
@@ -3647,8 +3664,42 @@ impl TouchUi {
                         }
                     }
                 } else {
+                    // Search bar + Enabled/Disabled filter & sort pills
+                    let bar_y = body_y + 30.0;
+                    let pill_gap = 3.0;
+                    let pill_w = [34.0_f32, 52.0, 54.0, 42.0];
+                    let right_total: f32 = pill_w.iter().sum::<f32>() + pill_gap * 3.0;
+                    let search_w = (cw - right_total - 6.0).max(96.0);
+                    let search_r = [cx, bar_y, search_w, 26.0];
+                    if inside(search_r) {
+                        if !self.volt_extras_search.is_empty()
+                            && p[0] >= cx + search_w - 22.0
+                        {
+                            self.volt_extras_search.clear();
+                            self.hub_scroll = 0.0;
+                            self.volt_extras_search_focused = false;
+                            return Some(InGameMenuAction::Close);
+                        }
+                        self.volt_extras_search_focused = true;
+                        return Some(InGameMenuAction::FocusVoltExtrasSearch);
+                    }
+                    self.volt_extras_search_focused = false;
+                    let mut px_cur = cx + search_w + 6.0;
+                    for (fi, &pw_i) in pill_w.iter().enumerate() {
+                        if inside([px_cur, bar_y, pw_i, 26.0]) {
+                            if fi < 3 {
+                                self.volt_extras_filter = fi as u8;
+                            } else {
+                                self.volt_extras_sort_enabled = !self.volt_extras_sort_enabled;
+                            }
+                            self.hub_scroll = 0.0;
+                            return Some(InGameMenuAction::Close);
+                        }
+                        px_cur += pw_i + pill_gap;
+                    }
+
                     // Category filter pills (6 tabs: All, PvP, HUD, Camera, World, Utility)
-                    let cat_y = body_y + 30.0;
+                    let cat_y = body_y + 62.0;
                     let cat_gap = 4.0;
                     let cat_w = ((cw - cat_gap * 5.0) / 6.0).max(36.0);
                     for ci in 0..6u8 {
@@ -3659,8 +3710,14 @@ impl TouchUi {
                             return Some(InGameMenuAction::Close);
                         }
                     }
-                    let filtered = crate::volt_extras_ui::filtered_mod_indices(self.volt_extras_cat);
-                    let list_y = body_y + 60.0;
+                    let filtered = crate::volt_extras_ui::filtered_mod_indices_with(
+                        &self.volt_extras,
+                        self.volt_extras_cat,
+                        &self.volt_extras_search,
+                        self.volt_extras_filter,
+                        self.volt_extras_sort_enabled,
+                    );
+                    let list_y = body_y + 92.0;
                     for (pos_i, &mod_idx) in filtered.iter().enumerate() {
                         let ry = list_y + pos_i as f32 * 68.0;
                         let cfg_r = [cx + cw - 124.0, ry + 16.0, 64.0, 28.0];
@@ -4004,8 +4061,16 @@ impl TouchUi {
             7 => 364.0,
             9 => match self.volt_extras_config_mod {
                 None => {
-                    let n = crate::volt_extras_ui::filtered_mod_indices(self.volt_extras_cat).len();
-                    70.0 + (n as f32) * 68.0
+                    let n = crate::volt_extras_ui::filtered_mod_indices_with(
+                        &self.volt_extras,
+                        self.volt_extras_cat,
+                        &self.volt_extras_search,
+                        self.volt_extras_filter,
+                        self.volt_extras_sort_enabled,
+                    )
+                    .len()
+                    .max(1);
+                    102.0 + (n as f32) * 68.0
                 }
                 Some(idx) => {
                     let rows = crate::volt_extras_ui::mod_setting_rows(&self.volt_extras, idx).len();
@@ -6119,13 +6184,18 @@ impl TouchUi {
                         if ry + 48.0 < body_top || ry > body_top + body_h {
                             continue;
                         }
+                        let badge_override = if mod_idx == 83 && r == 0 {
+                            self.volt_timelapse_status.as_deref()
+                        } else {
+                            None
+                        };
                         draw_toggle_row(
                             &mut ui,
                             ry,
                             row.title,
                             row.sub,
                             row.toggle,
-                            row.badge.as_deref(),
+                            badge_override.or(row.badge.as_deref()),
                         );
                     }
                 } else {
@@ -6150,7 +6220,99 @@ impl TouchUi {
                         ),
                     );
 
-                    let cat_y = body_y + 30.0;
+                    // Search bar + Enabled/Disabled filter & sort pills
+                    let bar_y = body_y + 30.0;
+                    let pill_gap = 3.0;
+                    let pill_w = [34.0_f32, 52.0, 54.0, 42.0];
+                    let pill_labels = ["All", "Enabled", "Disabled", "On↑"];
+                    let right_total: f32 = pill_w.iter().sum::<f32>() + pill_gap * 3.0;
+                    let search_w = (cw - right_total - 6.0).max(96.0);
+                    ui.rounded(
+                        cx,
+                        bar_y,
+                        search_w,
+                        26.0,
+                        8.0,
+                        if self.volt_extras_search_focused {
+                            card_sel
+                        } else {
+                            well_bg
+                        },
+                    );
+                    ui.border(
+                        cx,
+                        bar_y,
+                        search_w,
+                        26.0,
+                        8.0,
+                        if self.volt_extras_search_focused {
+                            accent_hi
+                        } else {
+                            border_c
+                        },
+                    );
+                    let q_disp = if self.volt_extras_search.is_empty() {
+                        "Search mods..."
+                    } else {
+                        self.volt_extras_search.as_str()
+                    };
+                    let q_col = if self.volt_extras_search.is_empty() {
+                        muted_c
+                    } else {
+                        text_c
+                    };
+                    ui.text_clipped(
+                        Face::Regular,
+                        9.2,
+                        cx + 9.0,
+                        bar_y + 7.0,
+                        (search_w - 26.0).max(30.0),
+                        q_col,
+                        q_disp,
+                    );
+                    if !self.volt_extras_search.is_empty() {
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            10.0,
+                            [cx + search_w - 22.0, bar_y, 20.0, 26.0],
+                            muted_c,
+                            "×",
+                        );
+                    }
+                    let mut px_cur = cx + search_w + 6.0;
+                    for (fi, (&pw_i, &lbl)) in pill_w.iter().zip(pill_labels.iter()).enumerate() {
+                        let sel = if fi < 3 {
+                            self.volt_extras_filter == fi as u8
+                        } else {
+                            self.volt_extras_sort_enabled
+                        };
+                        ui.rounded(
+                            px_cur,
+                            bar_y,
+                            pw_i,
+                            26.0,
+                            7.0,
+                            if sel { accent } else { card_bg },
+                        );
+                        ui.border(
+                            px_cur,
+                            bar_y,
+                            pw_i,
+                            26.0,
+                            7.0,
+                            if sel { accent_hi } else { border_c },
+                        );
+                        ui.centered_fit(
+                            if sel { Face::SemiBold } else { Face::Medium },
+                            8.2,
+                            [px_cur, bar_y, pw_i, 26.0],
+                            if sel { accent_fg } else { text_c },
+                            lbl,
+                        );
+                        px_cur += pw_i + pill_gap;
+                    }
+
+                    let cat_y = body_y + 62.0;
                     let cat_gap = 4.0;
                     let cat_w = ((cw - cat_gap * 5.0) / 6.0).max(36.0);
                     for (ci, cat) in crate::extras::VoltModCategory::TABS.iter().enumerate() {
@@ -6167,8 +6329,25 @@ impl TouchUi {
                         );
                     }
 
-                    let filtered = crate::volt_extras_ui::filtered_mod_indices(self.volt_extras_cat);
-                    let list_y = body_y + 60.0;
+                    let filtered = crate::volt_extras_ui::filtered_mod_indices_with(
+                        &self.volt_extras,
+                        self.volt_extras_cat,
+                        &self.volt_extras_search,
+                        self.volt_extras_filter,
+                        self.volt_extras_sort_enabled,
+                    );
+                    let list_y = body_y + 92.0;
+                    if filtered.is_empty() {
+                        ui.rounded(cx, list_y, cw, 48.0, 10.0, card_bg);
+                        ui.border(cx, list_y, cw, 48.0, 10.0, border_c);
+                        ui.centered_fit(
+                            Face::Medium,
+                            9.6,
+                            [cx, list_y, cw, 48.0],
+                            muted_c,
+                            "No mods match this search / filter",
+                        );
+                    }
                     for (pos_i, &mod_idx) in filtered.iter().enumerate() {
                         let ry = list_y + pos_i as f32 * 68.0;
                         if ry + 64.0 < body_top || ry > body_top + body_h {
