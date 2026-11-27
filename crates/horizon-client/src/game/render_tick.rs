@@ -553,8 +553,8 @@ impl Game<'_> {
                             ("minecraft:weather.rain", 0.2, 1.0)
                         };
                         let ws = &self.settings.extras.volt.weather_sound;
-                        let vol_scale = if ws.enabled {
-                            f32::from(ws.rain_volume_pct.min(100)) / 100.0
+                        let vol_scale = if ws.enabled && ws.limit_rain_splashes {
+                            0.35
                         } else {
                             1.0
                         };

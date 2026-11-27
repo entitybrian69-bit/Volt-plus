@@ -13613,12 +13613,22 @@ impl Game<'_> {
             let mut m = to_world
                 * horizon_client::first_person::item_pose(left, inverse_height, attack, pose);
             let ls = &self.settings.extras.volt.low_shield;
-            if ls.enabled
-                && &*stack.item == "minecraft:shield"
-                && (!using || ls.apply_while_blocking)
-            {
-                let drop_y = (f32::from(ls.offset_pct.clamp(0, 60)) / 100.0) * 0.42;
-                m = m * glam::Mat4::from_translation(glam::Vec3::new(0.0, -drop_y, 0.0));
+            if ls.enabled {
+                let drop_pct = if &*stack.item == "minecraft:shield" {
+                    if using && ls.hide_blocking_tilt {
+                        0
+                    } else {
+                        ls.shield_drop_pct
+                    }
+                } else if left {
+                    ls.offhand_drop_pct
+                } else {
+                    ls.mainhand_drop_pct
+                };
+                if drop_pct > 0 {
+                    let drop_y = (f32::from(drop_pct.clamp(0, 60)) / 100.0) * 0.42;
+                    m = m * glam::Mat4::from_translation(glam::Vec3::new(0.0, -drop_y, 0.0));
+                }
             }
             // Seeded by the player id plus the context ordinal.
             let (context, seed) = if left {

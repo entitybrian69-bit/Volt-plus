@@ -77,7 +77,7 @@ impl Game<'_> {
     /// camera entity (`LivingEntityRenderer.shouldShowName`).
     fn own_name_tag(&self) -> Option<(&Mob, String)> {
         let ntp = &self.settings.extras.volt.name_tags_plus;
-        let show_own = self.settings.extras.own_name_tag || (ntp.enabled && ntp.always_show_own);
+        let show_own = self.settings.extras.own_name_tag || (ntp.enabled && ntp.show_own_nametag);
         if !show_own
             || self.camera_type.first_person()
             || self.sleeping.is_some()
@@ -223,7 +223,7 @@ impl Game<'_> {
                 if ntp.show_distance {
                     extra_txt.push_str(&format!(" [{:.0}m]", distance_sqr.sqrt()));
                 }
-                if ntp.show_health {
+                if ntp.show_hp_tag {
                     extra_txt.push_str(&format!(" [{:.0}❤]", m.health.max(0.0)));
                 }
                 if !extra_txt.is_empty() {

@@ -330,7 +330,7 @@ impl Game<'_> {
             speed *= f32::from(cg.speed_pct.clamp(10, 300)) / 100.0;
             alpha = match cg.preset {
                 horizon_client::extras::GlintColorPreset::Off => 0.0,
-                _ => alpha * (f32::from(cg.alpha_pct.clamp(0, 200)) / 100.0),
+                _ => alpha * (f32::from(cg.strength_pct.clamp(0, 200)) / 100.0),
             };
         }
         item_render::GlintFrame {

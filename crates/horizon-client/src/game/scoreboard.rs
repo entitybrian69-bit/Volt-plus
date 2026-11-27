@@ -824,15 +824,13 @@ impl Game<'_> {
         let draws = self.tab_list.layout(&inputs, &self.gui.atlas.font);
         horizon_client::hud_layout::paint(batch, &self.gui.atlas, &draws);
         let tp = &self.settings.extras.volt.tab_ping;
-        if tp.enabled {
+        if tp.enabled && tp.show_ping_ms {
             let atlas = &self.gui.atlas;
             let mut y = 14.0_f32;
             for p in &players {
                 let ms = p.latency;
                 let txt = format!("{}: {}ms", p.name, ms);
-                let col = if !tp.color_coded {
-                    horizon_client::hud::rgba(235, 240, 250, 255)
-                } else if ms < 70 {
+                let col = if ms < 70 {
                     horizon_client::hud::rgba(105, 242, 130, 255)
                 } else if ms < 160 {
                     horizon_client::hud::rgba(255, 212, 76, 255)
