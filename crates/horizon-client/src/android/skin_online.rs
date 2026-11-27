@@ -116,6 +116,7 @@ pub(super) struct SkinOnlineState {
     page_cache: HashMap<PageCacheKey, CachedPage>,
     prefetch_worker: Option<(PageCacheKey, mpsc::Receiver<CachedPage>)>,
     anim_origin: Instant,
+    syncing_equip: bool,
     pub last_equip_title: Option<String>,
 }
 
@@ -141,6 +142,7 @@ impl SkinOnlineState {
             page_cache: HashMap::new(),
             prefetch_worker: None,
             anim_origin: Instant::now(),
+            syncing_equip: false,
             last_equip_title: None,
         }
     }
