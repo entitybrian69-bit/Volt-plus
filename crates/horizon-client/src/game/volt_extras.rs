@@ -3903,7 +3903,7 @@ impl Game<'_> {
     }
 
     fn jei_top_offset(&self) -> f32 {
-        let mut top = match self.settings.horizon.overlay {
+        let mut top: f32 = match self.settings.horizon.overlay {
             horizon_client::graphics::Overlay::Graph => 82.0,
             horizon_client::graphics::Overlay::Fps => 40.0,
             horizon_client::graphics::Overlay::Off => 6.0,
@@ -3922,7 +3922,7 @@ impl Game<'_> {
     }
 
     fn jei_panel_rect(&self, wi: f32, hi: f32) -> [f32; 4] {
-        let pw = (6.0 * 18.0 + 8.0).min(wi * 0.34);
+        let pw = (6.0_f32 * 18.0 + 8.0).min(wi * 0.34);
         let py = self.jei_top_offset();
         let ph = (hi - py - 6.0).max(112.0);
         [wi - pw - 6.0, py, pw, ph]
