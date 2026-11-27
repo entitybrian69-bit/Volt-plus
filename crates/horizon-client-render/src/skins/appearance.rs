@@ -81,7 +81,7 @@ fn encode_rgba_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
     let mut encoder = png::Encoder::new(&mut bytes, width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
-    encoder.set_compression(png::Compression::Best);
+    encoder.set_compression(png::Compression::High);
     encoder.write_header().ok()?.write_image_data(rgba).ok()?;
     Some(bytes)
 }
