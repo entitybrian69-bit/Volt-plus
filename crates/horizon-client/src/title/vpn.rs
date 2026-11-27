@@ -1,5 +1,4 @@
-use crate::font::HudAtlas;
-use crate::hud::HudBatch;
+use crate::hud::{HudAtlas, HudBatch, rgba};
 use crate::ui::{Caret, Scroll, list_background, scrollbar, separators};
 use horizon_protocol::connection::{VpnEndpoint, active_vpn, set_active_vpn, test_vpn_endpoint};
 use serde::{Deserialize, Serialize};
@@ -685,29 +684,32 @@ impl Screen {
             let is_hovered = hovered_row == Some(row_idx);
 
             if is_selected {
-                batch.rect(left, y, ROW_WIDTH, ROW_HEIGHT, u32::MAX);
-                batch.rect(
+                batch.fill(atlas, left, y, ROW_WIDTH, ROW_HEIGHT, u32::MAX);
+                batch.fill(
+                    atlas,
                     left + 1.0,
                     y + 1.0,
                     ROW_WIDTH - 2.0,
                     ROW_HEIGHT - 2.0,
-                    super::rgba(0, 0, 0, 255),
+                    rgba(0, 0, 0, 255),
                 );
             } else if is_active {
-                batch.rect(
+                batch.fill(
+                    atlas,
                     left + 1.0,
                     y + 1.0,
                     ROW_WIDTH - 2.0,
                     ROW_HEIGHT - 2.0,
-                    super::rgba(22, 54, 24, 210),
+                    rgba(22, 54, 24, 210),
                 );
             } else if is_hovered {
-                batch.rect(
+                batch.fill(
+                    atlas,
                     left + 1.0,
                     y + 1.0,
                     ROW_WIDTH - 2.0,
                     ROW_HEIGHT - 2.0,
-                    super::rgba(255, 255, 255, 26),
+                    rgba(255, 255, 255, 26),
                 );
             }
 
