@@ -723,10 +723,10 @@ impl Wardrobe {
 
         self.preview_cape_frames = cape
             .map(|c| {
-                let count = skins::cape_frame_count(c).max(1);
+                let count = skins::cape_frame_count(&c).max(1);
                 (0..count)
                     .filter_map(|i| {
-                        let frame = skins::cape_frame_64x32(c, i);
+                        let frame = skins::cape_frame_64x32(&c, i);
                         horizon_core::player_texture::process_cape(
                             frame.width(),
                             frame.height(),
