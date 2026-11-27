@@ -594,9 +594,20 @@ impl TouchControls {
                 && hit != Some(old_idx)
             {
                 let old_placement = self.custom_placement(old_idx);
+                let is_sneak_btn = self.settings.custom_buttons.get(old_idx).is_some_and(|b| {
+                    b.active_tokens().iter().any(|t| {
+                        matches!(
+                            t.as_str(),
+                            "key.keyboard.left.shift"
+                                | "key.keyboard.right.shift"
+                                | "action:key.sneak"
+                        )
+                    })
+                });
                 let new_swipeable = hit.is_some_and(|idx| self.custom_placement(idx).swipeable);
                 let switched_to_other = hit.is_some();
-                let left_non_passthrough = !old_placement.passthrough && !old_placement.toggleable;
+                let left_non_passthrough =
+                    !is_sneak_btn && !old_placement.passthrough && !old_placement.toggleable;
                 if switched_to_other || old_placement.swipeable || new_swipeable || left_non_passthrough {
                     self.release_custom_finger_key(id);
                     self.custom_swipe_btn.remove(&id);

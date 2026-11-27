@@ -1436,8 +1436,8 @@ impl Game<'_> {
             31 => self.volt_extras_quick_action(VoltQuickAction::SwapChestElytra),
             33 => self.volt_extras_quick_action(VoltQuickAction::ToggleAutoSprint),
             36 => self.volt_extras_quick_action(VoltQuickAction::ToggleFullbright),
-            68 => self.volt_extras_quick_action(VoltQuickAction::ResetSessionStats),
-            74 => {
+            67 => self.volt_extras_quick_action(VoltQuickAction::ResetSessionStats),
+            72 => {
                 if self.extras.volt.ruler_a.is_none() {
                     self.volt_extras_quick_action(VoltQuickAction::SetRulerPointA);
                 } else if self.extras.volt.ruler_b.is_none() {
@@ -1446,10 +1446,10 @@ impl Game<'_> {
                     self.volt_extras_quick_action(VoltQuickAction::ClearRuler);
                 }
             }
-            75 => self.volt_extras_quick_action(VoltQuickAction::SetHomeWaypoint),
-            81 => self.volt_extras_quick_action(VoltQuickAction::TogglePhotoMode),
-            82 => self.volt_extras_quick_action(VoltQuickAction::ToggleJei),
-            83 => self.volt_extras_quick_action(VoltQuickAction::StartStopTimelapse),
+            73 => self.volt_extras_quick_action(VoltQuickAction::SetHomeWaypoint),
+            79 => self.volt_extras_quick_action(VoltQuickAction::TogglePhotoMode),
+            80 => self.volt_extras_quick_action(VoltQuickAction::ToggleJei),
+            81 => self.volt_extras_quick_action(VoltQuickAction::StartStopTimelapse),
             other => {
                 let cur = volt_mod_enabled(&self.settings.extras.volt, other);
                 set_volt_mod_enabled(&mut self.settings.extras.volt, other, !cur);
@@ -1467,8 +1467,16 @@ impl Game<'_> {
             4 => self.settings.extras.volt.freelook.active = active,
             16 => self.settings.extras.volt.zoom.active = active,
             25 => self.settings.extras.volt.freecam.active = active,
-            81 => self.settings.extras.volt.photo_mode.active = active,
-            82 => self.extras.volt.jei_open = active,
+            79 => self.settings.extras.volt.photo_mode.active = active,
+            80 => {
+                self.extras.volt.jei_open = active;
+                if !active {
+                    self.extras.volt.jei_search_focused = false;
+                }
+                if self.screen == Screen::Playing {
+                    self.capture(!active);
+                }
+            }
             _ => {}
         }
     }
@@ -1500,10 +1508,16 @@ impl Game<'_> {
                                 self.settings.extras.volt.freecam.active = !cur;
                             } else if id == 36 {
                                 self.apply_ui_settings();
-                            } else if id == 81 {
+                            } else if id == 79 {
                                 self.settings.extras.volt.photo_mode.active = !cur;
-                            } else if id == 82 {
+                            } else if id == 80 {
                                 self.extras.volt.jei_open = !cur;
+                                if !self.extras.volt.jei_open {
+                                    self.extras.volt.jei_search_focused = false;
+                                }
+                                if self.screen == Screen::Playing {
+                                    self.capture(!self.extras.volt.jei_open);
+                                }
                             }
                             let title = VOLT_MODS[id].title;
                             self.volt_push_toast(format!(
@@ -1534,7 +1548,7 @@ impl Game<'_> {
                     }
                     VoltKeybindMode::Hold => {
                         if !repeat {
-                            if id == 83 {
+                            if id == 81 {
                                 if pressed && !self.extras.volt.timelapse_active {
                                     self.volt_toggle_timelapse();
                                 } else if !pressed && self.extras.volt.timelapse_active {
@@ -1699,19 +1713,7 @@ impl Game<'_> {
                 let dz = cur[2] - prev[2];
                 let inst = (dx * dx + dz * dz).sqrt() * 20.0;
                 self.extras.volt.speed_bps = self.extras.volt.speed_bps * 0.75 + inst * 0.25;
-
-                // CameraOverhaul strafe roll inertia
-                if self.settings.extras.volt.cameraoverhaul.enabled {
-                    let sy = self.yaw.to_radians().sin() as f32;
-                    let cy = self.yaw.to_radians().cos() as f32;
-                    let right_speed = (dx as f32 * (-cy) + dz as f32 * (-sy)) * 20.0;
-                    let strength = f32::from(self.settings.extras.volt.cameraoverhaul.strafe_roll_pct) / 100.0;
-                    let target_roll = (right_speed * 0.55 * strength).clamp(-6.5, 6.5);
-                    self.extras.volt.camera_roll_deg =
-                        self.extras.volt.camera_roll_deg * 0.8 + target_roll * 0.2;
-                } else {
-                    self.extras.volt.camera_roll_deg = 0.0;
-                }
+                self.extras.volt.camera_roll_deg = 0.0;
             }
             self.extras.volt.last_player_pos = Some(cur);
 
@@ -3671,63 +3673,7 @@ impl Game<'_> {
             }
         }
 
-        // 2) Minimap Radar (#60)
-        let rd_cfg = &self.settings.extras.volt.minimap_radar;
-        if rd_cfg.enabled
-            && let Some(p) = self.player.as_ref()
-        {
-            let sz = f32::from(rd_cfg.size_px.clamp(48, 120));
-            let (rx, ry) = Self::corner_xy(rd_cfg.corner, wi, hi, sz, sz, 18.0);
-            let rcx = rx + sz * 0.5;
-            let rcy = ry + sz * 0.5;
-            batch.fill(atlas, rx, ry, sz, sz, rgba(14, 18, 24, 195));
-            batch.fill(atlas, rx, ry, sz, 1.0, rgba(110, 180, 240, 180));
-            batch.fill(atlas, rx, ry + sz - 1.0, sz, 1.0, rgba(110, 180, 240, 180));
-            batch.fill(atlas, rx, ry, 1.0, sz, rgba(110, 180, 240, 180));
-            batch.fill(atlas, rx + sz - 1.0, ry, 1.0, sz, rgba(110, 180, 240, 180));
-            let range = f64::from(rd_cfg.zoom_blocks.clamp(16, 128));
-            let yr = f64::from(self.yaw.to_radians());
-            let (sy, cy) = (yr.sin(), yr.cos());
-            let plot = |batch: &mut HudBatch, wx: f64, wz: f64, col: u32| {
-                let dx = wx - p.position.x;
-                let dz = wz - p.position.z;
-                let rx_rel = -dx * cy - dz * sy;
-                let rz_rel = -dx * sy + dz * cy;
-                let px = rcx + ((rx_rel / range) * f64::from(sz * 0.45)) as f32;
-                let py = rcy - ((rz_rel / range) * f64::from(sz * 0.45)) as f32;
-                if px >= rx + 2.0 && px <= rx + sz - 4.0 && py >= ry + 2.0 && py <= ry + sz - 4.0 {
-                    batch.fill(atlas, px - 1.5, py - 1.5, 3.0, 3.0, col);
-                }
-            };
-            if rd_cfg.show_mobs {
-                for m in &self.mobs {
-                    let is_hostile = m.kind.category == "monster";
-                    let col = if is_hostile {
-                        rgba(255, 86, 86, 255)
-                    } else {
-                        rgba(102, 235, 132, 255)
-                    };
-                    plot(batch, m.position.x, m.position.z, col);
-                }
-            }
-            if rd_cfg.show_waypoints {
-                for wp in &self.extras.volt.waypoints {
-                    if wp.dim == self.dim {
-                        plot(batch, wp.pos[0], wp.pos[2], wp.color);
-                    }
-                }
-            }
-            if rd_cfg.show_players {
-                for (id, _) in self.remote_player_names() {
-                    if let Some(m) = self.mobs.iter().find(|m| m.id == id) {
-                        plot(batch, m.position.x, m.position.z, rgba(96, 232, 255, 255));
-                    }
-                }
-            }
-            batch.fill(atlas, rcx - 2.0, rcy - 2.0, 4.0, 4.0, rgba(255, 255, 255, 255));
-        }
-
-        // 3) Durability Warning Banner (#62)
+        // 2) Durability Warning Banner (#61)
         let dw_cfg = &self.settings.extras.volt.durability_warn;
         if dw_cfg.enabled {
             let mut worst: Option<(&str, u8)> = None;
@@ -4081,18 +4027,24 @@ impl Game<'_> {
         let end = (start + per_page).min(items.len());
         let gx = px + 4.0;
         let gy = py + 18.0;
+        let (mx, my) = self.cursor;
+        let mut hovered_item: Option<String> = None;
         for (i, item_id) in items[start..end].iter().enumerate() {
             let col = i % cols;
             let row = i / cols;
             let sx = gx + col as f32 * 18.0;
             let sy = gy + row as f32 * 18.0;
+            let hovered = mx >= sx && mx <= sx + 17.0 && my >= sy && my <= sy + 17.0;
             let selected = self
                 .extras
                 .volt
                 .jei_selected_item
                 .as_deref()
                 .is_some_and(|s| s == item_id);
-            if selected {
+            if hovered {
+                hovered_item = Some(item_id.clone());
+                batch.fill(atlas, sx, sy, 16.0, 16.0, rgba(255, 255, 255, 110));
+            } else if selected {
                 batch.fill(atlas, sx, sy, 16.0, 16.0, rgba(255, 255, 255, 68));
             }
             let stack = ItemStack {
@@ -4285,9 +4237,56 @@ impl Game<'_> {
                 batch.text(atlas, "Give", gx + 8.0, gy + 2.5, u32::MAX, true);
             }
         }
+
+        // Mouse hover tooltip for JEI grid items
+        if let Some(ref item_id) = hovered_item {
+            let label = Self::jei_item_label(item_id);
+            let show_id = self.settings.extras.volt.jei.show_item_ids;
+            let lw = HudBatch::text_width(atlas, &label);
+            let iw = if show_id {
+                HudBatch::text_width(atlas, item_id)
+            } else {
+                0.0
+            };
+            let tw = lw.max(iw) + 10.0;
+            let th = if show_id { 24.0 } else { 14.0 };
+            let tx = (mx - tw - 6.0).clamp(4.0, (batch.width - tw - 4.0).max(4.0));
+            let ty = (my - th * 0.5).clamp(4.0, (batch.height - th - 4.0).max(4.0));
+            batch.fill(atlas, tx, ty, tw, th, rgba(16, 8, 28, 238));
+            batch.fill(atlas, tx, ty, tw, 1.0, rgba(96, 64, 180, 235));
+            batch.fill(atlas, tx, ty + th - 1.0, tw, 1.0, rgba(96, 64, 180, 235));
+            batch.fill(atlas, tx, ty, 1.0, th, rgba(96, 64, 180, 235));
+            batch.fill(atlas, tx + tw - 1.0, ty, 1.0, th, rgba(96, 64, 180, 235));
+            batch.text(atlas, &label, tx + 5.0, ty + 3.0, u32::MAX, true);
+            if show_id {
+                batch.text(atlas, item_id, tx + 5.0, ty + 13.0, rgba(160, 168, 184, 255), true);
+            }
+        }
     }
 
-    pub(super) fn volt_jei_click(&mut self, w: f32, h: f32) -> bool {
+    pub(super) fn volt_jei_contains_point(&self, w: f32, h: f32, pt: [f32; 2]) -> bool {
+        if !self.volt_jei_visible() {
+            return false;
+        }
+        let [px, py, pw, ph] = self.jei_panel_rect(w, h);
+        let (cx, cy) = (pt[0], pt[1]);
+        if cx >= px && cx <= px + pw && cy >= py && cy <= py + ph {
+            return true;
+        }
+        if self.extras.volt.jei_selected_item.is_some() {
+            let [rx, ry, rw, rh] = Self::jei_recipe_rect(px, h);
+            if cx >= rx && cx <= rx + rw && cy >= ry && cy <= ry + rh {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub(super) fn volt_jei_contains(&self, w: f32, h: f32) -> bool {
+        self.volt_jei_contains_point(w, h, [self.cursor.0, self.cursor.1])
+    }
+
+    pub(super) fn volt_jei_click(&mut self, w: f32, h: f32, right: bool) -> bool {
         if !self.volt_jei_visible() {
             return false;
         }
@@ -4398,11 +4397,20 @@ impl Game<'_> {
                 } else {
                     self.extras.volt.jei_open = false;
                     self.extras.volt.jei_selected_item = None;
+                    if self.screen == Screen::Playing {
+                        self.capture(true);
+                    }
                 }
                 return true;
             }
             if cx <= px + sw {
-                self.extras.volt.jei_search_focused = true;
+                if right {
+                    self.extras.volt.jei_search.clear();
+                    self.extras.volt.jei_page = 0;
+                    self.extras.volt.jei_search_focused = true;
+                } else {
+                    self.extras.volt.jei_search_focused = true;
+                }
                 #[cfg(target_os = "android")]
                 crate::platform::show(&self.extras.volt.jei_search);
                 return true;
@@ -4421,19 +4429,19 @@ impl Game<'_> {
             let sx = gx + col as f32 * 18.0;
             let sy = gy + row as f32 * 18.0;
             if cx >= sx && cx <= sx + 17.0 && cy >= sy && cy <= sy + 17.0 {
-                if self.extras.volt.jei_selected_item.as_deref() == Some(item_id.as_str()) {
+                if self.creative && (self.modifiers.shift_key() || right) {
+                    let count = if self.modifiers.shift_key() { 64 } else { 1 };
+                    let _ = self.give(ItemStack {
+                        item: Arc::from(item_id.as_str()),
+                        count,
+                        damage: 0,
+                        extra: None,
+                    });
+                } else if self.extras.volt.jei_selected_item.as_deref() == Some(item_id.as_str()) {
                     self.extras.volt.jei_selected_item = None;
                 } else {
                     self.extras.volt.jei_selected_item = Some(item_id.clone());
                     self.extras.volt.jei_recipe_idx = 0;
-                }
-                if self.creative && self.modifiers.shift_key() {
-                    let _ = self.give(ItemStack {
-                        item: Arc::from(item_id.as_str()),
-                        count: 1,
-                        damage: 0,
-                        extra: None,
-                    });
                 }
                 return true;
             }

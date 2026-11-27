@@ -8696,10 +8696,9 @@ impl Launcher {
                     ),
                     (
                         "Show V+ Overlay Button",
-                        "Display the floating V+ Control Hub button in gameplay and menus",
+                        "Display the floating V+ Control Hub button in menus and when controls are hidden",
                         SettingControl::Toggle(
-                            touch_cfg.overlay_show_in_gameplay
-                                && !touch_cfg.overlay_hide_in_menus,
+                            !touch_cfg.overlay_hidden,
                             Action::ToggleOverlayButton,
                         ),
                     ),
@@ -10020,14 +10019,10 @@ impl Launcher {
             }
             Some(Action::ToggleOverlayButton) => {
                 self.modify_touch_settings(|t| {
-                    let currently_on = t.overlay_show_in_gameplay && !t.overlay_hide_in_menus;
-                    if currently_on {
-                        t.overlay_show_in_gameplay = false;
-                        t.overlay_hide_in_menus = false;
-                    } else {
-                        t.overlay_hidden = false;
-                        t.overlay_hide_in_menus = false;
-                        t.overlay_show_in_gameplay = true;
+                    t.overlay_hidden = !t.overlay_hidden;
+                    t.overlay_hide_in_menus = false;
+                    t.overlay_show_in_gameplay = false;
+                    if !t.overlay_hidden {
                         if t.overlay_opacity < 0.35 || !t.overlay_opacity.is_finite() {
                             t.overlay_opacity = 1.0;
                         }

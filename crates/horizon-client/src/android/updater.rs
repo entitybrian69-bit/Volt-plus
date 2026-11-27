@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-pub const CURRENT_VERSION: &str = "1.0.1";
+pub const CURRENT_VERSION: &str = "1.0";
 pub const REPO: &str = "entitybrian69-bit/volt-plus";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -323,11 +323,12 @@ mod tests {
 
     #[test]
     fn version_parsing_and_comparison() {
+        assert_eq!(parse_version("1.0"), (1, 0, 0, 0));
         assert_eq!(parse_version("1.0.0"), (1, 0, 0, 0));
         assert_eq!(parse_version("v1.0.1"), (1, 0, 1, 0));
         assert_eq!(parse_version("1.2.3-dev.4"), (1, 2, 3, 4));
 
-        assert!(is_newer_version("1.0.1", "1.0.0"));
+        assert!(is_newer_version("1.0.1", "1.0"));
         assert!(is_newer_version("v1.1.0", "1.0.0"));
         assert!(is_newer_version("2.0.0", "1.9.9"));
         assert!(!is_newer_version("1.0.0", "1.0.0"));

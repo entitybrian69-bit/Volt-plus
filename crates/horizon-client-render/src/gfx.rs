@@ -382,6 +382,8 @@ struct Globals {
     sunrise_fan: [[f32; 4]; 2 * sunrise_fan::TRIANGLES],
     /// x: `Options.textureFiltering` (0 none, 1 RGSS, 2 anisotropic); y: the sprite arrays' width.
     filtering: [f32; 4],
+    /// Custom glint tint `(r, g, b, mode)` where `mode > 0.5` recolors by glint luminance.
+    glint_color: [f32; 4],
 }
 pub type SectionKey = (i32, i32, i32);
 /// The water mirror's targets: the world as a camera mirrored about the water plane sees
@@ -527,6 +529,8 @@ pub struct Frame<'a> {
     /// The glint scroll clock (`Glint::scroll_ticks`): entity.wgsl's
     /// `ARMOR_ENTITY_GLINT_TEXTURING` phase.
     pub glint_ticks: f32,
+    /// Custom glint tint `(r, g, b, mode)` where `mode > 0.5` recolors by glint luminance.
+    pub glint_color: [f32; 4],
     /// CardinalLighting.Type.NETHER, otherwise DEFAULT.
     pub nether_lighting: bool,
     /// Camera-relative entity geometry textured from the shared atlas.
@@ -6552,6 +6556,7 @@ impl Renderer {
                 1.0 / self.sprite_textures[0].width().max(1) as f32,
                 if self.hdr.is_some() { 1.0 } else { 0.0 },
             ],
+            glint_color: frame.glint_color,
         };
         self.uploads
             .buffer(&mut encoder, &self.globals, 0, bytemuck::bytes_of(&globals));

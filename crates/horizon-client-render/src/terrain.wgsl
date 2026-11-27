@@ -34,6 +34,7 @@ struct Globals {
     // x: Options.textureFiltering (0 none, 1 RGSS, 2 anisotropic), y: the sprite arrays' width
     // in texels (vanilla's TextureSize).
     filtering: vec4<f32>,
+    glint_color: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var sprites: texture_2d_array<f32>;

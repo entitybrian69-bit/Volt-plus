@@ -369,8 +369,8 @@
   // ---------- 10. Release-Only Auto-Updating APK Sync ----------
   let currentReleaseState = {
     ready: false,
-    version: '1.0.1',
-    tag: 'v1.0.1',
+    version: '1.0',
+    tag: 'v1.0',
     assets: {
       arm64: { filename: 'Volt-Plus-arm64-v8a.apk', url: './downloads/Volt-Plus-arm64-v8a.apk', sizeMb: '57 MB', sha256: 'Verified on deploy' },
       armv7: { filename: 'Volt-Plus-armeabi-v7a.apk', url: './downloads/Volt-Plus-armeabi-v7a.apk', sizeMb: '52 MB', sha256: 'Verified on deploy' },
@@ -464,8 +464,8 @@
     if (baked && baked.status === 'ready' && baked.assets) {
       currentReleaseState = {
         ready: true,
-        version: baked.version || baked.tag_name || '1.0.1',
-        tag: baked.tag_name || 'v1.0.1',
+        version: baked.version || baked.tag_name || '1.0',
+        tag: baked.tag_name || 'v1.0',
         publishedAt: baked.published_at || '',
         assets: {
           arm64: {

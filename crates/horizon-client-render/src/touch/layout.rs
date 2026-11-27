@@ -1002,11 +1002,9 @@ impl Settings {
         {
             self.floating_menu_pos = default_floating_pos();
         }
-        // Never allow both menu-hide and gameplay-hide simultaneously, otherwise the
-        // V+ overlay button becomes permanently unreachable across restarts.
-        if self.overlay_hide_in_menus && !self.overlay_show_in_gameplay {
-            self.overlay_show_in_gameplay = true;
-        }
+        // The V+ overlay button belongs strictly to menus, never raw gameplay.
+        self.overlay_show_in_gameplay = false;
+        self.overlay_hide_in_menus = false;
         self.dynamic_area_x = if self.dynamic_area_x.is_finite() {
             self.dynamic_area_x.clamp(0.0, 1.0)
         } else {

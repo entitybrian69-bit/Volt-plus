@@ -327,6 +327,7 @@ impl Game<'_> {
                     self.physical_keys.remove(&key);
                     self.keys.remove(&key);
                 }
+                self.toggles.drop_pad_toggle(slot);
                 self.toggles.0[slot].set_down(down, false);
                 self.sync_toggle(slot);
                 if slot == 1 && !down {
@@ -447,6 +448,7 @@ impl Game<'_> {
                 self.keys.remove(&key);
             }
             let slot = usize::from(matches!(key, KeyCode::ControlLeft | KeyCode::ControlRight));
+            self.toggles.drop_pad_toggle(slot);
             self.toggles.0[slot].set_down(down, false);
             self.sync_toggle(slot);
             if slot == 1 && !down {
@@ -617,7 +619,7 @@ impl Game<'_> {
         } else {
             self.pad.touch_ui.compute_virtual_mouse_visibility(
                 &self.pad.touch,
-                in_menu,
+                in_menu || self.volt_jei_visible(),
                 self.ui.hide_gui,
                 crate::touch_visible(),
                 self.captured,
@@ -643,6 +645,15 @@ impl Game<'_> {
                 return self.options_bind_mouse(button);
             }
             return Ok(());
+        }
+        if self.volt_jei_visible() && matches!(button, MouseButton::Left | MouseButton::Right) {
+            if down {
+                if self.volt_jei_click(button == MouseButton::Right) {
+                    return Ok(());
+                }
+            } else if self.volt_jei_contains() {
+                return Ok(());
+            }
         }
         if self.pad_in_menu() && !matches!(self.screen, Screen::Inventory | Screen::Creative) {
             let right = button == MouseButton::Right;
@@ -1176,24 +1187,6 @@ impl Game<'_> {
                     self.pad.touch.settings.overlay_hidden = next;
                     if next {
                         self.pad.touch_ui.floating_menu = false;
-                    }
-                    let _ = self.pad.touch.settings.save();
-                    self.settings.touch = self.pad.touch.settings.clone();
-                }
-                InGameMenuAction::ToggleOverlayHideInMenus => {
-                    let next = !self.pad.touch.settings.overlay_hide_in_menus;
-                    self.pad.touch.settings.overlay_hide_in_menus = next;
-                    if next {
-                        self.pad.touch.settings.overlay_show_in_gameplay = true;
-                    }
-                    let _ = self.pad.touch.settings.save();
-                    self.settings.touch = self.pad.touch.settings.clone();
-                }
-                InGameMenuAction::ToggleOverlayShowInGameplay => {
-                    let next = !self.pad.touch.settings.overlay_show_in_gameplay;
-                    self.pad.touch.settings.overlay_show_in_gameplay = next;
-                    if !next {
-                        self.pad.touch.settings.overlay_hide_in_menus = false;
                     }
                     let _ = self.pad.touch.settings.save();
                     self.settings.touch = self.pad.touch.settings.clone();
@@ -2106,7 +2099,7 @@ impl Game<'_> {
             }
             return;
         }
-        if !self.pad_in_menu() {
+        if !self.pad_in_menu() && !self.volt_jei_visible() {
             return;
         }
         let Some(right) = self.pad.touch_ui.relative_click(true) else {
@@ -2117,7 +2110,7 @@ impl Game<'_> {
         } else {
             MouseButton::Left
         };
-        if matches!(self.screen, Screen::Inventory | Screen::Creative) {
+        if matches!(self.screen, Screen::Inventory | Screen::Creative) || self.volt_jei_visible() {
             if let Err(e) = self
                 .android_custom_mouse(button, true)
                 .and_then(|()| self.android_custom_mouse(button, false))

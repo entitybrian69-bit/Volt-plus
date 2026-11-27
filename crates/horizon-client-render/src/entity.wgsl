@@ -28,6 +28,7 @@ struct Globals {
     emissive_count: vec4<u32>,
     sunrise_fan: array<vec4<f32>, 32>,
     filtering: vec4<f32>,
+    glint_color: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> globals: Globals;
 @group(0) @binding(1) var atlas: texture_2d<f32>;
@@ -237,8 +238,13 @@ fn armor_glint_uv(model: vec2<f32>) -> vec2<f32> {
 // is squared along with the sample.
 fn glint_over(color: vec4<f32>, glint: vec4<f32>) -> vec4<f32> {
     let alpha = globals.fog_ends.w;
-    let g = alpha * glint;
-    return vec4(color.rgb + g.rgb * g.rgb, max(color.a, alpha));
+    var tinted = glint.rgb;
+    if globals.glint_color.a > 0.5 {
+        let luma = max(glint.r, max(glint.g, glint.b));
+        tinted = vec3(luma) * globals.glint_color.rgb;
+    }
+    let g = alpha * tinted;
+    return vec4(color.rgb + g * g, max(color.a, alpha));
 }
 // CRUMBLING_UV_BEGIN
 fn crumbling_uv(uv: vec2<f32>, packed_origin: vec2<f32>, sprite_size: vec2<f32>, dimensions: vec2<u32>) -> vec2<f32> {

@@ -119,8 +119,8 @@ jobs:
 
           manifest = {
               'status': 'pending_deploy',
-              'tag_name': 'v1.0.1',
-              'version': '1.0.1',
+              'tag_name': 'v1.0',
+              'version': '1.0',
               'name': 'Volt Plus Release',
               'published_at': '',
               'notes': 'Official signed Release APK builds (64-bit arm64-v8a, 32-bit armeabi-v7a, and Universal).',
@@ -128,7 +128,7 @@ jobs:
           }
 
           if selected_release is not None:
-              tag = selected_release.get('tag_name', 'v1.0.1').strip()
+              tag = selected_release.get('tag_name', 'v1.0').strip()
               manifest.update({
                   'status': 'ready',
                   'tag_name': tag,
@@ -181,9 +181,9 @@ jobs:
                           sha_short = (run.get('headSha') or '')[:7]
                           manifest.update({
                               'status': 'ready',
-                              'tag_name': f'v1.0.1 ({sha_short})' if sha_short else 'v1.0.1',
-                              'version': '1.0.1',
-                              'name': 'Volt Plus Release 1.0.1',
+                              'tag_name': f'v1.0 ({sha_short})' if sha_short else 'v1.0',
+                              'version': '1.0',
+                              'name': 'Volt Plus Release 1.0',
                               'published_at': run.get('createdAt') or '',
                               'notes': f'Latest signed Release build (commit {sha_short}). Official Release channel — no debug, no pre-release.',
                           })

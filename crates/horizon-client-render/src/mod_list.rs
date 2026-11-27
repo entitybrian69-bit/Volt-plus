@@ -40,16 +40,11 @@ pub fn is_live_disabled(mod_id: &str) -> Option<bool> {
 }
 
 /// Fixed native modules compiled into Android APKs, all opt-in.
-pub const ANDROID_BUNDLED: [(&str, &str, &str); 4] = [
+pub const ANDROID_BUNDLED: [(&str, &str, &str); 3] = [
     (
         "zoom",
         "Zoom",
         "Hold Z to zoom; configurable in Options > Mods",
-    ),
-    (
-        "minimap",
-        "Minimap",
-        "A configurable map in the screen corner",
     ),
     (
         "recipes",

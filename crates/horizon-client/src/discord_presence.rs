@@ -24,7 +24,7 @@ pub const DISCORD_APP_ID: &str = "1574331637087469588";
 pub const PRODUCT: &str = "Volt+";
 /// The launcher's own version, the one Settings shows (mirrors `android_main`'s).
 #[cfg(target_os = "android")]
-const VERSION: &str = "1.0.1";
+const VERSION: &str = "1.0";
 #[cfg(not(target_os = "android"))]
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Where the button on the card leads.

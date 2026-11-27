@@ -330,7 +330,7 @@ impl Game<'_> {
             speed *= f32::from(cg.speed_pct.max(10)) / 100.0;
             alpha = match cg.preset {
                 horizon_client::extras::GlintColorPreset::Off => 0.0,
-                _ => alpha * (f32::from(cg.strength_pct) / 100.0),
+                _ => (alpha.max(0.75) * (f32::from(cg.strength_pct) / 100.0)).clamp(0.0, 1.5),
             };
         }
         item_render::GlintFrame {
@@ -342,6 +342,14 @@ impl Game<'_> {
                 .atlas
                 .sprites
                 .contains_key("misc/enchanted_glint_item"),
+        }
+    }
+    pub(super) fn volt_glint_color(&self) -> [f32; 4] {
+        let cg = &self.settings.extras.volt.custom_glint;
+        if cg.enabled {
+            cg.preset.rgba_factor(self.started.elapsed().as_secs_f32())
+        } else {
+            [1.0, 1.0, 1.0, 0.0]
         }
     }
     /// The `ENTITY_GLINT_TEXTURING` inputs of this frame.

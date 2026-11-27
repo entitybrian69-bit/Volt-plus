@@ -1000,25 +1000,6 @@ impl TouchControls {
                     self.perspective_requested = true;
                     Role::Ignore
                 }
-                Some(Control::Sneak)
-                    if self.settings.mode == Mode::Dpad
-                        && !self.vertical_movement
-                        && !self.swimming
-                        && !self.mounted =>
-                {
-                    // The classic D-pad toggles crouching on a double tap.
-                    let now = Instant::now();
-                    if self
-                        .last_sneak_tap
-                        .take()
-                        .is_some_and(|t| now.duration_since(t) < Duration::from_millis(300))
-                    {
-                        Role::Button(Button::RightStick)
-                    } else {
-                        self.last_sneak_tap = Some(now);
-                        Role::Ignore
-                    }
-                }
                 Some(Control::Sprint)
                     if self.settings.sprint_toggle
                         || self.placement(Control::Sprint).toggleable =>
@@ -1068,6 +1049,7 @@ impl TouchControls {
                 self.ctrl_origin_fingers.contains(&id) || self.builtin_swipe_ctrl.contains_key(&id);
             let hit_ctrl = self.control_at(point);
             if let Some(old_c) = self.builtin_swipe_ctrl.get(&id).copied()
+                && old_c != Control::Sneak
                 && hit_ctrl != Some(old_c)
             {
                 let old_p = self.placement(old_c);
@@ -2938,10 +2920,11 @@ mod tests {
         assert_eq!(t.state().left, [1.0, 0.0]);
         t.clear();
         t.update(10, [0.13, 0.76], true, false);
-        assert!(!t.poll_state().held(Button::RightStick));
-        t.update(10, [0.13, 0.76], false, true);
-        t.update(12, [0.13, 0.76], true, false);
         assert!(t.poll_state().held(Button::RightStick));
+        t.update(10, [0.22, 0.76], false, false);
+        assert!(t.poll_state().held(Button::RightStick));
+        t.update(10, [0.22, 0.76], false, true);
+        assert!(!t.poll_state().held(Button::RightStick));
         t.clear();
         t.settings.swap_jump_sneak = true;
         t.update(11, [0.13, 0.76], true, false);

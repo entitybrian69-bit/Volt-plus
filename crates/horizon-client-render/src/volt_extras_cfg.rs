@@ -3,7 +3,7 @@
 use crate::extras::Corner;
 use std::fmt::Write as _;
 
-pub const VOLT_MOD_COUNT: usize = 84;
+pub const VOLT_MOD_COUNT: usize = 82;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VoltKeybindMode {
@@ -573,6 +573,36 @@ impl GlintColorPreset {
             "emerald" => Self::Emerald,
             "off" => Self::Off,
             _ => default,
+        }
+    }
+    /// Returns `[r, g, b, tint_mode]` where `tint_mode > 0.5` enables recoloring
+    /// by the glint texture's luminance, and `tint_mode == 0.0` keeps Vanilla purple.
+    pub fn rgba_factor(self, time_secs: f32) -> [f32; 4] {
+        match self {
+            Self::Vanilla => [1.0, 1.0, 1.0, 0.0],
+            Self::Off => [0.0, 0.0, 0.0, 1.0],
+            Self::Gold => [1.0, 0.84, 0.22, 1.0],
+            Self::Ice => [0.35, 0.86, 1.0, 1.0],
+            Self::Crimson => [1.0, 0.24, 0.30, 1.0],
+            Self::Emerald => [0.24, 0.96, 0.48, 1.0],
+            Self::Rainbow => {
+                let h = (time_secs * 0.45).fract().clamp(0.0, 0.9999) * 6.0;
+                let sector = h.floor() as i32;
+                let f = h - sector as f32;
+                let s = 0.88_f32;
+                let p = 1.0 - s;
+                let q = 1.0 - s * f;
+                let t = 1.0 - s * (1.0 - f);
+                let (r, g, b) = match sector {
+                    0 => (1.0, t, p),
+                    1 => (q, 1.0, p),
+                    2 => (p, 1.0, t),
+                    3 => (p, q, 1.0),
+                    4 => (t, p, 1.0),
+                    _ => (1.0, p, q),
+                };
+                [r, g, b, 1.0]
+            }
         }
     }
 }
@@ -1927,30 +1957,6 @@ impl Default for ReachBoxConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MinimapRadarConfig {
-    pub enabled: bool,
-    pub size_px: u8,
-    pub zoom_blocks: u8,
-    pub show_mobs: bool,
-    pub show_players: bool,
-    pub show_waypoints: bool,
-    pub corner: Corner,
-}
-impl Default for MinimapRadarConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            size_px: 84,
-            zoom_blocks: 32,
-            show_mobs: true,
-            show_players: true,
-            show_waypoints: true,
-            corner: Corner::TopRight,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PotionHudConfig {
     pub enabled: bool,
     pub show_timers: bool,
@@ -2104,26 +2110,6 @@ impl Default for SessionStatsConfig {
             show_blocks: true,
             show_distance: true,
             corner: Corner::BottomLeft,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CameraOverhaulConfig {
-    pub enabled: bool,
-    pub strafe_roll_pct: u8,
-    pub turn_roll_pct: u8,
-    pub elytra_bank_pct: u8,
-    pub clamp_sprint_fov: bool,
-}
-impl Default for CameraOverhaulConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            strafe_roll_pct: 40,
-            turn_roll_pct: 30,
-            elytra_bank_pct: 70,
-            clamp_sprint_fov: false,
         }
     }
 }
@@ -2466,7 +2452,6 @@ pub struct VoltExtras {
     pub bow_charge: BowChargeConfig,
     pub cooldown_hud: CooldownHudConfig,
     pub reach_box: ReachBoxConfig,
-    pub minimap_radar: MinimapRadarConfig,
     pub potion_hud: PotionHudConfig,
     pub durability_warn: DurabilityWarnConfig,
     pub biome_title: BiomeTitleConfig,
@@ -2475,7 +2460,6 @@ pub struct VoltExtras {
     pub tab_ping: TabPingConfig,
     pub moon_phase: MoonPhaseConfig,
     pub session_stats: SessionStatsConfig,
-    pub cameraoverhaul: CameraOverhaulConfig,
     pub weather_sound: WeatherSoundConfig,
     pub custom_glint: CustomGlintConfig,
     pub clear_caves: ClearCavesConfig,
@@ -2554,30 +2538,28 @@ pub const VOLT_MODS: [VoltModMeta; VOLT_MOD_COUNT] = [
     VoltModMeta { id: 57, key: "bow_charge", title: "Bow & Crossbow Charge HUD", summary: "Live draw % progress bar, full-charge chime & optional auto-release", badge: "BW", category: VoltModCategory::Pvp, modrinth_slugs: &["tipthescales", "crossbow-indicator"], search_query: "Bow" },
     VoltModMeta { id: 58, key: "cooldown_hud", title: "Pearl & Item Cooldown Pill", summary: "Floating countdown timers for Ender Pearls, Wind Charges & Chorus", badge: "CD", category: VoltModCategory::Pvp, modrinth_slugs: &["cooldown-hud", "ender-pearl-cooldown"], search_query: "Cooldown" },
     VoltModMeta { id: 59, key: "reach_box", title: "PvP Target Reach Box", summary: "Highlights targeted entities inside 3.0m reach & changes color on crit", badge: "RB", category: VoltModCategory::Pvp, modrinth_slugs: &["hitboxes-plus", "accurate-block-placement"], search_query: "Hitboxes" },
-    VoltModMeta { id: 60, key: "minimap_radar", title: "Live Terrain Minimap & Radar", summary: "Corner terrain minimap from live block colors with N, mobs & waypoints", badge: "MM", category: VoltModCategory::Hud, modrinth_slugs: &["xaeros-minimap", "journeymap"], search_query: "Xaero's Minimap" },
-    VoltModMeta { id: 61, key: "potion_hud", title: "Compact Status Effects Bar", summary: "Sleek timed status effect pills with MM:SS countdown & expiry blink", badge: "PE", category: VoltModCategory::Hud, modrinth_slugs: &["status-effect-bars", "stylisheffects"], search_query: "Status Effect Bars" },
-    VoltModMeta { id: 62, key: "durability_warn", title: "Durability Notifier & Chime", summary: "Audible chime + HUD alert when tool, shield or armor drops below %", badge: "DW", category: VoltModCategory::Hud, modrinth_slugs: &["durability-notifier", "durability-viewer"], search_query: "Durability Notifier" },
-    VoltModMeta { id: 63, key: "biome_title", title: "Traveler's Titles (Biome Banner)", summary: "Smooth fade-in/out title banner when entering a new biome or dimension", badge: "BT", category: VoltModCategory::Hud, modrinth_slugs: &["travelers-titles", "biome-title"], search_query: "Traveler's Titles" },
-    VoltModMeta { id: 64, key: "xp_tracker", title: "XP & Mending Progress HUD", summary: "Exact XP needed for next level, % progress & damaged Mending gear status", badge: "XP", category: VoltModCategory::Hud, modrinth_slugs: &["xp-bar-text", "more-xp-info"], search_query: "XP" },
-    VoltModMeta { id: 65, key: "inventory_hud", title: "Mini Inventory Preview Grid", summary: "Translucent 3x9 mini-grid overlay showing free slots & stack counts", badge: "IH", category: VoltModCategory::Hud, modrinth_slugs: &["inventory-hud-plus", "inventoryhud"], search_query: "Inventory HUD+" },
-    VoltModMeta { id: 66, key: "tab_ping", title: "Better Tab & Latency List", summary: "Compact online player count, numeric ping ms & dimension tags", badge: "TB", category: VoltModCategory::Hud, modrinth_slugs: &["better-tab", "tab-ping"], search_query: "Better Tab" },
-    VoltModMeta { id: 67, key: "moon_phase", title: "Moon Phase & Insomnia Timer", summary: "Shows current Moon Phase for swamp slimes + Phantom insomnia alert", badge: "MN", category: VoltModCategory::Hud, modrinth_slugs: &["moon-phase", "minihud"], search_query: "Moon" },
-    VoltModMeta { id: 68, key: "session_stats", title: "Session Combat & Mining Stats", summary: "Tracks kills, blocks mined/placed & distance traveled this session", badge: "ST", category: VoltModCategory::Hud, modrinth_slugs: &["session-stats", "stat-tracker"], search_query: "Stats" },
-    VoltModMeta { id: 69, key: "cameraoverhaul", title: "CameraOverhaul (Dynamic Roll)", summary: "Subtle camera roll/tilt when strafing, turning & flying with Elytra", badge: "CO", category: VoltModCategory::Camera, modrinth_slugs: &["cameraoverhaul", "do-a-barrel-roll"], search_query: "CameraOverhaul" },
-    VoltModMeta { id: 70, key: "weather_sound", title: "Lightning & Weather Tweaks", summary: "Suppresses lightning sky flashes, thunder shake & heavy rain splashes", badge: "WS", category: VoltModCategory::Camera, modrinth_slugs: &["clear-despawn", "ambient-sounds"], search_query: "AmbientSounds" },
-    VoltModMeta { id: 71, key: "custom_glint", title: "Custom Enchant Glint & Scale", summary: "Custom glint colors (Rainbow, Gold, Ice, Crimson, Off) & held scale", badge: "GL", category: VoltModCategory::Camera, modrinth_slugs: &["custom-glint", "glint-colorizer"], search_query: "Enchant Glint" },
-    VoltModMeta { id: 72, key: "clear_caves", title: "Cave & Void Fog Clearer", summary: "Clears dark subterranean void fog & smooths Night Vision transitions", badge: "CC", category: VoltModCategory::Camera, modrinth_slugs: &["no-fog", "nofog"], search_query: "No Fog" },
-    VoltModMeta { id: 73, key: "player_highlight", title: "Line-of-Sight Entity Glow", summary: "Optional highlight boxes around nearby players or mobs in view", badge: "PH", category: VoltModCategory::Camera, modrinth_slugs: &["player-highlighter", "glowing-entities"], search_query: "Highlighter" },
-    VoltModMeta { id: 74, key: "litematica_grid", title: "Build Measure / Ruler Box (A-B)", summary: "Set Point A & B to draw a 3D wireframe box with live X x Y x Z volume", badge: "LM", category: VoltModCategory::World, modrinth_slugs: &["litematica", "worldedit"], search_query: "Litematica" },
-    VoltModMeta { id: 75, key: "death_history", title: "Death History & Home Marker", summary: "Tracks last 5 death locations + 1-tap Home bookmark & distance pill", badge: "DH", category: VoltModCategory::World, modrinth_slugs: &["death-backup", "xaeros-world-map"], search_query: "Death" },
-    VoltModMeta { id: 76, key: "chunk_pillars", title: "Chunk Pillars & Biome Borders", summary: "Draws vertical chunk corner pillars & ground biome transition lines", badge: "CP", category: VoltModCategory::World, modrinth_slugs: &["chunk-borders", "chunkdebug"], search_query: "Chunk Borders" },
-    VoltModMeta { id: 77, key: "offhand_torch", title: "Offhand Torch Auto-Placer", summary: "Auto-places an offhand torch when mining in dark caves (light < 4)", badge: "OT", category: VoltModCategory::World, modrinth_slugs: &["offhand-torch", "rightclickharvest"], search_query: "Torch" },
-    VoltModMeta { id: 78, key: "chat_mention", title: "Chat Mention & Keyword Ping", summary: "Highlights chat messages & plays a chime when your name is mentioned", badge: "CM", category: VoltModCategory::Utility, modrinth_slugs: &["chat-mention", "chime"], search_query: "Chat Mention" },
-    VoltModMeta { id: 79, key: "drop_guard", title: "Drop Guard & Locked Hotbar", summary: "Blocks accidental dropping of tools, weapons, totems & slots 1-3", badge: "DG", category: VoltModCategory::Utility, modrinth_slugs: &["no-drop", "lock-slots"], search_query: "Drop Guard" },
-    VoltModMeta { id: 80, key: "hotbar_restock", title: "Hotbar Stack Auto-Restock", summary: "Refills empty building blocks, fireworks & pearls from main inventory", badge: "HR", category: VoltModCategory::Utility, modrinth_slugs: &["mouse-tweaks", "inventory-profiles-next"], search_query: "Mouse Tweaks" },
-    VoltModMeta { id: 81, key: "photo_mode", title: "Photo Mode & Clean Capture", summary: "Hides all HUD overlays & optionally adds framing composition guides", badge: "PM", category: VoltModCategory::Camera, modrinth_slugs: &["fabrishot", "screenshot-viewer"], search_query: "Fabrishot" },
-    VoltModMeta { id: 82, key: "jei", title: "JEI (Just Enough Items)", summary: "Searchable item browser with live 3x3 crafting & furnace recipe viewer", badge: "JEI", category: VoltModCategory::Utility, modrinth_slugs: &["jei", "roughly-enough-items"], search_query: "Just Enough Items" },
-    VoltModMeta { id: 83, key: "cinematic_timelapse", title: "Cinematic Time Lapse", summary: "Configurable start countdown (5s/10s+), smooth camera path & HUD hide", badge: "TL", category: VoltModCategory::Camera, modrinth_slugs: &["replaymod", "flashback"], search_query: "Replay Mod" },
+    VoltModMeta { id: 60, key: "potion_hud", title: "Compact Status Effects Bar", summary: "Sleek timed status effect pills with MM:SS countdown & expiry blink", badge: "PE", category: VoltModCategory::Hud, modrinth_slugs: &["status-effect-bars", "stylisheffects"], search_query: "Status Effect Bars" },
+    VoltModMeta { id: 61, key: "durability_warn", title: "Durability Notifier & Chime", summary: "Audible chime + HUD alert when tool, shield or armor drops below %", badge: "DW", category: VoltModCategory::Hud, modrinth_slugs: &["durability-notifier", "durability-viewer"], search_query: "Durability Notifier" },
+    VoltModMeta { id: 62, key: "biome_title", title: "Traveler's Titles (Biome Banner)", summary: "Smooth fade-in/out title banner when entering a new biome or dimension", badge: "BT", category: VoltModCategory::Hud, modrinth_slugs: &["travelers-titles", "biome-title"], search_query: "Traveler's Titles" },
+    VoltModMeta { id: 63, key: "xp_tracker", title: "XP & Mending Progress HUD", summary: "Exact XP needed for next level, % progress & damaged Mending gear status", badge: "XP", category: VoltModCategory::Hud, modrinth_slugs: &["xp-bar-text", "more-xp-info"], search_query: "XP" },
+    VoltModMeta { id: 64, key: "inventory_hud", title: "Mini Inventory Preview Grid", summary: "Translucent 3x9 mini-grid overlay showing free slots & stack counts", badge: "IH", category: VoltModCategory::Hud, modrinth_slugs: &["inventory-hud-plus", "inventoryhud"], search_query: "Inventory HUD+" },
+    VoltModMeta { id: 65, key: "tab_ping", title: "Better Tab & Latency List", summary: "Compact online player count, numeric ping ms & dimension tags", badge: "TB", category: VoltModCategory::Hud, modrinth_slugs: &["better-tab", "tab-ping"], search_query: "Better Tab" },
+    VoltModMeta { id: 66, key: "moon_phase", title: "Moon Phase & Insomnia Timer", summary: "Shows current Moon Phase for swamp slimes + Phantom insomnia alert", badge: "MN", category: VoltModCategory::Hud, modrinth_slugs: &["moon-phase", "minihud"], search_query: "Moon" },
+    VoltModMeta { id: 67, key: "session_stats", title: "Session Combat & Mining Stats", summary: "Tracks kills, blocks mined/placed & distance traveled this session", badge: "ST", category: VoltModCategory::Hud, modrinth_slugs: &["session-stats", "stat-tracker"], search_query: "Stats" },
+    VoltModMeta { id: 68, key: "weather_sound", title: "Lightning & Weather Tweaks", summary: "Suppresses lightning sky flashes, thunder shake & heavy rain splashes", badge: "WS", category: VoltModCategory::Camera, modrinth_slugs: &["clear-despawn", "ambient-sounds"], search_query: "AmbientSounds" },
+    VoltModMeta { id: 69, key: "custom_glint", title: "Custom Enchant Glint & Scale", summary: "Custom glint colors (Rainbow, Gold, Ice, Crimson, Off) & held scale", badge: "GL", category: VoltModCategory::Camera, modrinth_slugs: &["custom-glint", "glint-colorizer"], search_query: "Enchant Glint" },
+    VoltModMeta { id: 70, key: "clear_caves", title: "Cave & Void Fog Clearer", summary: "Clears dark subterranean void fog & smooths Night Vision transitions", badge: "CC", category: VoltModCategory::Camera, modrinth_slugs: &["no-fog", "nofog"], search_query: "No Fog" },
+    VoltModMeta { id: 71, key: "player_highlight", title: "Line-of-Sight Entity Glow", summary: "Optional highlight boxes around nearby players or mobs in view", badge: "PH", category: VoltModCategory::Camera, modrinth_slugs: &["player-highlighter", "glowing-entities"], search_query: "Highlighter" },
+    VoltModMeta { id: 72, key: "litematica_grid", title: "Build Measure / Ruler Box (A-B)", summary: "Set Point A & B to draw a 3D wireframe box with live X x Y x Z volume", badge: "LM", category: VoltModCategory::World, modrinth_slugs: &["litematica", "worldedit"], search_query: "Litematica" },
+    VoltModMeta { id: 73, key: "death_history", title: "Death History & Home Marker", summary: "Tracks last 5 death locations + 1-tap Home bookmark & distance pill", badge: "DH", category: VoltModCategory::World, modrinth_slugs: &["death-backup", "xaeros-world-map"], search_query: "Death" },
+    VoltModMeta { id: 74, key: "chunk_pillars", title: "Chunk Pillars & Biome Borders", summary: "Draws vertical chunk corner pillars & ground biome transition lines", badge: "CP", category: VoltModCategory::World, modrinth_slugs: &["chunk-borders", "chunkdebug"], search_query: "Chunk Borders" },
+    VoltModMeta { id: 75, key: "offhand_torch", title: "Offhand Torch Auto-Placer", summary: "Auto-places an offhand torch when mining in dark caves (light < 4)", badge: "OT", category: VoltModCategory::World, modrinth_slugs: &["offhand-torch", "rightclickharvest"], search_query: "Torch" },
+    VoltModMeta { id: 76, key: "chat_mention", title: "Chat Mention & Keyword Ping", summary: "Highlights chat messages & plays a chime when your name is mentioned", badge: "CM", category: VoltModCategory::Utility, modrinth_slugs: &["chat-mention", "chime"], search_query: "Chat Mention" },
+    VoltModMeta { id: 77, key: "drop_guard", title: "Drop Guard & Locked Hotbar", summary: "Blocks accidental dropping of tools, weapons, totems & slots 1-3", badge: "DG", category: VoltModCategory::Utility, modrinth_slugs: &["no-drop", "lock-slots"], search_query: "Drop Guard" },
+    VoltModMeta { id: 78, key: "hotbar_restock", title: "Hotbar Stack Auto-Restock", summary: "Refills empty building blocks, fireworks & pearls from main inventory", badge: "HR", category: VoltModCategory::Utility, modrinth_slugs: &["mouse-tweaks", "inventory-profiles-next"], search_query: "Mouse Tweaks" },
+    VoltModMeta { id: 79, key: "photo_mode", title: "Photo Mode & Clean Capture", summary: "Hides all HUD overlays & optionally adds framing composition guides", badge: "PM", category: VoltModCategory::Camera, modrinth_slugs: &["fabrishot", "screenshot-viewer"], search_query: "Fabrishot" },
+    VoltModMeta { id: 80, key: "jei", title: "JEI (Just Enough Items)", summary: "Searchable item browser with live 3x3 crafting & furnace recipe viewer", badge: "JEI", category: VoltModCategory::Utility, modrinth_slugs: &["jei", "roughly-enough-items"], search_query: "Just Enough Items" },
+    VoltModMeta { id: 81, key: "cinematic_timelapse", title: "Cinematic Time Lapse", summary: "Configurable start countdown (5s/10s+), smooth camera path & HUD hide", badge: "TL", category: VoltModCategory::Camera, modrinth_slugs: &["replaymod", "flashback"], search_query: "Replay Mod" },
 ];
 
 pub fn volt_mod_enabled(v: &VoltExtras, idx: u8) -> bool {
@@ -2642,30 +2624,28 @@ pub fn volt_mod_enabled(v: &VoltExtras, idx: u8) -> bool {
         57 => v.bow_charge.enabled,
         58 => v.cooldown_hud.enabled,
         59 => v.reach_box.enabled,
-        60 => v.minimap_radar.enabled,
-        61 => v.potion_hud.enabled,
-        62 => v.durability_warn.enabled,
-        63 => v.biome_title.enabled,
-        64 => v.xp_tracker.enabled,
-        65 => v.inventory_hud.enabled,
-        66 => v.tab_ping.enabled,
-        67 => v.moon_phase.enabled,
-        68 => v.session_stats.enabled,
-        69 => v.cameraoverhaul.enabled,
-        70 => v.weather_sound.enabled,
-        71 => v.custom_glint.enabled,
-        72 => v.clear_caves.enabled,
-        73 => v.player_highlight.enabled,
-        74 => v.litematica_grid.enabled,
-        75 => v.death_history.enabled,
-        76 => v.chunk_pillars.enabled,
-        77 => v.offhand_torch.enabled,
-        78 => v.chat_mention.enabled,
-        79 => v.drop_guard.enabled,
-        80 => v.hotbar_restock.enabled,
-        81 => v.photo_mode.enabled,
-        82 => v.jei.enabled,
-        83 => v.cinematic_timelapse.enabled,
+        60 => v.potion_hud.enabled,
+        61 => v.durability_warn.enabled,
+        62 => v.biome_title.enabled,
+        63 => v.xp_tracker.enabled,
+        64 => v.inventory_hud.enabled,
+        65 => v.tab_ping.enabled,
+        66 => v.moon_phase.enabled,
+        67 => v.session_stats.enabled,
+        68 => v.weather_sound.enabled,
+        69 => v.custom_glint.enabled,
+        70 => v.clear_caves.enabled,
+        71 => v.player_highlight.enabled,
+        72 => v.litematica_grid.enabled,
+        73 => v.death_history.enabled,
+        74 => v.chunk_pillars.enabled,
+        75 => v.offhand_torch.enabled,
+        76 => v.chat_mention.enabled,
+        77 => v.drop_guard.enabled,
+        78 => v.hotbar_restock.enabled,
+        79 => v.photo_mode.enabled,
+        80 => v.jei.enabled,
+        81 => v.cinematic_timelapse.enabled,
         _ => false,
     }
 }
@@ -2732,30 +2712,28 @@ pub fn set_volt_mod_enabled(v: &mut VoltExtras, idx: u8, on: bool) {
         57 => v.bow_charge.enabled = on,
         58 => v.cooldown_hud.enabled = on,
         59 => v.reach_box.enabled = on,
-        60 => v.minimap_radar.enabled = on,
-        61 => v.potion_hud.enabled = on,
-        62 => v.durability_warn.enabled = on,
-        63 => v.biome_title.enabled = on,
-        64 => v.xp_tracker.enabled = on,
-        65 => v.inventory_hud.enabled = on,
-        66 => v.tab_ping.enabled = on,
-        67 => v.moon_phase.enabled = on,
-        68 => v.session_stats.enabled = on,
-        69 => v.cameraoverhaul.enabled = on,
-        70 => v.weather_sound.enabled = on,
-        71 => v.custom_glint.enabled = on,
-        72 => v.clear_caves.enabled = on,
-        73 => v.player_highlight.enabled = on,
-        74 => v.litematica_grid.enabled = on,
-        75 => v.death_history.enabled = on,
-        76 => v.chunk_pillars.enabled = on,
-        77 => v.offhand_torch.enabled = on,
-        78 => v.chat_mention.enabled = on,
-        79 => v.drop_guard.enabled = on,
-        80 => v.hotbar_restock.enabled = on,
-        81 => { v.photo_mode.enabled = on; if !on { v.photo_mode.active = false; } }
-        82 => { v.jei.enabled = on; if !on { v.jei.overlay_open = false; } }
-        83 => v.cinematic_timelapse.enabled = on,
+        60 => v.potion_hud.enabled = on,
+        61 => v.durability_warn.enabled = on,
+        62 => v.biome_title.enabled = on,
+        63 => v.xp_tracker.enabled = on,
+        64 => v.inventory_hud.enabled = on,
+        65 => v.tab_ping.enabled = on,
+        66 => v.moon_phase.enabled = on,
+        67 => v.session_stats.enabled = on,
+        68 => v.weather_sound.enabled = on,
+        69 => v.custom_glint.enabled = on,
+        70 => v.clear_caves.enabled = on,
+        71 => v.player_highlight.enabled = on,
+        72 => v.litematica_grid.enabled = on,
+        73 => v.death_history.enabled = on,
+        74 => v.chunk_pillars.enabled = on,
+        75 => v.offhand_torch.enabled = on,
+        76 => v.chat_mention.enabled = on,
+        77 => v.drop_guard.enabled = on,
+        78 => v.hotbar_restock.enabled = on,
+        79 => { v.photo_mode.enabled = on; if !on { v.photo_mode.active = false; } }
+        80 => { v.jei.enabled = on; if !on { v.jei.overlay_open = false; } }
+        81 => v.cinematic_timelapse.enabled = on,
         _ => {}
     }
 }
@@ -3212,13 +3190,7 @@ impl VoltExtras {
             "reachbox.crit" => self.reach_box.color_on_crit = flag(value, self.reach_box.color_on_crit),
             "reachbox.color" => self.reach_box.color = ShieldColorPreset::parse(value, self.reach_box.color),
 
-            "minimap.enabled" => self.minimap_radar.enabled = flag(value, self.minimap_radar.enabled),
-            "minimap.size" => if let Ok(v) = value.parse::<u8>() { self.minimap_radar.size_px = v.clamp(56, 128); },
-            "minimap.zoom" => if let Ok(v) = value.parse::<u8>() { self.minimap_radar.zoom_blocks = v.clamp(16, 64); },
-            "minimap.mobs" => self.minimap_radar.show_mobs = flag(value, self.minimap_radar.show_mobs),
-            "minimap.players" => self.minimap_radar.show_players = flag(value, self.minimap_radar.show_players),
-            "minimap.wp" => self.minimap_radar.show_waypoints = flag(value, self.minimap_radar.show_waypoints),
-            "minimap.corner" => self.minimap_radar.corner = Corner::parse(value, self.minimap_radar.corner),
+            "minimap.enabled" | "minimap.size" | "minimap.zoom" | "minimap.mobs" | "minimap.players" | "minimap.wp" | "minimap.corner" => {}
 
             "pothud.enabled" => self.potion_hud.enabled = flag(value, self.potion_hud.enabled),
             "pothud.timers" => self.potion_hud.show_timers = flag(value, self.potion_hud.show_timers),
@@ -3267,11 +3239,7 @@ impl VoltExtras {
             "sstats.dist" => self.session_stats.show_distance = flag(value, self.session_stats.show_distance),
             "sstats.corner" => self.session_stats.corner = Corner::parse(value, self.session_stats.corner),
 
-            "camover.enabled" => self.cameraoverhaul.enabled = flag(value, self.cameraoverhaul.enabled),
-            "camover.strafe" => if let Ok(v) = value.parse::<u8>() { self.cameraoverhaul.strafe_roll_pct = v.min(100); },
-            "camover.turn" => if let Ok(v) = value.parse::<u8>() { self.cameraoverhaul.turn_roll_pct = v.min(100); },
-            "camover.elytra" => if let Ok(v) = value.parse::<u8>() { self.cameraoverhaul.elytra_bank_pct = v.min(100); },
-            "camover.fov" => self.cameraoverhaul.clamp_sprint_fov = flag(value, self.cameraoverhaul.clamp_sprint_fov),
+            "camover.enabled" | "camover.strafe" | "camover.turn" | "camover.elytra" | "camover.fov" => {}
 
             "wsound.enabled" => self.weather_sound.enabled = flag(value, self.weather_sound.enabled),
             "wsound.flash" => self.weather_sound.suppress_lightning_flash = flag(value, self.weather_sound.suppress_lightning_flash),
@@ -3623,10 +3591,6 @@ impl VoltExtras {
             let x = &self.reach_box;
             let _ = writeln!(s, "volt.reachbox.enabled:{}\nvolt.reachbox.box:{}\nvolt.reachbox.ring:{}\nvolt.reachbox.crit:{}\nvolt.reachbox.color:{}", bool_s(x.enabled), bool_s(x.draw_target_box), bool_s(x.draw_reach_ring), bool_s(x.color_on_crit), x.color.name());
         }
-        if self.minimap_radar != MinimapRadarConfig::default() {
-            let x = &self.minimap_radar;
-            let _ = writeln!(s, "volt.minimap.enabled:{}\nvolt.minimap.size:{}\nvolt.minimap.zoom:{}\nvolt.minimap.mobs:{}\nvolt.minimap.players:{}\nvolt.minimap.wp:{}\nvolt.minimap.corner:{}", bool_s(x.enabled), x.size_px, x.zoom_blocks, bool_s(x.show_mobs), bool_s(x.show_players), bool_s(x.show_waypoints), x.corner.name());
-        }
         if self.potion_hud != PotionHudConfig::default() {
             let x = &self.potion_hud;
             let _ = writeln!(s, "volt.pothud.enabled:{}\nvolt.pothud.timers:{}\nvolt.pothud.blink:{}\nvolt.pothud.compact:{}\nvolt.pothud.corner:{}", bool_s(x.enabled), bool_s(x.show_timers), bool_s(x.blink_under_10s), bool_s(x.compact_pills), x.corner.name());
@@ -3658,10 +3622,6 @@ impl VoltExtras {
         if self.session_stats != SessionStatsConfig::default() {
             let x = &self.session_stats;
             let _ = writeln!(s, "volt.sstats.enabled:{}\nvolt.sstats.kills:{}\nvolt.sstats.blocks:{}\nvolt.sstats.dist:{}\nvolt.sstats.corner:{}", bool_s(x.enabled), bool_s(x.show_kills), bool_s(x.show_blocks), bool_s(x.show_distance), x.corner.name());
-        }
-        if self.cameraoverhaul != CameraOverhaulConfig::default() {
-            let x = &self.cameraoverhaul;
-            let _ = writeln!(s, "volt.camover.enabled:{}\nvolt.camover.strafe:{}\nvolt.camover.turn:{}\nvolt.camover.elytra:{}\nvolt.camover.fov:{}", bool_s(x.enabled), x.strafe_roll_pct, x.turn_roll_pct, x.elytra_bank_pct, bool_s(x.clamp_sprint_fov));
         }
         if self.weather_sound != WeatherSoundConfig::default() {
             let x = &self.weather_sound;

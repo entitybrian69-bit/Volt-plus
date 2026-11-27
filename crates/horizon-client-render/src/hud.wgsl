@@ -3,6 +3,8 @@ struct Hud {
     // Blend::EndPortal: atlas rects (u0, v0, width, height) of end_sky.png and
     // end_portal.png, then vanilla's GameTime in x.
     end_portal: array<vec4<f32>, 3>,
+    // Custom glint tint (rgb, mode > 0.5 enables recolor by luminance).
+    glint_color: vec4<f32>,
 }
 @group(0) @binding(0) var<uniform> hud: Hud;
 @group(0) @binding(1) var atlas: texture_2d<f32>;
@@ -34,8 +36,14 @@ struct Out {
     if in.uv.x >= 2.0 {
         let mask = textureSample(atlas, atlas_sampler, in.uv - vec2(2.0, 0.0)).a;
         if mask < 0.1 { discard; }
-        let glint = hud.size.w * textureSample(glint_tex, glint_sampler, in.glint_uv);
-        return vec4(glint.rgb * glint.rgb, mask);
+        let raw = textureSample(glint_tex, glint_sampler, in.glint_uv);
+        var tinted = raw.rgb;
+        if hud.glint_color.a > 0.5 {
+            let luma = max(raw.r, max(raw.g, raw.b));
+            tinted = vec3(luma) * hud.glint_color.rgb;
+        }
+        let glint = hud.size.w * tinted;
+        return vec4(glint * glint, mask);
     }
     let c = textureSample(atlas, atlas_sampler, in.uv) * in.color;
     if c.a < 0.004 { discard; }

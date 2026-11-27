@@ -311,21 +311,10 @@ impl Game<'_> {
                 self.extras.volt.freelook_pitch,
             ));
         }
-        let pitch_sway = if self.settings.extras.volt.cameraoverhaul.enabled {
-            let sw = f32::from(self.settings.extras.volt.cameraoverhaul.turn_roll_pct) / 100.0;
-            self.extras.volt.camera_roll_deg * 0.18 * sw
-        } else {
-            0.0
-        };
-        let yaw_sway = if self.settings.extras.volt.cameraoverhaul.enabled {
-            self.extras.volt.camera_roll_deg * 0.28
-        } else {
-            0.0
-        };
         Some((
             glam::DVec3::from_array(view.position),
-            view.y_rot + yaw_sway,
-            (view.x_rot + pitch_sway).clamp(-90.0, 90.0),
+            view.y_rot,
+            view.x_rot.clamp(-90.0, 90.0),
         ))
     }
     /// The player as `Camera.alignWithEntity` sees it.

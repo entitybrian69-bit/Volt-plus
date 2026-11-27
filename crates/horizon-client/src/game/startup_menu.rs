@@ -2013,24 +2013,6 @@ impl Loading {
                         let _ = self.menu.controls.settings.save();
                         self.settings.touch = self.menu.controls.settings.clone();
                     }
-                    InGameMenuAction::ToggleOverlayHideInMenus => {
-                        let next = !self.menu.controls.settings.overlay_hide_in_menus;
-                        self.menu.controls.settings.overlay_hide_in_menus = next;
-                        if next {
-                            self.menu.controls.settings.overlay_show_in_gameplay = true;
-                        }
-                        let _ = self.menu.controls.settings.save();
-                        self.settings.touch = self.menu.controls.settings.clone();
-                    }
-                    InGameMenuAction::ToggleOverlayShowInGameplay => {
-                        let next = !self.menu.controls.settings.overlay_show_in_gameplay;
-                        self.menu.controls.settings.overlay_show_in_gameplay = next;
-                        if !next {
-                            self.menu.controls.settings.overlay_hide_in_menus = false;
-                        }
-                        let _ = self.menu.controls.settings.save();
-                        self.settings.touch = self.menu.controls.settings.clone();
-                    }
                     InGameMenuAction::ToggleOverlayShowControlsInMenus => {
                         self.menu.controls.settings.overlay_show_controls_in_menus =
                             !self.menu.controls.settings.overlay_show_controls_in_menus;

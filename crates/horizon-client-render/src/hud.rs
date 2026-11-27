@@ -1043,6 +1043,8 @@ pub struct HudBatch {
     pub end_portal: EndPortalFill,
     /// `options.glintStrength` for the glint pass (`GlintAlpha`).
     pub glint_alpha: f32,
+    /// Custom glint tint `(r, g, b, mode)` where `mode > 0.5` recolors by glint luminance.
+    pub glint_color: [f32; 4],
     /// A resource pack text shader's `GameTime`: the day's fraction
     /// (`gameTime % 24000` and the partial tick, over 24000).
     pub game_time: f32,
@@ -1110,6 +1112,7 @@ impl HudBatch {
             blends: Vec::new(),
             end_portal: EndPortalFill::default(),
             glint_alpha: 0.75,
+            glint_color: [1.0, 1.0, 1.0, 0.0],
             game_time: 0.0,
             blur_at: 0,
             controls_at: None,
@@ -1791,9 +1794,11 @@ struct HudUniform {
     size: [f32; 4],
     /// `EndPortalFill`: the two sprites, then the game time in x.
     end_portal: [[f32; 4]; 3],
+    /// Custom glint tint `(r, g, b, mode)`.
+    glint_color: [f32; 4],
 }
 impl HudUniform {
-    fn new(size: [f32; 4], fill: EndPortalFill) -> Self {
+    fn new(size: [f32; 4], fill: EndPortalFill, glint_color: [f32; 4]) -> Self {
         Self {
             size,
             end_portal: [
@@ -1801,6 +1806,7 @@ impl HudUniform {
                 fill.sprites[1],
                 [fill.game_time, 0.0, 0.0, 0.0],
             ],
+            glint_color,
         }
     }
 }
@@ -1852,7 +1858,11 @@ impl HudRenderer {
         });
         let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("HUD size"),
-            contents: bytemuck::bytes_of(&HudUniform::new([1.0; 4], EndPortalFill::default())),
+            contents: bytemuck::bytes_of(&HudUniform::new(
+                [1.0; 4],
+                EndPortalFill::default(),
+                [1.0, 1.0, 1.0, 0.0],
+            )),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -2247,6 +2257,7 @@ impl HudRenderer {
                     batch.glint_alpha,
                 ],
                 batch.end_portal,
+                batch.glint_color,
             )),
         );
         if let Some(pack_text) = &self.pack_text {
@@ -3254,6 +3265,7 @@ mod tests {
                 blends: Vec::new(),
                 end_portal: EndPortalFill::default(),
                 glint_alpha: 0.75,
+                glint_color: [1.0, 1.0, 1.0, 0.0],
                 game_time: 0.0,
                 blur_at: 0,
                 controls_at: None,

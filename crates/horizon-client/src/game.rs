@@ -213,7 +213,7 @@ mod native_falling;
 mod native_hooks;
 #[cfg(target_os = "android")]
 use android_bundled::{
-    official_minimap, official_recipes, official_recipes_glue, official_zoom, smartf3,
+    official_recipes, official_recipes_glue, official_zoom, smartf3,
 };
 mod native_lifecycle;
 mod native_menus;
@@ -8104,6 +8104,8 @@ impl Game<'_> {
     fn hud_layers(&mut self, size: [u32; 2]) -> HudBatch {
         let margins = self.hud_safe_margins();
         let mut batch = HudBatch::new(size);
+        batch.glint_alpha = self.glint_frame.alpha;
+        batch.glint_color = self.volt_glint_color();
         // GlobalSettingsUniform's GameTime, for a resource pack's text shader.
         batch.game_time = ((self.world.game_time.rem_euclid(24000)) as f32
             + self.clock.fraction() as f32)
@@ -13634,6 +13636,11 @@ impl Game<'_> {
                     m = m * glam::Mat4::from_translation(glam::Vec3::new(0.0, -drop_y, 0.0));
                 }
             }
+            if self.settings.extras.volt.custom_glint.enabled
+                && self.settings.extras.volt.custom_glint.compact_item_scale
+            {
+                m = m * glam::Mat4::from_scale(glam::Vec3::splat(0.84));
+            }
             // Seeded by the player id plus the context ordinal.
             let (context, seed) = if left {
                 (
@@ -15250,7 +15257,9 @@ impl Game<'_> {
             // Draw the virtual mouse pointer directly above the vanilla game/menu GUI layer
             // and strictly underneath our touch controls and floating menu overlays.
             #[cfg(target_os = "android")]
-            if self.pad.touch_ui.virtual_mouse || (!self.captured && crate::keyboard_mouse_input()) {
+            if self.pad.touch_ui.virtual_mouse
+                || (!self.captured && (crate::keyboard_mouse_input() || self.volt_jei_visible()))
+            {
                 horizon_client::touch_ui::draw_pointer_styled(
                     &mut hud,
                     &self.gui.atlas,
@@ -15559,6 +15568,7 @@ impl Game<'_> {
             hud: &hud,
             glint_alpha: self.glint_frame.alpha,
             glint_ticks: self.glint_frame.scroll_ticks(),
+            glint_color: self.volt_glint_color(),
             clouds: (!title
                 && self.dim == Dim::Overworld
                 && horizon_client::clouds::visible(&self.settings.clouds, sky.cloud_color[3]))
@@ -17071,6 +17081,11 @@ impl Game<'_> {
                         touch.location.x as f32 / batch.scale,
                         touch.location.y as f32 / batch.scale,
                     ];
+                    if self.volt_jei_contains_point(batch.width, batch.height, point) {
+                        self.cursor = (point[0], point[1]);
+                        let _ = self.volt_jei_click(batch.width, batch.height, false);
+                        return;
+                    }
                     if let Some(slot) =
                         horizon_client::touch::hotbar_slot(batch.width, batch.height, point)
                         && !self.pad.touch.control_at_point(overlay_point)
@@ -17078,6 +17093,17 @@ impl Game<'_> {
                     {
                         self.selected = slot;
                         self.pad.hotbar_finger = Some(touch.id);
+                        return;
+                    }
+                }
+                if !matches!(touch.phase, TouchPhase::Started) && self.volt_jei_visible() {
+                    let batch = HudBatch::new([size.width, size.height]);
+                    let point = [
+                        touch.location.x as f32 / batch.scale,
+                        touch.location.y as f32 / batch.scale,
+                    ];
+                    if self.volt_jei_contains_point(batch.width, batch.height, point) {
+                        self.cursor = (point[0], point[1]);
                         return;
                     }
                 }
@@ -17653,6 +17679,7 @@ impl Game<'_> {
                         if self.captured
                             && self.screen == Screen::Playing
                             && !self.pad.touch_ui.virtual_mouse
+                            && !self.volt_jei_visible()
                         {
                             return Ok(());
                         }
@@ -17983,12 +18010,15 @@ impl Game<'_> {
                     if pressed && (self.sort_mouse_press(button) || self.hdr_mouse_press(button)) {
                         return Ok(());
                     }
-                    if pressed
-                        && button == MouseButton::Left
+                    if matches!(button, MouseButton::Left | MouseButton::Right)
                         && matches!(self.screen, Screen::Inventory | Screen::Creative | Screen::Playing)
                     {
                         let (w, h) = self.gui_size();
-                        if self.volt_jei_click(w, h) {
+                        if pressed {
+                            if self.volt_jei_click(w, h, button == MouseButton::Right) {
+                                return Ok(());
+                            }
+                        } else if self.volt_jei_contains(w, h) {
                             return Ok(());
                         }
                     }
@@ -20669,6 +20699,7 @@ pub(crate) fn loading_frame(hud: &HudBatch) -> Frame<'_> {
         hud,
         glint_alpha: 0.75,
         glint_ticks: 0.0,
+        glint_color: [1.0, 1.0, 1.0, 0.0],
         nether_lighting: false,
         entities: &[],
         entity_spans: &[],

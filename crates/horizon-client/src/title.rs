@@ -2330,7 +2330,7 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
                 }
                 #[cfg(target_os = "android")]
                 let version = format!(
-                    "Horizon {} (Rust) · Android v1.0.1",
+                    "Horizon {} (Rust) · Android v1.0",
                     horizon_core::VANILLA_VERSION
                 );
                 #[cfg(not(target_os = "android"))]

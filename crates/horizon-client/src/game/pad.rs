@@ -483,7 +483,15 @@ impl Game<'_> {
         }
         // Releases always reach the mappings, so nothing stays held when a
         // screen opened in between.
-        for action in self.settings.controller.actions_of(button) {
+        let actions = self.settings.controller.actions_of(button);
+        #[cfg(target_os = "android")]
+        if button == Button::RightStick
+            && crate::touch_visible()
+            && !actions.iter().any(|&a| a == "key.sneak")
+        {
+            self.pad_action("key.sneak", down)?;
+        }
+        for action in actions {
             self.pad_action(action, down)?;
         }
         Ok(())

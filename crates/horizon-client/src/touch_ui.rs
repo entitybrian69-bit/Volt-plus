@@ -248,8 +248,6 @@ pub enum InGameMenuAction {
     SetOverlayScale(f32),
     SetOverlayOpacity(f32),
     ToggleOverlayHidden,
-    ToggleOverlayHideInMenus,
-    ToggleOverlayShowInGameplay,
     ToggleOverlayShowControlsInMenus,
     TriggerKey(KeyCode),
     OpenKeyboard,
@@ -2102,11 +2100,7 @@ impl TouchUi {
         if settings.overlay_hidden {
             return false;
         }
-        if in_menu {
-            !settings.overlay_hide_in_menus || !settings.overlay_show_in_gameplay
-        } else {
-            settings.overlay_show_in_gameplay || hiding_controls
-        }
+        in_menu || hiding_controls
     }
     fn step_animations(&self) -> (f32, f32) {
         let open_target = if self.floating_menu { 1.0 } else { 0.0 };
@@ -3459,12 +3453,6 @@ impl TouchUi {
                     return Some(InGameMenuAction::ToggleOverlayHidden);
                 }
                 if inside([cx, body_y + 134.0 + step, cw, row_h]) {
-                    return Some(InGameMenuAction::ToggleOverlayHideInMenus);
-                }
-                if inside([cx, body_y + 134.0 + step * 2.0, cw, row_h]) {
-                    return Some(InGameMenuAction::ToggleOverlayShowInGameplay);
-                }
-                if inside([cx, body_y + 134.0 + step * 3.0, cw, row_h]) {
                     return Some(InGameMenuAction::ToggleOverlayShowControlsInMenus);
                 }
             }
@@ -5433,22 +5421,6 @@ impl TouchUi {
                 draw_toggle_row(
                     &mut ui,
                     body_y + 134.0 + step,
-                    "Hide Only in Menus",
-                    "Hide the V+ button while inventory, title or pause menus are open",
-                    Some(settings.overlay_hide_in_menus),
-                    None,
-                );
-                draw_toggle_row(
-                    &mut ui,
-                    body_y + 134.0 + step * 2.0,
-                    "Show in Raw Gameplay",
-                    "Keep the V+ button visible during normal 3D gameplay as well",
-                    Some(settings.overlay_show_in_gameplay),
-                    None,
-                );
-                draw_toggle_row(
-                    &mut ui,
-                    body_y + 134.0 + step * 3.0,
                     "Show Controls on Menu Screen",
                     "Show your touch & JVM controls on all screens (Inventory, Pause, Options, Title)",
                     Some(settings.overlay_show_controls_in_menus),
