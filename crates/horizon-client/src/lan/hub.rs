@@ -987,10 +987,12 @@ impl Hub {
         };
         self.broadcast(&C::PlayerInfoUpdate(newcomer));
         for payload in self.synced_appearances.values() {
-            self.guests[i].send(&C::CustomPayload(play::CustomPayload {
-                channel: crate::skins::appearance::APPEARANCE_CHANNEL.into(),
-                data: payload.clone(),
-            }));
+            self.guests[i].send(&C::CustomPayload(
+                horizon_protocol::packets::configuration::CustomPayload {
+                    channel: crate::skins::appearance::APPEARANCE_CHANNEL.into(),
+                    data: payload.clone(),
+                },
+            ));
         }
         self.send_level_info(i, ctx, true);
         // ServerLevel.addNewPlayer: the chunk tracking starts at the player.

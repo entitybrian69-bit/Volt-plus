@@ -2105,10 +2105,12 @@ impl Game<'_> {
                         horizon_client::skins::appearance::restamp_net_uuid(&p.data, uuid)
                 {
                     host.hub.synced_appearances.insert(uuid, stamped.clone());
-                    host.hub.broadcast(&C::CustomPayload(play::CustomPayload {
-                        channel: horizon_client::skins::appearance::APPEARANCE_CHANNEL.into(),
-                        data: stamped,
-                    }));
+                    host.hub.broadcast(&C::CustomPayload(
+                        horizon_protocol::packets::configuration::CustomPayload {
+                            channel: horizon_client::skins::appearance::APPEARANCE_CHANNEL.into(),
+                            data: stamped,
+                        },
+                    ));
                 }
             }
             S::ChatCommandSigned(p) => self.guest_signed_command(host, conn, p),
