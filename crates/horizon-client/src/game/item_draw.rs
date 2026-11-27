@@ -327,10 +327,10 @@ impl Game<'_> {
         let mut alpha = self.settings.file.double("glintStrength") as f32;
         let cg = &self.settings.extras.volt.custom_glint;
         if cg.enabled {
-            speed *= f32::from(cg.speed_pct.clamp(10, 300)) / 100.0;
+            speed *= f32::from(cg.speed_pct.max(10)) / 100.0;
             alpha = match cg.preset {
                 horizon_client::extras::GlintColorPreset::Off => 0.0,
-                _ => alpha * (f32::from(cg.strength_pct.clamp(0, 200)) / 100.0),
+                _ => alpha * (f32::from(cg.strength_pct) / 100.0),
             };
         }
         item_render::GlintFrame {
