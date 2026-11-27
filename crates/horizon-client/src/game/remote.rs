@@ -594,7 +594,7 @@ pub(super) struct Remote {
     /// same block and item sends no new START and the server keeps its clock (#4124).
     is_destroying: bool,
     destroy_delay: u32,
-    input: horizon_client::interaction_input::InteractionInput,
+    pub(super) input: horizon_client::interaction_input::InteractionInput,
     /// Keys whose presses send a packet (swap hands, drop, a mount's
     /// inventory): like the click queue, they wait for the tick's
     /// `handleKeybinds` phase rather than going out between window events.
