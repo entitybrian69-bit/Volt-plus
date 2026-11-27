@@ -17998,7 +17998,7 @@ impl Game<'_> {
                             self.extras_mouse(button, pressed);
                             self.mod_mouse_key(button, pressed);
                             let _ = self.volt_handle_key_token(
-                                horizon_client::keybinds::mouse_name(button),
+                                &horizon_client::keybinds::mouse_name(button),
                                 pressed,
                                 false,
                             );

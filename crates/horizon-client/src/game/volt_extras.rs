@@ -1605,20 +1605,24 @@ impl Game<'_> {
                     self.extras.volt.timelapse_base_pitch,
                 ))
             }
-            TimelapsePathMode::RiseSweep => {
-                let ang = t * 0.14 * spd + f64::from(self.extras.volt.timelapse_base_yaw.to_radians());
-                let cam = glam::DVec3::new(
-                    a[0] + 5.0 * ang.cos(),
-                    a[1] + t * 1.1 * spd,
-                    a[2] + 5.0 * ang.sin(),
-                );
-                let dx = a[0] - cam.x;
-                let dy = (a[1] - 1.5) - cam.y;
-                let dz = a[2] - cam.z;
-                let yaw = (-(dx)).atan2(dz).to_degrees() as f32;
-                let horiz = (dx * dx + dz * dz).sqrt().max(0.001);
-                let pitch = (-(dy / horiz).atan()).to_degrees() as f32;
-                Some((cam, yaw, pitch.clamp(-85.0, 85.0)))
+            TimelapsePathMode::PanSide => {
+                let sy = f64::from(self.extras.volt.timelapse_base_yaw.to_radians()).sin();
+                let cy = f64::from(self.extras.volt.timelapse_base_yaw.to_radians()).cos();
+                let dist = t * 1.4 * spd;
+                let cam = glam::DVec3::new(a[0] + cy * dist, a[1] + 1.5, a[2] + sy * dist);
+                Some((
+                    cam,
+                    self.extras.volt.timelapse_base_yaw,
+                    self.extras.volt.timelapse_base_pitch,
+                ))
+            }
+            TimelapsePathMode::StaticTripod => {
+                let cam = glam::DVec3::new(a[0], a[1] + 1.5, a[2]);
+                Some((
+                    cam,
+                    self.extras.volt.timelapse_base_yaw,
+                    self.extras.volt.timelapse_base_pitch,
+                ))
             }
         }
     }
