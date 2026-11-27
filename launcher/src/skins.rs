@@ -116,6 +116,75 @@ pub fn read_cape(bytes: &[u8]) -> Result<image::RgbaImage, String> {
     }
 }
 
+/// Validates and decodes a static (64×32, 22×17, HD 2:1) or vertical animated cape sheet.
+/// Returns `(decoded_sheet, frame_count)`.
+pub fn read_cape_sheet(bytes: &[u8]) -> Result<(image::RgbaImage, usize), String> {
+    let (w, h) = dimensions(bytes)?;
+    if (w, h) == (64, 32) || (w, h) == (22, 17) {
+        return Ok((decode(bytes)?, 1));
+    }
+    if w >= 64 && w <= 2048 && w.is_multiple_of(64) {
+        let frame_h = w / 2;
+        if h == frame_h {
+            return Ok((decode(bytes)?, 1));
+        }
+        if h.is_multiple_of(frame_h) && !(w == 64 && h == 64) {
+            let frames = (h / frame_h) as usize;
+            if (2..=64).contains(&frames) {
+                return Ok((decode(bytes)?, frames));
+            }
+        }
+    }
+    Err(format!(
+        "A cape must be 64×32, 22×17, HD 2:1, or a vertical animated cape sheet (this one is {w}×{h})."
+    ))
+}
+
+/// Returns how many vertical frames a decoded cape sheet contains.
+pub fn cape_frame_count(cape: &image::RgbaImage) -> usize {
+    let (w, h) = cape.dimensions();
+    if w >= 64 && w.is_multiple_of(64) {
+        let frame_h = w / 2;
+        if h > frame_h && h.is_multiple_of(frame_h) && !(w == 64 && h == 64) {
+            let frames = (h / frame_h) as usize;
+            if (2..=64).contains(&frames) {
+                return frames;
+            }
+        }
+    }
+    1
+}
+
+/// Extracts one cape frame normalized to 64×32 RGBA for preview/thumbnail rendering.
+pub fn cape_frame_64x32(cape: &image::RgbaImage, frame_index: usize) -> image::RgbaImage {
+    let (w, h) = cape.dimensions();
+    if (w, h) == (64, 32) {
+        return cape.clone();
+    }
+    if (w, h) == (22, 17) {
+        let mut out = image::RgbaImage::new(64, 32);
+        for y in 0..17 {
+            for x in 0..22 {
+                out.put_pixel(x, y, *cape.get_pixel(x, y));
+            }
+        }
+        return out;
+    }
+    let frames = cape_frame_count(cape);
+    let idx = frame_index % frames.max(1);
+    let frame_h = if frames > 1 { w / 2 } else { h };
+    let y0 = (idx as u32) * frame_h;
+    let mut out = image::RgbaImage::new(64, 32);
+    for dy in 0..32u32 {
+        let sy = (y0 + (dy * frame_h) / 32).min(h.saturating_sub(1));
+        for dx in 0..64u32 {
+            let sx = ((dx * w) / 64).min(w.saturating_sub(1));
+            out.put_pixel(dx, dy, *cape.get_pixel(sx, sy));
+        }
+    }
+    out
+}
+
 /// A part of the skin copied to the front view: from (x, y), its size, to (x, y), mirrored.
 type Part = (u32, u32, u32, u32, u32, u32, bool);
 
@@ -167,10 +236,11 @@ pub fn front(skin: &image::RgbaImage, model: Model) -> Vec<[u8; 4]> {
 
 /// The cape's outside, 10×16 texels.
 pub fn cape_front(cape: &image::RgbaImage) -> Vec<[u8; 4]> {
+    let norm = cape_frame_64x32(cape, 0);
     let mut out = Vec::with_capacity(160);
     for y in 1..17 {
         for x in 1..11 {
-            out.push(cape.get_pixel(x, y).0);
+            out.push(norm.get_pixel(x, y).0);
         }
     }
     out

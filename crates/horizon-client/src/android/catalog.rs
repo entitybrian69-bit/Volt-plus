@@ -445,6 +445,7 @@ pub enum Page {
     Settings,
     Skins,
     Music,
+    SkinOnline,
 }
 impl Page {
     pub const ALL: [Self; 10] = [
@@ -474,6 +475,7 @@ impl Page {
             Page::Settings => "Settings",
             Page::Skins => "Skins",
             Page::Music => "Musics",
+            Page::SkinOnline => "Skin Online",
         }
     }
     pub fn is_catalog(self) -> bool {
@@ -884,6 +886,8 @@ pub struct Catalog {
     pub music_scroll: f32,
     pub music_status: String,
     pub music_return_page: Page,
+    pub skin_online_query: String,
+    pub skin_online_return_page: Page,
     pub music_fetched_initial: bool,
     pub music_searching: bool,
     music_search_gen: u64,
@@ -998,6 +1002,8 @@ impl Catalog {
             music_scroll: 0.0,
             music_status: String::new(),
             music_return_page: Page::Play,
+            skin_online_query: String::new(),
+            skin_online_return_page: Page::Play,
             music_fetched_initial: false,
             music_searching: false,
             music_search_gen: 0,
@@ -3797,6 +3803,7 @@ impl Catalog {
             Some("add_server_ip") => &mut self.add_server_ip,
             Some("world_search_query") => &mut self.world_search_query,
             Some("music_query") => &mut self.music_query,
+            Some("skin_online_search") => &mut self.skin_online_query,
             Some("music_new_playlist") => &mut self.music_new_playlist_name,
             _ => &mut self.query,
         };

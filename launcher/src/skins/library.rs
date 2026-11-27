@@ -1,9 +1,16 @@
 //! Frontend-independent, versioned local wardrobe. Selection is explicitly local:
 //! this module never calls an account service or changes a remote profile.
-use super::{Model, read_cape, read_file, read_skin};
+use super::{Model, read_cape_sheet, read_file, read_skin};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
+
+fn default_cape_fps() -> u8 {
+    10
+}
+fn default_true() -> bool {
+    true
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -25,12 +32,16 @@ pub struct Selection {
     /// Hide even the account's equipped cape, locally only.
     #[serde(default)]
     pub hide_cape: bool,
+    #[serde(default = "default_cape_fps")]
+    pub cape_fps: u8,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Library {
     pub schema: u32,
     pub entries: Vec<Entry>,
     pub selections: std::collections::BTreeMap<String, Selection>,
+    #[serde(default = "default_true")]
+    pub wavey_capes: bool,
 }
 impl Default for Library {
     fn default() -> Self {
@@ -38,6 +49,7 @@ impl Default for Library {
             schema: 1,
             entries: vec![],
             selections: Default::default(),
+            wavey_capes: true,
         }
     }
 }
@@ -117,7 +129,7 @@ impl Library {
     ) -> Result<String, String> {
         let image = match kind {
             Kind::Skin => read_skin(bytes)?,
-            Kind::Cape => read_cape(bytes)?,
+            Kind::Cape => read_cape_sheet(bytes)?.0,
         };
         // Decode and re-encode so local metadata, trailing data and file names never persist.
         let mut output = std::io::Cursor::new(Vec::new());
@@ -196,8 +208,21 @@ impl Library {
         } else {
             cloud.is_some_and(|(_, s, _)| s)
         };
+        let cape_fps = if selection.cape_fps == 0 {
+            10
+        } else {
+            selection.cape_fps.clamp(1, 30)
+        };
         std::fs::create_dir_all(game_home).map_err(|_| "Could not create the game folder.")?;
-        let descriptor = serde_json::json!({"schema":1,"skin":skin,"cape":cape,"slim":slim,"hide_cape":selection.hide_cape});
+        let descriptor = serde_json::json!({
+            "schema": 1,
+            "skin": skin,
+            "cape": cape,
+            "slim": slim,
+            "hide_cape": selection.hide_cape,
+            "cape_fps": cape_fps,
+            "wavey_capes": self.wavey_capes,
+        });
         std::fs::write(
             game_home.join("horizon-appearance.json"),
             descriptor.to_string(),

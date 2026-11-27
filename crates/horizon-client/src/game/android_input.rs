@@ -199,6 +199,49 @@ impl Game<'_> {
         )
     }
 
+    fn is_hotbar_switch_token_resolved(&self, token: &str) -> bool {
+        if Self::is_hotbar_switch_token(token) {
+            return true;
+        }
+        if let Some(code) = horizon_client::keybinds::key_code(token) {
+            for mapped in self.settings.keys.translate_all(code) {
+                if matches!(
+                    mapped,
+                    Ok(KeyCode::Digit1
+                        | KeyCode::Digit2
+                        | KeyCode::Digit3
+                        | KeyCode::Digit4
+                        | KeyCode::Digit5
+                        | KeyCode::Digit6
+                        | KeyCode::Digit7
+                        | KeyCode::Digit8
+                        | KeyCode::Digit9)
+                ) {
+                    return true;
+                }
+            }
+        }
+        if let Some(button) = horizon_client::keybinds::mouse_button(token) {
+            for mapped in self.settings.keys.translate_mouse_all(button) {
+                if matches!(
+                    mapped,
+                    Ok(KeyCode::Digit1
+                        | KeyCode::Digit2
+                        | KeyCode::Digit3
+                        | KeyCode::Digit4
+                        | KeyCode::Digit5
+                        | KeyCode::Digit6
+                        | KeyCode::Digit7
+                        | KeyCode::Digit8
+                        | KeyCode::Digit9)
+                ) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn is_tick_deferred_hand_token(&self, token: &str) -> bool {
         if matches!(
             token,
@@ -232,10 +275,33 @@ impl Game<'_> {
                 }
             }
         }
+        if let Some(button) = horizon_client::keybinds::mouse_button(token) {
+            for mapped in self.settings.keys.translate_mouse_all(button) {
+                match mapped {
+                    Err(MouseButton::Left | MouseButton::Right | MouseButton::Middle) => {
+                        return true;
+                    }
+                    Ok(KeyCode::KeyF | KeyCode::KeyQ) if self.remote.is_some() => {
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+        }
         false
     }
 
     pub(super) fn android_custom_events(&mut self) {
+        let events = self.pad.touch.key_events();
+        if !events.is_empty() {
+            self.android_process_custom_events(events);
+        }
+    }
+
+    pub(super) fn android_process_custom_events(
+        &mut self,
+        events: impl IntoIterator<Item = (String, bool)>,
+    ) {
         let in_gameplay = self.title.is_none()
             && self.screen == Screen::Playing
             && !self.pause
@@ -247,8 +313,9 @@ impl Game<'_> {
                     .remote
                     .as_ref()
                     .is_some_and(|r| r.input.has_pending() || !r.pending_keys.is_empty()));
+        let mut hotbar_switched_this_tick = false;
         let mut deferring = false;
-        for (name, down) in self.pad.touch.key_events() {
+        for (name, down) in events {
             if !in_gameplay {
                 self.android_custom_token_edge(&name, down);
                 continue;
@@ -257,24 +324,36 @@ impl Game<'_> {
                 self.pad.deferred_custom_events.push_back((name, down));
                 continue;
             }
-            if down && hand_action_queued && Self::is_hotbar_switch_token(&name) {
-                deferring = true;
-                self.pad.deferred_custom_events.push_back((name, down));
-                continue;
-            }
-            if !down
-                && self
+            if down {
+                let is_hotbar = self.is_hotbar_switch_token_resolved(&name);
+                let is_hand = self.is_tick_deferred_hand_token(&name);
+                let needs_next_tick = (hand_action_queued && (is_hotbar || is_hand))
+                    || (hotbar_switched_this_tick && is_hotbar)
+                    || (self.pad.deferred_custom_events.iter().any(|(_, d)| *d)
+                        && (is_hotbar || is_hand));
+                if needs_next_tick {
+                    deferring = true;
+                    self.pad.deferred_custom_events.push_back((name, down));
+                    continue;
+                }
+                self.android_custom_token_edge(&name, down);
+                if is_hand {
+                    hand_action_queued = true;
+                }
+                if is_hotbar {
+                    hotbar_switched_this_tick = true;
+                }
+            } else {
+                if self
                     .pad
                     .deferred_custom_events
                     .iter()
                     .any(|(tok, d)| *d && tok == &name)
-            {
-                self.pad.deferred_custom_events.push_back((name, down));
-                continue;
-            }
-            self.android_custom_token_edge(&name, down);
-            if down && self.is_tick_deferred_hand_token(&name) {
-                hand_action_queued = true;
+                {
+                    self.pad.deferred_custom_events.push_back((name, down));
+                    continue;
+                }
+                self.android_custom_token_edge(&name, down);
             }
         }
     }
@@ -299,14 +378,23 @@ impl Game<'_> {
                 .remote
                 .as_ref()
                 .is_some_and(|r| r.input.has_pending() || !r.pending_keys.is_empty());
+        let mut hotbar_switched_this_tick = false;
         while let Some((name, down)) = self.pad.deferred_custom_events.front().cloned() {
-            if down && hand_action_queued && Self::is_hotbar_switch_token(&name) {
+            let is_hotbar = down && self.is_hotbar_switch_token_resolved(&name);
+            let is_hand = down && self.is_tick_deferred_hand_token(&name);
+            if down
+                && ((hand_action_queued && (is_hotbar || is_hand))
+                    || (hotbar_switched_this_tick && is_hotbar))
+            {
                 break;
             }
             self.pad.deferred_custom_events.pop_front();
             self.android_custom_token_edge(&name, down);
-            if down && self.is_tick_deferred_hand_token(&name) {
+            if is_hand {
                 hand_action_queued = true;
+            }
+            if is_hotbar {
+                hotbar_switched_this_tick = true;
             }
         }
     }

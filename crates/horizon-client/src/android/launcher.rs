@@ -11,6 +11,8 @@ mod gesture;
 mod login;
 #[path = "launcher_pages.rs"]
 mod pages;
+#[path = "skin_online.rs"]
+pub(super) mod skin_online;
 #[path = "wardrobe.rs"]
 mod wardrobe;
 use horizon_client::{
@@ -86,6 +88,7 @@ pub(super) struct Launcher {
     exit_confirmation: bool,
     login: login::Login,
     wardrobe: wardrobe::Wardrobe,
+    skin_online: skin_online::SkinOnlineState,
     session_worker: Option<mpsc::Receiver<std::result::Result<PreparedAccount, String>>>,
     session_ready: bool,
     prepared_session: Option<PathBuf>,
@@ -260,6 +263,24 @@ impl Launcher {
             ) {
                 self.catalog.editing = None;
                 crate::platform::hide();
+            }
+        } else if self.catalog.editing == Some("skin_online_search") {
+            match output {
+                horizon_client::osk::Output::Text(t) => self.catalog.skin_online_query.push_str(&t),
+                horizon_client::osk::Output::Backspace => {
+                    self.catalog.skin_online_query.pop();
+                }
+                horizon_client::osk::Output::Enter => {
+                    self.catalog.editing = None;
+                    crate::platform::hide();
+                    self.skin_online
+                        .search(self.catalog.skin_online_query.clone());
+                }
+                horizon_client::osk::Output::Close => {
+                    self.catalog.editing = None;
+                    crate::platform::hide();
+                }
+                horizon_client::osk::Output::Key(_) => {}
             }
         } else {
             self.catalog.edit(output, &self.home);
@@ -439,6 +460,7 @@ impl Launcher {
             chooser: None,
             exit_confirmation: false,
             login: login::Login::new(),
+            skin_online: skin_online::SkinOnlineState::new(),
             session_worker: prewarm_session_worker,
             session_ready: false,
             prepared_session: None,
@@ -542,7 +564,7 @@ impl Launcher {
             Page::Shaders => LauncherSection::Shaders,
             Page::Packs => LauncherSection::Resources,
             Page::Replays => LauncherSection::Replays,
-            Page::Skins => LauncherSection::Account,
+            Page::Skins | Page::SkinOnline => LauncherSection::Account,
             Page::Music => LauncherSection::Music,
             Page::Settings => match self.catalog.settings_category {
                 crate::catalog::SettingsCategory::Diagnostics => LauncherSection::Performance,
@@ -690,6 +712,12 @@ impl Launcher {
         } else if self.catalog.page == Page::Music {
             self.catalog.editing = None;
             self.catalog.page = self.catalog.music_return_page;
+            self.catalog.scroll = 0.0;
+            self.anim.trigger_page_transition();
+            self.sync_discord_presence();
+        } else if self.catalog.page == Page::SkinOnline {
+            self.catalog.editing = None;
+            self.catalog.page = self.catalog.skin_online_return_page;
             self.catalog.scroll = 0.0;
             self.anim.trigger_page_transition();
             self.sync_discord_presence();
@@ -1117,6 +1145,8 @@ impl ApplicationHandler for Launcher {
                 };
                 if let Some(chooser) = &mut self.chooser {
                     chooser.scroll = (chooser.scroll - y).max(0.0);
+                } else if self.catalog.page == Page::SkinOnline {
+                    self.skin_online.scroll = (self.skin_online.scroll - y).max(0.0);
                 } else {
                     self.catalog.scroll = (self.catalog.scroll - y).max(0.0);
                 }
@@ -1259,6 +1289,7 @@ impl ApplicationHandler for Launcher {
             }
         }
         self.wardrobe.poll();
+        self.skin_online.poll();
         if let Some(notice) = crate::documents::poll() {
             self.wardrobe.reload();
             self.catalog.status = notice.text;
@@ -1393,6 +1424,7 @@ impl ApplicationHandler for Launcher {
                         && !horizon_client::ui_theme::motion::launcher_animations_disabled()
                 })
                 || self.wardrobe.is_animating()
+                || (self.catalog.page == Page::SkinOnline && self.skin_online.is_animating())
                 || self
                     .feedback
                     .is_some_and(|(_, t)| t.elapsed() < Duration::from_millis(280))

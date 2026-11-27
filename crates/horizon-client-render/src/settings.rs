@@ -854,6 +854,7 @@ pub enum Opt {
     PadKeyboard,
     /// `options.modelPart.*`: one skin layer (index into `options_file::MODEL_PARTS`).
     ModelPart(usize),
+    WaveyCapes,
     MainHand,
     AllowServerListing,
     RealmsNotifications,

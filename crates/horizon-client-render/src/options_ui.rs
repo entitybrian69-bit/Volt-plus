@@ -200,6 +200,7 @@ impl Opt {
             Opt::TouchAttackSide => "Attack indicator side",
             Opt::TouchHorizontalMargin => "HUD margins: left / right",
             Opt::TouchVerticalMargin => "HUD margins: top / bottom",
+            Opt::WaveyCapes => "Wavey Capes",
             Opt::TouchSensitivity => "Touch sensitivity",
             Opt::TouchSensitivityHorizontal => "Horizontal sensitivity",
             Opt::TouchSensitivityVertical => "Vertical sensitivity",
@@ -876,6 +877,7 @@ impl Opt {
             } else {
                 "options.mainHand.right"
             }),
+            Opt::WaveyCapes => on_off(crate::skins::appearance::wavey_capes_enabled()),
             Opt::SharePresence => tr([
                 "options.sharePresence.none",
                 "options.sharePresence.limited",
@@ -1419,6 +1421,11 @@ impl Opt {
                     .set("musicFrequency", crate::options_file::V::Int(i32::from(n)));
             }
             Opt::MainHand => s.main_hand_left = !s.main_hand_left,
+            Opt::WaveyCapes => {
+                crate::skins::appearance::set_wavey_capes(
+                    !crate::skins::appearance::wavey_capes_enabled(),
+                );
+            }
             Opt::SharePresence => {
                 let n = next(s.file.int("sharePresence").clamp(0, 2) as u8, 3);
                 s.file
@@ -2969,8 +2976,9 @@ impl OptionsUi {
                 rows
             }
             Page::Skin => {
-                // SkinCustomizationScreen: the seven layers, then Main Hand.
+                // SkinCustomizationScreen: the seven layers, Wavey Capes, then Main Hand.
                 let mut opts: Vec<Opt> = (0..MODEL_PART_KEYS.len()).map(Opt::ModelPart).collect();
+                opts.push(Opt::WaveyCapes);
                 opts.push(Opt::MainHand);
                 pairs(&opts)
             }

@@ -264,6 +264,76 @@ impl Raster {
             }
         }
     }
+
+    fn wavey_cape(&mut self, texture: &RgbaImage, time_sec: f32) {
+        // Matches the 16-slice curved cloth profile used in-game (cape spans y: 24..8 at z: 2.5..3.5).
+        const SLICES: usize = 16;
+        let (x0, x1) = (-5.0_f32, 5.0_f32);
+        let z_front = 2.5_f32;
+        let z_back = 3.5_f32;
+        let y_top = 24.0_f32;
+        let y_bot = 8.0_f32;
+        let sample = |t: f32| -> (f32, f32) {
+            let wave = (time_sec * 3.1 - t * 3.4).sin() * t * 1.15;
+            let curve = t * t * 2.1 + t * 0.45 + wave;
+            let y = y_top - t * (y_top - y_bot);
+            (y, curve)
+        };
+        let mut emit_quad = |pts: [[f32; 3]; 4], uvs: [[f32; 2]; 4], light: f32| {
+            let proj = pts.map(|p| self.project(p));
+            for [a, b, c] in [[0, 1, 2], [0, 2, 3]] {
+                self.triangle([proj[a], proj[b], proj[c]], [uvs[a], uvs[b], uvs[c]], texture, light);
+            }
+        };
+        for i in 0..SLICES {
+            let t0 = i as f32 / SLICES as f32;
+            let t1 = (i + 1) as f32 / SLICES as f32;
+            let (y0, dz0) = sample(t0);
+            let (y1, dz1) = sample(t1);
+            let (zf0, zb0) = (z_front + dz0, z_back + dz0);
+            let (zf1, zb1) = (z_front + dz1, z_back + dz1);
+            let v0 = 1.0 + t0 * 16.0;
+            let v1 = 1.0 + t1 * 16.0;
+            let slope_shade = (1.0 - (dz1 - dz0).abs() * 0.08).clamp(0.75, 1.05);
+            // Outer back face (reversed X, matching cuboid reverse_depth: u 1..11)
+            emit_quad(
+                [[x1, y0, zb0], [x0, y0, zb0], [x0, y1, zb1], [x1, y1, zb1]],
+                [[1.0, v0], [11.0, v0], [11.0, v1], [1.0, v1]],
+                0.96 * slope_shade,
+            );
+            // Inner front face (u 12..22)
+            emit_quad(
+                [[x0, y0, zf0], [x1, y0, zf0], [x1, y1, zf1], [x0, y1, zf1]],
+                [[12.0, v0], [22.0, v0], [22.0, v1], [12.0, v1]],
+                0.78 * slope_shade,
+            );
+            // Left and right edges
+            emit_quad(
+                [[x0, y0, zb0], [x0, y0, zf0], [x0, y1, zf1], [x0, y1, zb1]],
+                [[0.0, v0], [1.0, v0], [1.0, v1], [0.0, v1]],
+                0.82,
+            );
+            emit_quad(
+                [[x1, y0, zf0], [x1, y0, zb0], [x1, y1, zb1], [x1, y1, zf1]],
+                [[11.0, v0], [12.0, v0], [12.0, v1], [11.0, v1]],
+                0.78,
+            );
+            if i == 0 {
+                emit_quad(
+                    [[x1, y0, zf0], [x0, y0, zf0], [x0, y0, zb0], [x1, y0, zb0]],
+                    [[1.0, 0.0], [11.0, 0.0], [11.0, 1.0], [1.0, 1.0]],
+                    1.0,
+                );
+            }
+            if i + 1 == SLICES {
+                emit_quad(
+                    [[x1, y1, zb1], [x0, y1, zb1], [x0, y1, zf1], [x1, y1, zf1]],
+                    [[11.0, 0.0], [21.0, 0.0], [21.0, 1.0], [11.0, 1.0]],
+                    0.65,
+                );
+            }
+        }
+    }
 }
 
 /// Bounded pixel output for interactive previews. Both skin layers and the cape
@@ -274,6 +344,20 @@ pub fn render(
     model: Model,
     camera: Camera,
     size: [u32; 2],
+) -> RgbaImage {
+    render_styled(skin, cape, model, camera, size, false, 0.0, 0)
+}
+
+/// Interactive preview with optional wavey cape cloth curve and animated cape frame selection.
+pub fn render_styled(
+    skin: &RgbaImage,
+    cape: Option<&RgbaImage>,
+    model: Model,
+    camera: Camera,
+    size: [u32; 2],
+    wavey: bool,
+    time_sec: f32,
+    cape_frame_index: usize,
 ) -> RgbaImage {
     let [width, height] = size.map(|v| v.clamp(16, 1024));
     let mut raster = Raster {
@@ -289,12 +373,9 @@ pub fn render(
     .and_then(|bytes| RgbaImage::from_raw(64, 64, bytes));
     let skin = normalized.as_ref().unwrap_or(skin);
     let cape_image = cape
-        .and_then(|image| {
-            horizon_core::player_texture::process_cape(
-                image.width(),
-                image.height(),
-                image.as_raw(),
-            )
+        .map(|image| super::cape_frame_64x32(image, cape_frame_index))
+        .and_then(|norm| {
+            horizon_core::player_texture::process_cape(norm.width(), norm.height(), norm.as_raw())
         })
         .and_then(|bytes| RgbaImage::from_raw(64, 64, bytes));
     let cape = cape_image.as_ref();
@@ -351,14 +432,18 @@ pub fn render(
         }
     }
     if let Some(cape) = cape {
-        raster.cuboid(
-            cape,
-            [0.0, 16.0, 3.0],
-            [10.0, 16.0, 1.0],
-            [0.0, 0.0],
-            0.0,
-            true,
-        );
+        if wavey {
+            raster.wavey_cape(cape, time_sec);
+        } else {
+            raster.cuboid(
+                cape,
+                [0.0, 16.0, 3.0],
+                [10.0, 16.0, 1.0],
+                [0.0, 0.0],
+                0.0,
+                true,
+            );
+        }
     }
     raster.image
 }

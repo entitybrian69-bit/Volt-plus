@@ -54,6 +54,9 @@ pub(super) struct Wardrobe {
     name: String,
     /// Decoded head of the selected appearance, drawn by the launcher header.
     head: Option<HeadSkin>,
+    anim_origin: std::time::Instant,
+    last_anim_frame: usize,
+    last_wavey_step: std::time::Instant,
     pub tab_changed_at: Option<std::time::Instant>,
     pub selection_changed_at: Option<std::time::Instant>,
 }
@@ -63,13 +66,16 @@ impl Wardrobe {
         let loaded = Library::load(&root);
         let damaged = loaded.is_err();
         let note = loaded.as_ref().err().cloned().unwrap_or_default();
+        let library = loaded.unwrap_or_default();
+        horizon_client::skins::appearance::set_wavey_capes(library.wavey_capes);
+        let now = std::time::Instant::now();
         let mut value = Self {
             root,
             default_skin: home
                 .join(".local/horizon-client")
                 .join(horizon_core::VANILLA_VERSION)
                 .join("assets/minecraft/textures/entity/player/wide/steve.png"),
-            library: loaded.unwrap_or_default(),
+            library,
             key: String::new(),
             provider: None,
             capes: false,
@@ -92,6 +98,9 @@ impl Wardrobe {
             damaged,
             name: String::new(),
             head: None,
+            anim_origin: now,
+            last_anim_frame: 0,
+            last_wavey_step: now,
             tab_changed_at: None,
             selection_changed_at: None,
         };
@@ -132,6 +141,7 @@ impl Wardrobe {
     pub fn reload(&mut self) {
         match Library::load(&self.root) {
             Ok(value) => {
+                horizon_client::skins::appearance::set_wavey_capes(value.wavey_capes);
                 self.library = value;
                 self.damaged = false;
                 self.preview();
@@ -141,6 +151,90 @@ impl Wardrobe {
                 self.note = error;
             }
         }
+    }
+    pub fn wavey_capes(&self) -> bool {
+        self.library.wavey_capes
+    }
+    pub fn toggle_wavey_capes(&mut self) {
+        self.library.wavey_capes = !self.library.wavey_capes;
+        horizon_client::skins::appearance::set_wavey_capes(self.library.wavey_capes);
+        self.note = if self.library.wavey_capes {
+            "Wavey Capes enabled (16-slice cloth physics in preview & in-game).".into()
+        } else {
+            "Wavey Capes disabled (classic rigid cape).".into()
+        };
+        self.save();
+    }
+    pub fn cape_fps(&self) -> u8 {
+        self.library
+            .selections
+            .get(&self.key)
+            .map_or(10, |s| if s.cape_fps == 0 { 10 } else { s.cape_fps })
+    }
+    pub fn cycle_cape_fps(&mut self) {
+        let selection = self.library.selections.entry(self.key.clone()).or_default();
+        selection.cape_fps = match selection.cape_fps {
+            0..=6 => 10,
+            7..=11 => 15,
+            12..=17 => 20,
+            _ => 6,
+        };
+        let fps = selection.cape_fps;
+        self.note = format!("Animated cape speed set to {fps} FPS.");
+        self.save();
+    }
+    pub fn status_note(&self) -> &str {
+        &self.note
+    }
+    pub fn is_slim(&self) -> bool {
+        self.library
+            .selections
+            .get(&self.key)
+            .is_some_and(|s| s.model == Model::Slim)
+    }
+    pub fn is_cape_hidden(&self) -> bool {
+        self.library
+            .selections
+            .get(&self.key)
+            .is_some_and(|s| s.hide_cape)
+    }
+    pub fn equip_online_skin(
+        &mut self,
+        title: &str,
+        png_bytes: &[u8],
+        slim: bool,
+        client_id: &str,
+    ) -> Result<(), String> {
+        let id = self
+            .library
+            .import(&self.root, title, Kind::Skin, png_bytes)?;
+        {
+            let selection = self.library.selections.entry(self.key.clone()).or_default();
+            selection.model = if slim { Model::Slim } else { Model::Classic };
+        }
+        self.library.select(&self.root, &self.key, &id, Kind::Skin)?;
+        self.selection_changed_at = Some(std::time::Instant::now());
+        self.preview();
+        if self.provider == Some(Provider::Microsoft) {
+            self.cloud(client_id, Some(CloudAction::Upload));
+        } else {
+            self.note = format!(
+                "Equipped '{title}' locally & in Horizon multiplayer servers."
+            );
+        }
+        Ok(())
+    }
+    pub fn equip_online_cape(&mut self, title: &str, png_bytes: &[u8]) -> Result<(), String> {
+        let id = self
+            .library
+            .import(&self.root, title, Kind::Cape, png_bytes)?;
+        self.library.select(&self.root, &self.key, &id, Kind::Cape)?;
+        self.selection_changed_at = Some(std::time::Instant::now());
+        self.preview();
+        self.note = format!(
+            "Equipped cape '{title}' locally & in Horizon multiplayer servers."
+        );
+        Ok(())
     }
     pub fn poll(&mut self) {
         if let Some((key, result)) = self.worker.as_ref().and_then(|r| r.try_recv().ok()) {
@@ -486,7 +580,7 @@ impl Wardrobe {
             path(&selection.cape)
                 .or_else(|| self.cache.cape.clone())
                 .and_then(|p| skins::read_file(&p).ok())
-                .and_then(|b| skins::read_cape(&b).ok())
+                .and_then(|b| skins::read_cape_sheet(&b).ok().map(|(img, _)| img))
         };
         let model = selection.model;
         let head = preview::render_head(&skin, 48);
@@ -509,8 +603,31 @@ impl Wardrobe {
         self.preview_skin = Some(std::sync::Arc::new(skin));
         self.preview_cape = cape.map(std::sync::Arc::new);
         self.preview_model = model;
-        self.bitmap = preview::render(self.preview_skin.as_ref().unwrap(), self.preview_cape.as_deref(), model, self.camera, [384, 480]);
+        let anim_t = self.anim_origin.elapsed().as_secs_f32();
+        let frame_idx = self.current_cape_frame(anim_t);
+        self.last_anim_frame = frame_idx;
+        self.bitmap = preview::render_styled(
+            self.preview_skin.as_ref().unwrap(),
+            self.preview_cape.as_deref(),
+            model,
+            self.camera,
+            [384, 480],
+            self.library.wavey_capes,
+            anim_t,
+            frame_idx,
+        );
         self.bitmap_revision = self.bitmap_revision.wrapping_add(1);
+    }
+    fn current_cape_frame(&self, anim_t: f32) -> usize {
+        let Some(cape) = &self.preview_cape else {
+            return 0;
+        };
+        let frames = skins::cape_frame_count(cape);
+        if frames <= 1 {
+            return 0;
+        }
+        let fps = f32::from(self.cape_fps().max(1));
+        ((anim_t * fps) as usize) % frames
     }
     // One worker at a time; movements are coalesced to the most recent camera.
     // No filesystem reads, skin decode or head reconstruction on pointer events.
@@ -525,11 +642,23 @@ impl Wardrobe {
         let model = self.preview_model;
         let camera = self.camera;
         let generation = self.appearance_generation;
+        let wavey = self.library.wavey_capes;
+        let anim_t = self.anim_origin.elapsed().as_secs_f32();
+        let frame_idx = self.current_cape_frame(anim_t);
         self.render_pending = false;
         let (tx, rx) = mpsc::channel();
         self.render_worker = Some(rx);
         std::thread::spawn(move || {
-            let image = preview::render(&skin, cape.as_deref(), model, camera, [384, 480]);
+            let image = preview::render_styled(
+                &skin,
+                cape.as_deref(),
+                model,
+                camera,
+                [384, 480],
+                wavey,
+                anim_t,
+                frame_idx,
+            );
             let _ = tx.send((generation, image));
         });
     }
@@ -552,8 +681,15 @@ impl Wardrobe {
     }
     pub fn is_animating(&self) -> bool {
         let now = std::time::Instant::now();
+        let has_animated_cape = self
+            .preview_cape
+            .as_deref()
+            .is_some_and(|c| skins::cape_frame_count(c) > 1);
+        let has_wavey_cape = self.preview_cape.is_some() && self.library.wavey_capes;
         self.worker.is_some()
             || self.render_worker.is_some() || self.render_pending
+            || has_animated_cape
+            || has_wavey_cape
             || crate::documents::busy()
             || self
                 .tab_changed_at
@@ -591,6 +727,18 @@ impl Wardrobe {
     /// Keeping the hit rectangle here makes drag/pinch orbit work on the dashboard too.
     pub fn draw_scene(&mut self, ui: &mut Ui, rect: [f32; 4]) {
         self.poll_camera_render();
+        if let Some(cape) = &self.preview_cape {
+            let anim_t = self.anim_origin.elapsed().as_secs_f32();
+            let frame_idx = self.current_cape_frame(anim_t);
+            let animated = skins::cape_frame_count(cape) > 1;
+            let wavey_step = self.library.wavey_capes
+                && self.last_wavey_step.elapsed().as_millis() >= 65;
+            if (animated && frame_idx != self.last_anim_frame) || wavey_step {
+                self.last_anim_frame = frame_idx;
+                self.last_wavey_step = std::time::Instant::now();
+                self.queue_camera_render();
+            }
+        }
         self.rect = rect;
         let [x, y, w, h] = rect;
         let scale = (w / 160.0).min(h / 200.0);
@@ -677,6 +825,28 @@ impl Wardrobe {
             top,
             theme.text_primary,
             "Skins & Capes Studio",
+        );
+        let online_w = 104.0;
+        let wavey_w = 104.0;
+        button(
+            ui,
+            targets,
+            [x + w - online_w, top, online_w, 28.0],
+            "Skin Online",
+            Action::OpenSkinOnline,
+            true,
+        );
+        button(
+            ui,
+            targets,
+            [x + w - online_w - wavey_w - 6.0, top, wavey_w, 28.0],
+            if self.library.wavey_capes {
+                "Wavey: ON"
+            } else {
+                "Wavey: OFF"
+            },
+            Action::SkinOnlineToggleWavey,
+            self.library.wavey_capes,
         );
         let subtitle = ui.fit_text(
             Face::Regular,

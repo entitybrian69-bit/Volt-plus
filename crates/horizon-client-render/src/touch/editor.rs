@@ -30,7 +30,7 @@ pub enum EditorDragKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PickerStep {
     None,
-    /// Step 1: Ask user whether to bind a Keyboard Key or Mouse/Game Action for event slot 0..=2.
+    /// Step 1: Ask user whether to bind a Keyboard Key or Mouse/Game Action for event slot 0..=3.
     AskInputType {
         event_slot: usize,
     },

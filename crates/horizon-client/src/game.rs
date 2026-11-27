@@ -18801,8 +18801,12 @@ impl Game<'_> {
         #[cfg(target_os = "android")]
         {
             if !self.focused { horizon_client::java_controls::release_tokens(); }
-            for (token, down) in horizon_client::java_controls::drain_tokens() {
-                self.android_custom_token_edge(token, down);
+            let tokens: Vec<(String, bool)> = horizon_client::java_controls::drain_tokens()
+                .into_iter()
+                .map(|(token, down)| (token.to_owned(), down))
+                .collect();
+            if !tokens.is_empty() {
+                self.android_process_custom_events(tokens);
             }
         }
         #[cfg(target_os = "android")]

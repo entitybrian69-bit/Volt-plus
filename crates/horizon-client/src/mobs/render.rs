@@ -1470,7 +1470,257 @@ pub fn cape(
     let (z, y, x) = (now * by).to_euler(glam::EulerRot::ZYX);
     (pose[3], pose[4], pose[5]) = (x, y, z);
     // RenderTypes.entitySolid with OverlayTexture.NO_OVERLAY.
-    draw(model, base, &poses, uv, 0xFFFF_FFFF, light, 0, out);
+    if crate::skins::appearance::wavey_capes_enabled() {
+        let wave_phase = (m.age as f32 + alpha) * 0.22;
+        let motion = ((flap.abs() + lean * 0.6) / 60.0).clamp(0.0, 1.8);
+        draw_wavey_cape(
+            model,
+            base,
+            ModelNormals::new(base),
+            &poses,
+            uv,
+            light,
+            wave_phase,
+            motion,
+            out,
+        );
+    } else {
+        draw(model, base, &poses, uv, 0xFFFF_FFFF, light, 0, out);
+    }
+}
+
+const WAVEY_CAPE_SLICES: usize = 16;
+
+#[allow(clippy::too_many_arguments)]
+fn draw_wavey_cape(
+    part: &Part,
+    base: glam::Mat4,
+    normals: ModelNormals,
+    poses: &Poses,
+    uv: [f32; 4],
+    light: u32,
+    wave_phase: f32,
+    motion: f32,
+    out: &mut Vec<Vertex>,
+) {
+    let p = poses.pose(part);
+    let m = base
+        * glam::Mat4::from_translation(glam::Vec3::new(p[0], p[1], p[2]) / 16.0)
+        * glam::Mat4::from_quat(glam::Quat::from_euler(
+            glam::EulerRot::ZYX,
+            p[5],
+            p[4],
+            p[3],
+        ))
+        * glam::Mat4::from_scale(glam::Vec3::new(p[6], p[7], p[8]));
+    if poses.is_hidden(part) || p[6] == 0.0 && p[7] == 0.0 && p[8] == 0.0 {
+        return;
+    }
+    let normals = normals.part(p);
+    if !poses.skips(part) {
+        if part.name == "cape" && !part.polygons.is_empty() {
+            emit_wavey_cape_polygons(&part.polygons, m, normals, uv, light, wave_phase, motion, out);
+        } else {
+            for poly in &part.polygons {
+                let normal = poly.vertex_normal(normals);
+                for v in poly.vertices {
+                    let pos = m.transform_point3(glam::Vec3::new(v[0], v[1], v[2]) / 16.0);
+                    out.push(Vertex {
+                        normal,
+                        pos: pos.to_array(),
+                        uv: [
+                            uv[0] + (uv[2] - uv[0]) * v[3],
+                            uv[1] + (uv[3] - uv[1]) * v[4],
+                        ],
+                        layer: 0,
+                        color: 0xFFFF_FFFF,
+                        light,
+                        glint_uv: [0.0, 0.0],
+                    });
+                }
+            }
+        }
+    }
+    for c in &part.children {
+        draw_wavey_cape(c, m, normals, poses, uv, light, wave_phase, motion, out);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_wavey_cape_polygons(
+    polygons: &[super::Polygon],
+    m: glam::Mat4,
+    normals: ModelNormals,
+    uv: [f32; 4],
+    light: u32,
+    wave_phase: f32,
+    motion: f32,
+    out: &mut Vec<Vertex>,
+) {
+    let mut min_y = f32::MAX;
+    let mut max_y = f32::MIN;
+    for poly in polygons {
+        for v in poly.vertices {
+            min_y = min_y.min(v[1]);
+            max_y = max_y.max(v[1]);
+        }
+    }
+    let span_y = (max_y - min_y).abs();
+    if span_y < 1.0e-4 {
+        for poly in polygons {
+            let normal = poly.vertex_normal(normals);
+            for v in poly.vertices {
+                let pos = m.transform_point3(glam::Vec3::new(v[0], v[1], v[2]) / 16.0);
+                out.push(Vertex {
+                    normal,
+                    pos: pos.to_array(),
+                    uv: [uv[0] + (uv[2] - uv[0]) * v[3], uv[1] + (uv[3] - uv[1]) * v[4]],
+                    layer: 0,
+                    color: 0xFFFF_FFFF,
+                    light,
+                    glint_uv: [0.0, 0.0],
+                });
+            }
+        }
+        return;
+    }
+    // Anchor at the shoulder end (closest to y = 0 in cape-local space).
+    let (y_top, y_bot) = if min_y.abs() <= max_y.abs() {
+        (min_y, max_y)
+    } else {
+        (max_y, min_y)
+    };
+    let signed_span = y_bot - y_top;
+    let wave_offset = |t: f32| -> (f32, f32) {
+        let t = t.clamp(0.0, 1.0);
+        let bend = t * t;
+        let amp = 0.40 + 1.15 * motion;
+        let dz = bend
+            * (amp * (wave_phase - t * 4.2).sin()
+                + 0.35 * motion * (wave_phase * 1.65 - t * 5.8).cos());
+        let dy_pull = -0.07 * dz.abs() * signed_span.signum();
+        (dy_pull, dz)
+    };
+    let deform = |v: [f32; 5]| -> (glam::Vec3, [f32; 2]) {
+        let t = ((v[1] - y_top) / signed_span).clamp(0.0, 1.0);
+        let (dy, dz) = wave_offset(t);
+        (
+            glam::Vec3::new(v[0], v[1] + dy, v[2] + dz),
+            [
+                uv[0] + (uv[2] - uv[0]) * v[3],
+                uv[1] + (uv[3] - uv[1]) * v[4],
+            ],
+        )
+    };
+
+    for poly in polygons {
+        // Horizontal cap polygons (top & bottom faces): all 4 vertices share ~same Y.
+        let poly_min_y = poly.vertices.iter().map(|v| v[1]).fold(f32::MAX, f32::min);
+        let poly_max_y = poly.vertices.iter().map(|v| v[1]).fold(f32::MIN, f32::max);
+        if (poly_max_y - poly_min_y).abs() < 0.25 {
+            let normal = poly.vertex_normal(normals);
+            for v in poly.vertices {
+                let (pt, tex_uv) = deform(v);
+                let pos = m.transform_point3(pt / 16.0);
+                out.push(Vertex {
+                    normal,
+                    pos: pos.to_array(),
+                    uv: tex_uv,
+                    layer: 0,
+                    color: 0xFFFF_FFFF,
+                    light,
+                    glint_uv: [0.0, 0.0],
+                });
+            }
+            continue;
+        }
+
+        // Vertical wall polygons: find top-edge pair and bottom-edge pair preserving quad winding.
+        // In ModelPart cuboid faces, the 4 vertices are ordered sequentially around the quad,
+        // with two adjacent vertices on the top edge and two opposite on the bottom edge.
+        let mut sorted = [0usize, 1, 2, 3];
+        sorted.sort_by(|&a, &b| {
+            let ta = (poly.vertices[a][1] - y_top).abs();
+            let tb = (poly.vertices[b][1] - y_top).abs();
+            ta.total_cmp(&tb)
+        });
+        let is_top = |idx: usize| idx == sorted[0] || idx == sorted[1];
+        // Pair each top vertex with its corresponding bottom vertex along the vertical edges.
+        // Adjacent vertices in `[0, 1, 2, 3]` form edges `(i, (i+1)%4)`: the two non-top/non-bot
+        // edges are the two vertical side rails of the quad!
+        let mut top_a = sorted[0];
+        let mut top_b = sorted[1];
+        // Ensure top_a -> top_b matches the quad's edge direction.
+        if (top_a + 1) % 4 != top_b {
+            std::mem::swap(&mut top_a, &mut top_b);
+        }
+        let bot_b = (top_b + 1) % 4;
+        let bot_a = (top_a + 3) % 4;
+        if is_top(bot_a) || is_top(bot_b) {
+            let normal = poly.vertex_normal(normals);
+            for v in poly.vertices {
+                let (pt, tex_uv) = deform(v);
+                let pos = m.transform_point3(pt / 16.0);
+                out.push(Vertex {
+                    normal,
+                    pos: pos.to_array(),
+                    uv: tex_uv,
+                    layer: 0,
+                    color: 0xFFFF_FFFF,
+                    light,
+                    glint_uv: [0.0, 0.0],
+                });
+            }
+            continue;
+        }
+
+        let lerp_v = |a: [f32; 5], b: [f32; 5], f: f32| -> [f32; 5] {
+            [
+                a[0] + (b[0] - a[0]) * f,
+                a[1] + (b[1] - a[1]) * f,
+                a[2] + (b[2] - a[2]) * f,
+                a[3] + (b[3] - a[3]) * f,
+                a[4] + (b[4] - a[4]) * f,
+            ]
+        };
+        let va0 = poly.vertices[top_a];
+        let vb0 = poly.vertices[top_b];
+        let va1 = poly.vertices[bot_a];
+        let vb1 = poly.vertices[bot_b];
+        for s in 0..WAVEY_CAPE_SLICES {
+            let f0 = s as f32 / WAVEY_CAPE_SLICES as f32;
+            let f1 = (s + 1) as f32 / WAVEY_CAPE_SLICES as f32;
+            let q = [
+                deform(lerp_v(va0, va1, f0)),
+                deform(lerp_v(vb0, vb1, f0)),
+                deform(lerp_v(vb0, vb1, f1)),
+                deform(lerp_v(va0, va1, f1)),
+            ];
+            let local_n = (q[1].0 - q[0].0)
+                .cross(q[2].0 - q[0].0)
+                .normalize_or_zero();
+            let world_n = if local_n.length_squared() > 1.0e-6 {
+                let n = normals.matrix * local_n;
+                let n = if normals.trusted { n } else { n.normalize_or_zero() };
+                let packed = n.to_array().map(|v| (v.clamp(-1.0, 1.0) * 127.0) as i8);
+                [packed[0], packed[1], packed[2], -127]
+            } else {
+                poly.vertex_normal(normals)
+            };
+            for (pt, tex_uv) in q {
+                let pos = m.transform_point3(pt / 16.0);
+                out.push(Vertex {
+                    normal: world_n,
+                    pos: pos.to_array(),
+                    uv: tex_uv,
+                    layer: 0,
+                    color: 0xFFFF_FFFF,
+                    light,
+                    glint_uv: [0.0, 0.0],
+                });
+            }
+        }
+    }
 }
 /// `Deadmau5EarsLayer.submit` with `PlayerEarsModel`: the player model's
 /// head carrying two 6x6x1 ears (the model's other cubes are cleared),

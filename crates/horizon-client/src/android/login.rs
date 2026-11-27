@@ -428,13 +428,21 @@ impl Login {
             login_text(),
         );
         targets.push((close, Action::CloseLogin));
+        button(
+            ui,
+            targets,
+            [x + w - 166.0, y + 16.0, 104.0, 38.0],
+            "Skin Online",
+            Action::OpenSkinOnline,
+            true,
+        );
         let text_x = if self.providers { x + 22.0 } else { x + 64.0 };
         ui.text(Face::SemiBold, 20.0, text_x, y + 14.0, login_text(), title);
         let fitted = ui.fit_text(
             Face::Regular,
             12.5,
             &subtitle,
-            (x + w - 70.0 - text_x).max(70.0),
+            (x + w - 178.0 - text_x).max(70.0),
         );
         ui.text(
             Face::Regular,

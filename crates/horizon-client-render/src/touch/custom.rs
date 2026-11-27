@@ -423,6 +423,19 @@ impl TouchControls {
             || tok.starts_with("action:horizon.hide_layer:")
             || tok.starts_with("action:horizon.send_text:")
     }
+    fn is_repeatable_click_token(tok: &str) -> bool {
+        matches!(
+            tok,
+            "key.mouse.left"
+                | "key.mouse.right"
+                | "key.mouse.middle"
+                | "mouse.scroll.up"
+                | "mouse.scroll.down"
+                | "action:key.attack"
+                | "action:key.use"
+                | "action:key.pickItem"
+        ) || Self::is_instant_custom_token(tok)
+    }
     fn activate_custom_button_at(
         &mut self,
         id: u64,
@@ -520,7 +533,9 @@ impl TouchControls {
                     self.custom_events.push((tok.clone(), true));
                     self.custom_events.push((tok, false));
                 } else if now_on {
-                    if self.latched_custom.insert(tok.clone()) {
+                    if self.latched_custom.insert(tok.clone())
+                        || Self::is_repeatable_click_token(&tok)
+                    {
                         self.custom_events.push((tok, true));
                     }
                 } else if self.latched_custom.remove(&tok) {
@@ -545,17 +560,7 @@ impl TouchControls {
 
         let mut to_emit = Vec::with_capacity(active.len());
         for tok in &active {
-            let is_repeatable_click = matches!(
-                tok.as_str(),
-                "key.mouse.left"
-                    | "key.mouse.right"
-                    | "key.mouse.middle"
-                    | "mouse.scroll.up"
-                    | "mouse.scroll.down"
-                    | "action:key.attack"
-                    | "action:key.use"
-                    | "action:key.pickItem"
-            ) || Self::is_instant_custom_token(tok);
+            let is_repeatable_click = Self::is_repeatable_click_token(tok);
             let already_held = !is_repeatable_click
                 && (self.custom_fingers.values().any(|other| other.contains(tok))
                     || self.latched_custom.contains(tok));
@@ -1010,6 +1015,29 @@ mod tests {
                 ("key.keyboard.w".into(), false),
                 ("mouse.virtual.toggle".into(), true),
                 ("mouse.virtual.toggle".into(), false),
+            ]
+        );
+
+        // Toggleable 4-slot button keeps repeatable clicks in slots 3/4.
+        let mut toggle_macro = CustomButton::new("key.keyboard.2".into(), 2);
+        toggle_macro.set_event_slot(1, "key.mouse.right".into());
+        toggle_macro.set_event_slot(2, "key.keyboard.3".into());
+        toggle_macro.set_event_slot(3, "key.mouse.right".into());
+        for m in 0..3 {
+            toggle_macro.layouts[m].center = [0.85, 0.50];
+            toggle_macro.layouts[m].size = 0.12;
+            toggle_macro.layouts[m].toggleable = true;
+        }
+        t.settings.custom_buttons.push(toggle_macro);
+        t.update(4, [0.85, 0.50], true, false);
+        t.update(4, [0.85, 0.50], false, true);
+        assert_eq!(
+            t.key_events(),
+            [
+                ("key.keyboard.2".into(), true),
+                ("key.mouse.right".into(), true),
+                ("key.keyboard.3".into(), true),
+                ("key.mouse.right".into(), true),
             ]
         );
     }

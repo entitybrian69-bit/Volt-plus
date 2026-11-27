@@ -537,6 +537,18 @@ pub(super) enum Action {
     MusicRemoveTrackFromPlaylist(usize),
     MusicOpenSaveResult(usize),
     MusicOpenSavePlaylistTrack(usize),
+    OpenSkinOnline,
+    CloseSkinOnline,
+    SkinOnlineTab(bool),
+    SkinOnlineSkinCategory(super::skin_online::SkinCategory),
+    SkinOnlineCapeFilter(super::skin_online::CapeKindFilter),
+    SkinOnlineCapeSource(super::skin_online::CapeSourceFilter),
+    SkinOnlineSearch,
+    SkinOnlineRefresh,
+    SkinOnlinePage(isize),
+    SkinOnlineEquip(usize),
+    SkinOnlineToggleWavey,
+    SkinOnlineCycleFps,
     MusicCloseSave,
     MusicAddToPlaylist(usize),
     MusicCreatePlaylist,
@@ -910,6 +922,7 @@ fn page_icon(page: Page) -> Icon {
         Page::Settings => Icon::Settings,
         Page::Skins => Icon::Skins,
         Page::Music => Icon::Music,
+        Page::SkinOnline => Icon::Skins,
     }
 }
 
@@ -1507,6 +1520,18 @@ impl Launcher {
         if self.catalog.page == Page::Music {
             ui.h = full_h;
             self.draw_music_fullscreen(&mut ui, w, full_h, ime_top_dp);
+        } else if self.catalog.page == Page::SkinOnline {
+            ui.h = full_h;
+            self.skin_online.draw(
+                &mut ui,
+                &mut self.targets,
+                &mut self.wardrobe,
+                &self.catalog.skin_online_query,
+                self.catalog.editing,
+                w,
+                full_h,
+                ime_top_dp,
+            );
         } else {
         let account_name = self.login.profile.clone().unwrap_or_else(|| self.catalog.config.name.clone());
         // Brand and account enter first, followed by the avatar and navigation.
@@ -10723,6 +10748,7 @@ impl Launcher {
                     "add_server_ip" => &self.catalog.add_server_ip,
                     "world_search_query" => &self.catalog.world_search_query,
                     "music_query" => &self.catalog.music_query,
+                    "skin_online_search" => &self.catalog.skin_online_query,
                     "music_new_playlist" => &self.catalog.music_new_playlist_name,
                     _ => &self.catalog.query,
                 };
@@ -11525,6 +11551,79 @@ impl Launcher {
                 self.anim.trigger_page_transition();
                 self.sync_discord_presence();
             }
+            Some(Action::OpenSkinOnline) => {
+                self.login.hide();
+                if self.catalog.page != Page::SkinOnline {
+                    self.catalog.skin_online_return_page = self.catalog.page;
+                }
+                self.catalog.page = Page::SkinOnline;
+                self.catalog.scroll = 0.0;
+                self.catalog.editing = None;
+                crate::platform::hide();
+                self.refresh_wardrobe_account();
+                self.skin_online.open_initial();
+                self.sync_discord_presence();
+            }
+            Some(Action::CloseSkinOnline) => {
+                self.catalog.editing = None;
+                crate::platform::hide();
+                self.catalog.page = self.catalog.skin_online_return_page;
+                self.catalog.scroll = 0.0;
+                self.anim.trigger_page_transition();
+                self.sync_discord_presence();
+            }
+            Some(Action::SkinOnlineTab(capes)) => {
+                let tab = if capes {
+                    super::skin_online::Tab::Capes
+                } else {
+                    super::skin_online::Tab::Skins
+                };
+                self.skin_online.set_tab(tab, &self.catalog.skin_online_query);
+                if capes && (self.wardrobe.camera.yaw < 70.0 || self.wardrobe.camera.yaw > 290.0) {
+                    self.wardrobe.camera.yaw = 155.0;
+                    self.wardrobe.camera.pitch = -6.0;
+                    self.wardrobe.preview();
+                } else if !capes && self.wardrobe.camera.yaw >= 90.0 && self.wardrobe.camera.yaw <= 270.0 {
+                    self.wardrobe.camera.yaw = 335.0;
+                    self.wardrobe.camera.pitch = -8.0;
+                    self.wardrobe.preview();
+                }
+            }
+            Some(Action::SkinOnlineSkinCategory(cat)) => {
+                self.skin_online.skin_cat = cat;
+                self.skin_online.page = 1;
+                self.skin_online.scroll = 0.0;
+                self.skin_online.fetch_current(self.catalog.skin_online_query.clone());
+            }
+            Some(Action::SkinOnlineCapeFilter(filter)) => {
+                self.skin_online.cape_filter = filter;
+                self.skin_online.scroll = 0.0;
+            }
+            Some(Action::SkinOnlineCapeSource(source)) => {
+                self.skin_online.cape_source = source;
+                self.skin_online.scroll = 0.0;
+            }
+            Some(Action::SkinOnlineSearch) => {
+                self.catalog.editing = None;
+                crate::platform::hide();
+                self.skin_online.search(self.catalog.skin_online_query.clone());
+            }
+            Some(Action::SkinOnlineRefresh) => {
+                self.skin_online.fetch_current(self.catalog.skin_online_query.clone());
+            }
+            Some(Action::SkinOnlinePage(delta)) => {
+                self.skin_online.next_page(delta, &self.catalog.skin_online_query);
+            }
+            Some(Action::SkinOnlineEquip(index)) => {
+                let client_id = self.catalog.config.microsoft_client_id.clone();
+                self.skin_online.equip_item(index, &mut self.wardrobe, &client_id);
+            }
+            Some(Action::SkinOnlineToggleWavey) => {
+                self.wardrobe.toggle_wavey_capes();
+            }
+            Some(Action::SkinOnlineCycleFps) => {
+                self.wardrobe.cycle_cape_fps();
+            }
             Some(Action::MusicTab(playlists_tab)) => {
                 self.catalog.music_tab_playlists = playlists_tab;
                 self.catalog.scroll = 0.0;
@@ -12050,6 +12149,8 @@ impl Launcher {
                                 chooser.scroll = (chooser.scroll + delta).max(0.0);
                             } else if let Some(modal) = &mut self.catalog.project_modal {
                                 modal.scroll = (modal.scroll + delta).max(0.0);
+                            } else if self.catalog.page == Page::SkinOnline {
+                                self.skin_online.scroll = (self.skin_online.scroll + delta).max(0.0);
                             } else if self
                                 .list_view
                                 .is_some_and(|view| drag.origin_y() / density_f64 >= view[0] as f64)

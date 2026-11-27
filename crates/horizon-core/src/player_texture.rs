@@ -1,8 +1,60 @@
 //! Player texture layout normalization, shared by the engine and launcher previews.
-/// A cape in a 64x64 skin slot: the 64x32 picture (or the older 22x17,
-/// which has the same layout) in its top half. Vanilla draws a cape of any
-/// size; a larger one is scaled down to 64x32 here.
-pub fn process_cape(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+/// Maximum number of vertical frames accepted from an animated cape sprite sheet.
+pub const MAX_CAPE_FRAMES: usize = 64;
+
+/// Whether `(width, height)` is a valid static or vertical-strip animated cape texture.
+/// Supports vanilla `64x32`, legacy `22x17`, HD `2:1` static (`128x64`, `256x128`, `512x256`,
+/// `1024x512`), and vertical animated sprite sheets whose frame height is `width / 2`
+/// (`width >= 32`, `width % 2 == 0`, `height = (width / 2) * N`, `2 <= N <= MAX_CAPE_FRAMES`),
+/// plus `22x(17*N)`.
+pub fn is_valid_cape_dimensions(width: u32, height: u32) -> bool {
+    if width == 0 || height == 0 || width > 1024 {
+        return false;
+    }
+    if (width == 64 && height == 32) || (width == 22 && height == 17) {
+        return true;
+    }
+    if width == 22 && height > 17 && height % 17 == 0 && (height / 17) as usize <= MAX_CAPE_FRAMES {
+        return true;
+    }
+    if width >= 32 && width % 2 == 0 {
+        let frame_h = width / 2;
+        if height == frame_h
+            || (height > frame_h
+                && height % frame_h == 0
+                && (height / frame_h) as usize <= MAX_CAPE_FRAMES)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Number of frames and per-frame height `(frame_h, frame_count)` for a cape image.
+pub fn cape_frame_layout(width: u32, height: u32) -> Option<(u32, usize)> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    if width == 22 && height % 17 == 0 {
+        let count = (height / 17) as usize;
+        if (1..=MAX_CAPE_FRAMES).contains(&count) {
+            return Some((17, count));
+        }
+    }
+    if width >= 32 && width % 2 == 0 {
+        let frame_h = width / 2;
+        if height >= frame_h && height % frame_h == 0 {
+            let count = (height / frame_h) as usize;
+            if (1..=MAX_CAPE_FRAMES).contains(&count) {
+                return Some((frame_h, count));
+            }
+        }
+    }
+    Some((height, 1))
+}
+
+/// Normalizes a single cape frame `(width, height)` into the top half of a 64x64 skin slot.
+fn normalize_cape_frame(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
     let (w, h) = (width as usize, height as usize);
     if w == 0 || h == 0 || rgba.len() < w * h * 4 {
         return None;
@@ -17,6 +69,41 @@ pub fn process_cape(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
         }
     }
     Some(img)
+}
+
+/// Splits a static or vertical-strip animated cape texture into normalized 64x64-slot frames.
+pub fn process_cape_frames(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<Vec<u8>>> {
+    let (w, h) = (width as usize, height as usize);
+    if w == 0 || h == 0 || rgba.len() < w * h * 4 {
+        return None;
+    }
+    let (frame_h, count) = cape_frame_layout(width, height)?;
+    let frame_bytes = w * frame_h as usize * 4;
+    let mut frames = Vec::with_capacity(count);
+    for idx in 0..count {
+        let start = idx * frame_bytes;
+        let end = start + frame_bytes;
+        if end > rgba.len() {
+            break;
+        }
+        if let Some(frame) = normalize_cape_frame(width, frame_h, &rgba[start..end]) {
+            frames.push(frame);
+        }
+    }
+    if frames.is_empty() {
+        None
+    } else {
+        Some(frames)
+    }
+}
+
+/// A cape in a 64x64 skin slot: the 64x32 picture (or the older 22x17,
+/// which has the same layout) in its top half. Vanilla draws a cape of any
+/// size; a larger one is scaled down to 64x32 here. For vertical animated
+/// cape strips, returns frame 0.
+pub fn process_cape(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+    let (frame_h, _) = cape_frame_layout(width, height)?;
+    normalize_cape_frame(width, frame_h, rgba)
 }
 
 /// `SkinTextureDownloader.processLegacySkin` on RGBA pixels: 64x32 skins

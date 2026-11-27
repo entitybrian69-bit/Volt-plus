@@ -4,7 +4,9 @@
 //! one) and `SkinTextureDownloader.processLegacySkin`.
 
 pub mod appearance;
-pub use horizon_core::player_texture::{process_cape, process_legacy_skin};
+pub use horizon_core::player_texture::{
+    is_valid_cape_dimensions, process_cape, process_cape_frames, process_legacy_skin,
+};
 
 /// `Property.hasSignature` and the services key check, as authlib's
 /// `SignatureState`.

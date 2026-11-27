@@ -552,6 +552,12 @@ pub(super) struct Remote {
     tab_players: HashMap<u128, horizon_client::tab_list::TabPlayer>,
     /// Each listed profile's unpacked `textures` property.
     skin_textures: HashMap<u128, horizon_client::skins::Textures>,
+    /// Synced custom appearances (`horizon:appearance`), keyed by player UUID.
+    synced_appearances: HashMap<u128, horizon_client::skins::appearance::NetAppearance>,
+    /// Last uploaded animated cape frame index per atlas cape location.
+    cape_anim_frame: HashMap<String, usize>,
+    /// Start timestamp for animated cape frame timing.
+    cape_anim_origin: std::time::Instant,
     /// Active skin and cape from the services profile when the server sent none.
     own_profile: OwnProfile,
     /// The skin texture each profile's players show, once its download is ready.
@@ -1040,6 +1046,9 @@ impl Game<'_> {
             players: HashMap::new(),
             tab_players: HashMap::new(),
             skin_textures: HashMap::new(),
+            synced_appearances: HashMap::new(),
+            cape_anim_frame: HashMap::new(),
+            cape_anim_origin: std::time::Instant::now(),
             own_profile: OwnProfile::Idle,
             skins: HashMap::new(),
             listed: Default::default(),
@@ -1851,6 +1860,9 @@ impl Game<'_> {
             players: HashMap::new(),
             tab_players: HashMap::new(),
             skin_textures: HashMap::new(),
+            synced_appearances: HashMap::new(),
+            cape_anim_frame: HashMap::new(),
+            cape_anim_origin: std::time::Instant::now(),
             own_profile: OwnProfile::Idle,
             skins: HashMap::new(),
             listed: Default::default(),
@@ -3248,6 +3260,15 @@ impl Game<'_> {
             C::CustomPayload(p) if p.channel == horizon_protocol::mod_net::CHANNEL => {
                 self.remote_native_net(&p.data);
             }
+            C::CustomPayload(p)
+                if p.channel == horizon_client::skins::appearance::APPEARANCE_CHANNEL =>
+            {
+                if let Some(net) = horizon_client::skins::appearance::decode_net_payload(&p.data)
+                    && let Some(r) = self.remote.as_mut()
+                {
+                    r.synced_appearances.insert(net.uuid, net);
+                }
+            }
             // PingDebugMonitor.onPongReceived.
             C::PongResponse(p) => {
                 let delay = self.debug_millis() - p.time;
@@ -3295,6 +3316,29 @@ impl Game<'_> {
                     r.sent_info = info.clone();
                 }
                 self.send(S::ClientInformation(info));
+                if let Some(appearance) = horizon_client::skins::appearance::current()
+                    && (appearance.skin_png.is_some()
+                        || appearance.cape_png.is_some()
+                        || appearance.hide_cape)
+                {
+                    let slim = appearance.skin.as_ref().is_some_and(|(_, s)| *s);
+                    if let Some(payload) = horizon_client::skins::appearance::encode_net_payload(
+                        0,
+                        slim,
+                        appearance.hide_cape,
+                        appearance.cape_fps,
+                        appearance.skin_png.as_deref(),
+                        appearance.cape_png.as_deref(),
+                    ) {
+                        self.send(S::CustomPayload(
+                            horizon_protocol::packets::configuration::CustomPayload {
+                                channel: horizon_client::skins::appearance::APPEARANCE_CHANNEL
+                                    .into(),
+                                data: payload,
+                            },
+                        ));
+                    }
+                }
                 self.remote_chat_login();
             }
             C::Respawn(p) => {
@@ -5290,6 +5334,83 @@ impl Game<'_> {
                 resolved.push((uuid, skin));
             }
         }
+        // Apply multiplayer-synced custom appearances (`horizon:appearance`) for remote players
+        // (and offline accounts on Horizon servers).
+        let synced_list: Vec<(
+            u128,
+            Option<(Vec<u8>, bool)>,
+            Vec<Vec<u8>>,
+            u8,
+            bool,
+        )> = self
+            .remote
+            .as_ref()
+            .map(|r| {
+                r.synced_appearances
+                    .iter()
+                    .map(|(&uuid, net)| {
+                        (
+                            uuid,
+                            net.skin.clone(),
+                            net.cape_frames.clone(),
+                            net.cape_fps,
+                            net.hide_cape,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let elapsed_ms = self
+            .remote
+            .as_ref()
+            .map_or(0, |r| r.cape_anim_origin.elapsed().as_millis() as u64);
+        for (uuid, net_skin, net_cape_frames, net_fps, net_hide_cape) in synced_list {
+            if uuid == local && horizon_client::skins::appearance::current().is_some() {
+                continue;
+            }
+            if let Some((rgba, is_slim)) = net_skin {
+                let loc = format!("horizon/net_skin/{uuid:032x}");
+                if !self.skin_slots.contains(&loc) || !self.gui.atlas.sprites.contains_key(&loc) {
+                    self.store_skin(loc.clone(), rgba);
+                }
+                resolved.retain(|(u, _)| *u != uuid);
+                resolved.push((uuid, loc));
+                slim.remove(&uuid);
+                if is_slim {
+                    slim.insert(uuid);
+                }
+            }
+            if net_hide_cape {
+                capes.remove(&uuid);
+            } else if !net_cape_frames.is_empty() {
+                let loc = format!("capes/net/{uuid:032x}");
+                let frame_idx = if net_cape_frames.len() > 1 {
+                    ((elapsed_ms * u64::from(net_fps.max(1))) / 1000) as usize
+                        % net_cape_frames.len()
+                } else {
+                    0
+                };
+                let frame_rgba = &net_cape_frames[frame_idx];
+                if !self.skin_slots.contains(&loc) || !self.gui.atlas.sprites.contains_key(&loc) {
+                    self.store_skin(loc.clone(), frame_rgba.clone());
+                    if let Some(r) = self.remote.as_mut() {
+                        r.cape_anim_frame.insert(loc.clone(), frame_idx);
+                    }
+                } else if net_cape_frames.len() > 1 {
+                    let prev_idx = self
+                        .remote
+                        .as_ref()
+                        .and_then(|r| r.cape_anim_frame.get(&loc).copied());
+                    if prev_idx != Some(frame_idx) {
+                        self.patch_skin_in_place(&loc, frame_rgba);
+                        if let Some(r) = self.remote.as_mut() {
+                            r.cape_anim_frame.insert(loc.clone(), frame_idx);
+                        }
+                    }
+                }
+                capes.insert(uuid, loc);
+            }
+        }
         // A frontend's local override changes this viewer only, never the
         // server's profile properties or the account's cloud appearance.
         if let Some(appearance) = horizon_client::skins::appearance::current() {
@@ -5307,6 +5428,33 @@ impl Game<'_> {
             }
             if appearance.hide_cape {
                 capes.remove(&local);
+            } else if !appearance.cape_frames.is_empty() {
+                const LOCAL: &str = "capes/local";
+                let frame_idx = if appearance.cape_frames.len() > 1 {
+                    ((elapsed_ms * u64::from(appearance.cape_fps.max(1))) / 1000) as usize
+                        % appearance.cape_frames.len()
+                } else {
+                    0
+                };
+                let frame_rgba = &appearance.cape_frames[frame_idx];
+                if !self.skin_slots.contains(LOCAL) || !self.gui.atlas.sprites.contains_key(LOCAL) {
+                    self.store_skin(LOCAL.into(), frame_rgba.clone());
+                    if let Some(r) = self.remote.as_mut() {
+                        r.cape_anim_frame.insert(LOCAL.into(), frame_idx);
+                    }
+                } else if appearance.cape_frames.len() > 1 {
+                    let prev_idx = self
+                        .remote
+                        .as_ref()
+                        .and_then(|r| r.cape_anim_frame.get(LOCAL).copied());
+                    if prev_idx != Some(frame_idx) {
+                        self.patch_skin_in_place(LOCAL, frame_rgba);
+                        if let Some(r) = self.remote.as_mut() {
+                            r.cape_anim_frame.insert(LOCAL.into(), frame_idx);
+                        }
+                    }
+                }
+                capes.insert(local, LOCAL.into());
             } else if let Some(rgba) = &appearance.cape {
                 const LOCAL: &str = "capes/local";
                 if !self.skin_slots.contains(LOCAL) || !self.gui.atlas.sprites.contains_key(LOCAL) {
@@ -5495,6 +5643,20 @@ impl Game<'_> {
             rect.v1 = (rect.v0 + rect.v1) / 2.0;
         }
         self.gui.atlas.sprites.insert(location, rect);
+    }
+    /// Updates an already-allocated atlas skin/cape slot in-place (used for animated capes).
+    fn patch_skin_in_place(&mut self, location: &str, rgba: &[u8]) {
+        let Some(rect) = self.gui.atlas.sprites.get(location).copied() else {
+            return;
+        };
+        let (w, h) = (self.gui.atlas.width as f32, self.gui.atlas.height as f32);
+        self.map_patches.push(horizon_client::font::Patch {
+            x: (rect.u0 * w).round() as u32,
+            y: (rect.v0 * h).round() as u32,
+            width: 64,
+            height: 64,
+            rgba: rgba.to_vec(),
+        });
     }
     /// Whether a downloaded skin or cape is in the atlas to draw, marking it
     /// drawn; if not (new, or its slot taken), its image is queued for upload
