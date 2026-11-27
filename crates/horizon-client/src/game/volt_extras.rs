@@ -1,13 +1,16 @@
-//! Built-in Volt+ Extras mods (all 52 mods), off by default and controlled
+//! Built-in Volt+ Extras mods (all 84 mods), off by default and controlled
 //! from the `Volt+ Extras` tab in the Control Hub.
 use super::{Dim, Game, Screen};
 use horizon_client::{
     brewing,
     chat::ChatSource,
     chunk::block_entity::BlockEntity,
+    crafting::{Cooking, Recipe},
     extras::{
-        AppleSkinConfig, Corner, CrosshairStyle, ShieldColorPreset, ShieldDisplayMode, UkuAnchor,
-        UkuDurability, UkuSide, UkuStyle, VoltQuickAction,
+        AppleSkinConfig, Corner, CrosshairStyle, ShieldColorPreset,
+        ShieldDisplayMode, TimelapsePathMode, UkuAnchor, UkuDurability, UkuSide, UkuStyle,
+        VOLT_MOD_COUNT, VOLT_MODS, VoltKeybindMode, VoltQuickAction, set_volt_mod_enabled,
+        volt_mod_enabled,
     },
     gizmos::Gizmos,
     hud::{HudAtlas, HudBatch, rgba},
@@ -16,6 +19,7 @@ use horizon_client::{
     text::Text,
 };
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::keyboard::KeyCode;
 
@@ -38,7 +42,7 @@ pub(super) struct DamagePopup {
     pub created_tick: u64,
 }
 
-/// Runtime state for all 52 built-in Volt+ Extras mods.
+/// Runtime state for all 84 built-in Volt+ Extras mods.
 #[derive(Default)]
 pub(super) struct VoltRuntimeState {
     pub freecam_active: bool,
@@ -55,6 +59,7 @@ pub(super) struct VoltRuntimeState {
     pub damage_popups: Vec<DamagePopup>,
 
     pub hit_marker_until_tick: u64,
+    pub crit_ring_until_tick: u64,
     pub combo_count: u32,
     pub last_hit_target: Option<u32>,
     pub last_hit_tick: u64,
@@ -73,34 +78,78 @@ pub(super) struct VoltRuntimeState {
     pub last_anti_afk_tick: u64,
     pub auto_eating_slot: Option<usize>,
     pub status_toast: Option<(String, u64)>,
+
+    // New mod runtime state (52..=83)
+    pub last_biome: String,
+    pub biome_banner: Option<(String, u64)>,
+    pub last_biome_banner_tick: u64,
+
+    pub xp_last_total: Option<i32>,
+    pub xp_gained_session: i32,
+    pub xp_session_start: Option<Instant>,
+
+    pub session_started: Option<Instant>,
+    pub session_blocks_mined: u32,
+    pub session_blocks_placed: u32,
+    pub session_mob_kills: u32,
+    pub session_damage_dealt: f32,
+
+    pub ruler_a: Option<[i32; 3]>,
+    pub ruler_b: Option<[i32; 3]>,
+    pub death_history: VecDeque<(String, [i32; 3], Dim)>,
+
+    pub drop_confirm_pending: Option<(String, Instant)>,
+    pub last_held_slot: usize,
+    pub last_held_item: Option<String>,
+    pub last_durability_warn_tick: u64,
+    pub mention_banner: Option<(String, u64)>,
+
+    pub camera_roll_deg: f32,
+
+    // JEI Recipe / Item Lookup state
+    pub jei_open: bool,
+    pub jei_search: String,
+    pub jei_page: usize,
+    pub jei_selected_item: Option<String>,
+    pub jei_recipe_idx: usize,
+    pub jei_search_focused: bool,
+
+    // Cinematic Time Lapse state
+    pub timelapse_countdown_until: Option<Instant>,
+    pub timelapse_active: bool,
+    pub timelapse_started: Option<Instant>,
+    pub timelapse_anchor: [f64; 3],
+    pub timelapse_base_yaw: f32,
+    pub timelapse_base_pitch: f32,
 }
 
-/// 9x9 diagonal drumstick perimeter pixels matching vanilla `food_empty` / `food_full`.
+/// 9x9 diagonal drumstick perimeter pixels matching vanilla `food_empty` / `food_full`
+/// (meat bulb at top-left `(0..5, 0..5)` and bone pointing bottom-right `(6..8, 6..8)`).
 const DRUMSTICK_OUTLINE_PIXELS: [(i32, i32); 24] = [
+    (2, 0),
+    (3, 0),
     (4, 0),
-    (5, 0),
-    (6, 0),
-    (3, 1),
-    (7, 1),
-    (3, 2),
-    (8, 2),
-    (3, 3),
-    (8, 3),
-    (2, 4),
-    (8, 4),
+    (1, 1),
+    (5, 1),
+    (0, 2),
+    (5, 2),
+    (0, 3),
+    (5, 3),
+    (0, 4),
+    (6, 4),
+    (1, 5),
     (2, 5),
     (6, 5),
-    (7, 5),
-    (1, 6),
+    (3, 6),
     (4, 6),
-    (5, 6),
-    (0, 7),
-    (2, 7),
-    (3, 7),
-    (0, 8),
-    (1, 8),
-    (1, 7),
-    (2, 6),
+    (6, 6),
+    (7, 6),
+    (5, 7),
+    (6, 7),
+    (7, 7),
+    (8, 7),
+    (7, 8),
+    (8, 8),
 ];
 
 impl Game<'_> {
@@ -248,6 +297,19 @@ impl Game<'_> {
         } else if cfg.show_saturation_overlay {
             Self::draw_saturation_outlines(batch, atlas, x_right, y_food, inputs.saturation, 255);
         }
+
+        if cfg.show_appleskin_hud_numbers && inputs.saturation > 0.05 {
+            let txt = format!("S:{:.1}", inputs.saturation);
+            let tw = HudBatch::text_width(atlas, &txt);
+            batch.text(
+                atlas,
+                &txt,
+                x_right as f32 - tw,
+                y_food as f32 - 10.0,
+                rgba(255, 224, 72, 240),
+                true,
+            );
+        }
     }
 
     fn draw_saturation_outlines(
@@ -271,7 +333,7 @@ impl Game<'_> {
             let y = y_food as f32;
             let is_half = rem < 1.5;
             for &(px, py) in &DRUMSTICK_OUTLINE_PIXELS {
-                if is_half && px < 5 {
+                if is_half && px < 4 {
                     continue;
                 }
                 let col = if px + py <= 7 { light_gold } else { warm_gold };
@@ -349,7 +411,7 @@ impl Game<'_> {
                 rgba(255, 214, 64, 255),
             );
             for &(px, py) in &DRUMSTICK_OUTLINE_PIXELS {
-                if is_half && px < 5 {
+                if is_half && px < 4 {
                     continue;
                 }
                 let col = if px + py <= 7 { light_gold } else { warm_gold };
@@ -854,12 +916,54 @@ impl Game<'_> {
     }
 
     // =========================================================================
-    // 6. Core Tick & Combat / World / Utility Events for All 52 Mods
+    // 6. Core Tick & Combat / World / Utility Events for All 84 Mods
     // =========================================================================
 
     pub(super) fn volt_push_toast(&mut self, msg: impl Into<String>) {
         self.extras.volt.status_toast = Some((msg.into(), self.ticks + 60));
     }
+
+    pub(super) fn volt_effective_hide_gui(&self) -> bool {
+        self.ui.hide_gui
+            || (self.settings.extras.volt.photo_mode.enabled
+                && self.settings.extras.volt.photo_mode.active)
+            || (self.extras.volt.timelapse_active
+                && self.settings.extras.volt.cinematic_timelapse.hide_hud)
+    }
+
+    #[cfg(target_os = "android")]
+    pub(super) fn sync_volt_touch_ui(&mut self) {
+        self.pad
+            .touch_ui
+            .sync_volt_extras(&self.settings.extras.volt);
+        let rows: Vec<horizon_client::touch_ui::VoltWaypointUiRow> = self
+            .extras
+            .volt
+            .waypoints
+            .iter()
+            .map(|w| horizon_client::touch_ui::VoltWaypointUiRow {
+                name: w.name.clone(),
+                coords: [
+                    w.pos[0].round() as i32,
+                    w.pos[1].round() as i32,
+                    w.pos[2].round() as i32,
+                ],
+                dim_label: match w.dim {
+                    Dim::Overworld => "Overworld",
+                    Dim::Nether => "Nether",
+                    Dim::End => "The End",
+                },
+                is_death: w.is_death,
+                color: w.color,
+            })
+            .collect();
+        if self.pad.touch_ui.volt_waypoints_snapshot != rows {
+            self.pad.touch_ui.volt_waypoints_snapshot = rows;
+        }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    pub(super) fn sync_volt_touch_ui(&mut self) {}
 
     pub(super) fn volt_on_attack_hit(&mut self, target_id: Option<u32>, target_pos: Option<[f64; 3]>) {
         if let (Some(p), Some(tp)) = (self.player.as_ref(), target_pos) {
@@ -867,8 +971,14 @@ impl Game<'_> {
             let dy = tp[1] - (p.position.y + 1.62);
             let dz = tp[2] - p.position.z;
             self.extras.volt.last_reach_blocks = Some((dx * dx + dy * dy + dz * dz).sqrt() as f32);
+            if p.fall_distance > 0.0 && !p.ground.on_ground && !p.sprinting {
+                self.extras.volt.crit_ring_until_tick = self.ticks + 12;
+            }
         }
         self.extras.volt.hit_marker_until_tick = self.ticks + 6;
+        if self.settings.extras.volt.session_stats.enabled {
+            self.extras.volt.session_damage_dealt += 2.0;
+        }
         if let Some(tid) = target_id {
             if self.extras.volt.last_hit_target == Some(tid)
                 && self.ticks.saturating_sub(self.extras.volt.last_hit_tick) <= 50
@@ -946,10 +1056,20 @@ impl Game<'_> {
     pub(super) fn volt_on_player_death(&mut self) {
         let ar = &self.settings.extras.volt.auto_respawn;
         let wp = &self.settings.extras.volt.waypoints;
+        let dh = &self.settings.extras.volt.death_history;
         if let Some(p) = self.player.as_ref() {
             let x = p.position.x.round() as i32;
             let y = p.position.y.round() as i32;
             let z = p.position.z.round() as i32;
+            let label = format!("Death ({x},{y},{z})");
+            self.extras
+                .volt
+                .death_history
+                .push_front((label.clone(), [x, y, z], self.dim));
+            let max_d = usize::from(dh.max_saved.clamp(3, 12));
+            while self.extras.volt.death_history.len() > max_d {
+                self.extras.volt.death_history.pop_back();
+            }
             if ar.enabled && ar.log_death_coords {
                 self.ui.chat.add(
                     &self.gui.atlas,
@@ -960,8 +1080,11 @@ impl Game<'_> {
                     self.screen == Screen::Chat,
                 );
             }
-            if (ar.enabled && ar.save_death_waypoint) || (wp.enabled && wp.auto_death_waypoint) {
-                self.volt_add_waypoint(&format!("Death ({x},{y},{z})"), true);
+            if (ar.enabled && ar.save_death_waypoint)
+                || (wp.enabled && wp.auto_death_waypoint)
+                || (dh.enabled && dh.auto_add_waypoint)
+            {
+                self.volt_add_waypoint(&label, true);
             }
         }
     }
@@ -1117,12 +1240,428 @@ impl Game<'_> {
                 self.settings.extras.volt.chunk_hitboxes.entity_hitboxes =
                     !self.settings.extras.volt.chunk_hitboxes.entity_hitboxes;
             }
+            VoltQuickAction::OpenModKeyPicker { .. } | VoltQuickAction::OpenWaypointManager => {}
+            VoltQuickAction::DeleteWaypoint(idx) => {
+                if idx < self.extras.volt.waypoints.len() {
+                    let removed = self.extras.volt.waypoints.remove(idx);
+                    self.volt_push_toast(format!("Deleted {}", removed.name));
+                }
+            }
+            VoltQuickAction::ClearAllWaypoints => {
+                self.extras.volt.waypoints.clear();
+                self.volt_push_toast("Cleared all waypoints");
+            }
+            VoltQuickAction::CycleWaypointColor(idx) => {
+                if let Some(wp) = self.extras.volt.waypoints.get_mut(idx) {
+                    const PALETTE: [u32; 6] = [
+                        0xFF69_E1FF,
+                        0xFFFF_5252,
+                        0xFF5A_F28E,
+                        0xFFFF_D248,
+                        0xFFD6_84FF,
+                        0xFFFF_FFFF,
+                    ];
+                    let pos = PALETTE.iter().position(|&c| c == wp.color).unwrap_or(0);
+                    wp.color = PALETTE[(pos + 1) % PALETTE.len()];
+                }
+            }
+            VoltQuickAction::ShareWaypoint(idx) => {
+                if let Some(wp) = self.extras.volt.waypoints.get(idx) {
+                    let msg = format!(
+                        "[Waypoint] {}: {:.0}, {:.0}, {:.0} ({:?})",
+                        wp.name, wp.pos[0], wp.pos[1], wp.pos[2], wp.dim
+                    );
+                    self.ui.chat.add(
+                        &self.gui.atlas,
+                        Text::literal(msg),
+                        None,
+                        ChatSource::Client,
+                        self.ticks,
+                        self.screen == Screen::Chat,
+                    );
+                    self.volt_push_toast("Waypoint shared to chat");
+                }
+            }
+            VoltQuickAction::ResetSessionStats => {
+                self.extras.volt.session_started = Some(Instant::now());
+                self.extras.volt.session_blocks_mined = 0;
+                self.extras.volt.session_blocks_placed = 0;
+                self.extras.volt.session_mob_kills = 0;
+                self.extras.volt.session_damage_dealt = 0.0;
+                self.volt_push_toast("Session stats reset");
+            }
+            VoltQuickAction::SetRulerPointA => {
+                if let Some(hit) = self.debug_block_hit().or_else(|| {
+                    self.player.as_ref().map(|p| {
+                        [
+                            p.position.x.floor() as i32,
+                            p.position.y.floor() as i32,
+                            p.position.z.floor() as i32,
+                        ]
+                    })
+                }) {
+                    self.settings.extras.volt.litematica_grid.enabled = true;
+                    self.extras.volt.ruler_a = Some(hit);
+                    self.volt_push_toast(format!("Ruler A: {},{},{}", hit[0], hit[1], hit[2]));
+                }
+            }
+            VoltQuickAction::SetRulerPointB => {
+                if let Some(hit) = self.debug_block_hit().or_else(|| {
+                    self.player.as_ref().map(|p| {
+                        [
+                            p.position.x.floor() as i32,
+                            p.position.y.floor() as i32,
+                            p.position.z.floor() as i32,
+                        ]
+                    })
+                }) {
+                    self.settings.extras.volt.litematica_grid.enabled = true;
+                    self.extras.volt.ruler_b = Some(hit);
+                    self.volt_push_toast(format!("Ruler B: {},{},{}", hit[0], hit[1], hit[2]));
+                }
+            }
+            VoltQuickAction::ClearRuler => {
+                self.extras.volt.ruler_a = None;
+                self.extras.volt.ruler_b = None;
+                self.volt_push_toast("Ruler cleared");
+            }
+            VoltQuickAction::SetHomeWaypoint => {
+                self.settings.extras.volt.waypoints.enabled = true;
+                self.volt_add_waypoint("Home", false);
+                self.volt_push_toast("Home waypoint saved");
+            }
+            VoltQuickAction::TogglePhotoMode => {
+                self.settings.extras.volt.photo_mode.enabled = true;
+                let next = !self.settings.extras.volt.photo_mode.active;
+                self.settings.extras.volt.photo_mode.active = next;
+                self.volt_push_toast(if next {
+                    "Photo Mode ON"
+                } else {
+                    "Photo Mode OFF"
+                });
+            }
+            VoltQuickAction::ToggleJei => {
+                self.settings.extras.volt.jei.enabled = true;
+                self.extras.volt.jei_open = !self.extras.volt.jei_open;
+                if self.extras.volt.jei_open {
+                    if self.screen == Screen::Playing {
+                        self.capture(false);
+                    }
+                    self.volt_push_toast("JEI Browser ON");
+                } else {
+                    self.extras.volt.jei_search_focused = false;
+                    if self.screen == Screen::Playing {
+                        self.capture(true);
+                    }
+                    self.volt_push_toast("JEI Browser OFF");
+                }
+            }
+            VoltQuickAction::StartStopTimelapse => {
+                self.volt_toggle_timelapse();
+            }
+        }
+        #[cfg(target_os = "android")]
+        self.sync_volt_touch_ui();
+    }
+
+    pub(super) fn volt_toggle_timelapse(&mut self) {
+        let active_or_counting = self.extras.volt.timelapse_active
+            || self.extras.volt.timelapse_countdown_until.is_some();
+        if active_or_counting {
+            self.extras.volt.timelapse_active = false;
+            self.extras.volt.timelapse_countdown_until = None;
+            self.extras.volt.timelapse_started = None;
+            self.volt_push_toast("Time Lapse stopped");
+            return;
+        }
+        self.settings.extras.volt.cinematic_timelapse.enabled = true;
+        if let Some(p) = self.player.as_ref() {
+            self.extras.volt.timelapse_anchor =
+                [p.position.x, p.position.y + 4.0, p.position.z];
+            self.extras.volt.timelapse_base_yaw = self.yaw;
+            self.extras.volt.timelapse_base_pitch = self.pitch.clamp(-35.0, 45.0);
+        }
+        let delay = self
+            .settings
+            .extras
+            .volt
+            .cinematic_timelapse
+            .start_delay_secs;
+        if delay == 0 {
+            self.extras.volt.timelapse_active = true;
+            self.extras.volt.timelapse_started = Some(Instant::now());
+            self.volt_push_toast("Time Lapse STARTED");
+        } else {
+            self.extras.volt.timelapse_countdown_until =
+                Some(Instant::now() + Duration::from_secs(u64::from(delay)));
+            self.volt_push_toast(format!("Time Lapse in {delay}s..."));
+        }
+    }
+
+    pub(super) fn volt_trigger_mod_use(&mut self, mod_id: u8) {
+        match mod_id {
+            4 => self.volt_extras_quick_action(VoltQuickAction::ToggleFreelook),
+            7 => self.volt_extras_quick_action(VoltQuickAction::QuickOffhandTotem),
+            10 => self.volt_extras_quick_action(VoltQuickAction::AddWaypointHere),
+            16 => self.volt_extras_quick_action(VoltQuickAction::ToggleZoom),
+            19 => self.volt_extras_quick_action(VoltQuickAction::CopyCoords),
+            21 => self.volt_extras_quick_action(VoltQuickAction::ToggleChunkBorders),
+            25 => self.volt_extras_quick_action(VoltQuickAction::ToggleFreecam),
+            28 => self.volt_extras_quick_action(VoltQuickAction::RunChatMacro(1)),
+            31 => self.volt_extras_quick_action(VoltQuickAction::SwapChestElytra),
+            33 => self.volt_extras_quick_action(VoltQuickAction::ToggleAutoSprint),
+            36 => self.volt_extras_quick_action(VoltQuickAction::ToggleFullbright),
+            68 => self.volt_extras_quick_action(VoltQuickAction::ResetSessionStats),
+            74 => {
+                if self.extras.volt.ruler_a.is_none() {
+                    self.volt_extras_quick_action(VoltQuickAction::SetRulerPointA);
+                } else if self.extras.volt.ruler_b.is_none() {
+                    self.volt_extras_quick_action(VoltQuickAction::SetRulerPointB);
+                } else {
+                    self.volt_extras_quick_action(VoltQuickAction::ClearRuler);
+                }
+            }
+            75 => self.volt_extras_quick_action(VoltQuickAction::SetHomeWaypoint),
+            81 => self.volt_extras_quick_action(VoltQuickAction::TogglePhotoMode),
+            82 => self.volt_extras_quick_action(VoltQuickAction::ToggleJei),
+            83 => self.volt_extras_quick_action(VoltQuickAction::StartStopTimelapse),
+            other => {
+                let cur = volt_mod_enabled(&self.settings.extras.volt, other);
+                set_volt_mod_enabled(&mut self.settings.extras.volt, other, !cur);
+                let title = VOLT_MODS
+                    .get(usize::from(other))
+                    .map_or("Mod", |m| m.title);
+                self.volt_push_toast(format!("{title} {}", if !cur { "ON" } else { "OFF" }));
+            }
+        }
+    }
+
+    fn volt_set_hold_mod_active(&mut self, mod_id: u8, active: bool) {
+        set_volt_mod_enabled(&mut self.settings.extras.volt, mod_id, active);
+        match mod_id {
+            4 => self.settings.extras.volt.freelook.active = active,
+            16 => self.settings.extras.volt.zoom.active = active,
+            25 => self.settings.extras.volt.freecam.active = active,
+            81 => self.settings.extras.volt.photo_mode.active = active,
+            82 => self.extras.volt.jei_open = active,
+            _ => {}
+        }
+    }
+
+    pub(super) fn volt_handle_key_token(
+        &mut self,
+        token: &str,
+        pressed: bool,
+        repeat: bool,
+    ) -> bool {
+        if token.is_empty() {
+            return false;
+        }
+        let mut matched = false;
+        for id in 0..VOLT_MOD_COUNT {
+            let bind = self.settings.extras.volt.binds.0[id].clone();
+            if bind.toggle_key == token {
+                matched = true;
+                match bind.mode {
+                    VoltKeybindMode::Tap => {
+                        if pressed && !repeat {
+                            let cur = volt_mod_enabled(&self.settings.extras.volt, id as u8);
+                            set_volt_mod_enabled(&mut self.settings.extras.volt, id as u8, !cur);
+                            if id == 4 {
+                                self.settings.extras.volt.freelook.active = !cur;
+                            } else if id == 16 {
+                                self.settings.extras.volt.zoom.active = !cur;
+                            } else if id == 25 {
+                                self.settings.extras.volt.freecam.active = !cur;
+                            } else if id == 36 {
+                                self.apply_ui_settings();
+                            } else if id == 81 {
+                                self.settings.extras.volt.photo_mode.active = !cur;
+                            } else if id == 82 {
+                                self.extras.volt.jei_open = !cur;
+                            }
+                            let title = VOLT_MODS[id].title;
+                            self.volt_push_toast(format!(
+                                "{title} {}",
+                                if !cur { "ON" } else { "OFF" }
+                            ));
+                            self.settings.extras.save(std::path::Path::new("."));
+                        }
+                    }
+                    VoltKeybindMode::Hold => {
+                        if !repeat {
+                            self.volt_set_hold_mod_active(id as u8, pressed);
+                            if id == 36 {
+                                self.apply_ui_settings();
+                            }
+                        }
+                    }
+                }
+            }
+            if bind.use_key == token {
+                matched = true;
+                match bind.mode {
+                    VoltKeybindMode::Tap => {
+                        if pressed && !repeat {
+                            self.volt_trigger_mod_use(id as u8);
+                            self.settings.extras.save(std::path::Path::new("."));
+                        }
+                    }
+                    VoltKeybindMode::Hold => {
+                        if !repeat {
+                            if id == 83 {
+                                if pressed && !self.extras.volt.timelapse_active {
+                                    self.volt_toggle_timelapse();
+                                } else if !pressed && self.extras.volt.timelapse_active {
+                                    self.volt_toggle_timelapse();
+                                }
+                            } else {
+                                self.volt_set_hold_mod_active(id as u8, pressed);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        #[cfg(target_os = "android")]
+        if matched {
+            self.sync_volt_touch_ui();
+        }
+        matched
+    }
+
+    pub(super) fn volt_drop_guard_allows(&mut self, stack: &ItemStack) -> bool {
+        let cfg = &self.settings.extras.volt.drop_guard;
+        if !cfg.enabled {
+            return true;
+        }
+        let s = &*stack.item;
+        let is_rare = s.contains("netherite")
+            || s.contains("diamond")
+            || s.contains("elytra")
+            || s.contains("totem")
+            || s.contains("mace")
+            || s.contains("trident")
+            || s.contains("beacon")
+            || s.contains("shulker_box")
+            || stack
+                .extra
+                .as_ref()
+                .is_some_and(|e| !e.enchantments.is_empty());
+        if !cfg.require_double_tap_all && !is_rare {
+            return true;
+        }
+        let win = Duration::from_millis(u64::from(cfg.confirm_window_ms.clamp(400, 3000)));
+        if let Some((ref prev_item, at)) = self.extras.volt.drop_confirm_pending
+            && prev_item == s
+            && at.elapsed() <= win
+        {
+            self.extras.volt.drop_confirm_pending = None;
+            return true;
+        }
+        self.extras.volt.drop_confirm_pending = Some((s.to_owned(), Instant::now()));
+        let short = s.strip_prefix("minecraft:").unwrap_or(s);
+        self.volt_push_toast(format!("Press Drop again to drop {short}"));
+        false
+    }
+
+    pub(super) fn volt_timelapse_camera(&self) -> Option<(glam::DVec3, f32, f32)> {
+        if !self.extras.volt.timelapse_active {
+            return None;
+        }
+        let cfg = &self.settings.extras.volt.cinematic_timelapse;
+        let t = self
+            .extras
+            .volt
+            .timelapse_started
+            .map_or(0.0, |s| s.elapsed().as_secs_f64());
+        let spd = f64::from(cfg.speed_pct.clamp(10, 400)) / 100.0;
+        let a = self.extras.volt.timelapse_anchor;
+        match cfg.path_mode {
+            TimelapsePathMode::Orbit => {
+                let rad = 10.0;
+                let ang = t * 0.28 * spd + f64::from(self.extras.volt.timelapse_base_yaw.to_radians());
+                let cam = glam::DVec3::new(
+                    a[0] + rad * ang.cos(),
+                    a[1] + 3.0 + (t * 0.4 * spd).sin() * 1.2,
+                    a[2] + rad * ang.sin(),
+                );
+                let dx = a[0] - cam.x;
+                let dy = (a[1] - 1.5) - cam.y;
+                let dz = a[2] - cam.z;
+                let yaw = (-(dx)).atan2(dz).to_degrees() as f32;
+                let horiz = (dx * dx + dz * dz).sqrt().max(0.001);
+                let pitch = (-(dy / horiz).atan()).to_degrees() as f32;
+                Some((cam, yaw, pitch.clamp(-85.0, 85.0)))
+            }
+            TimelapsePathMode::DollyForward => {
+                let sy = f64::from(self.extras.volt.timelapse_base_yaw.to_radians()).sin();
+                let cy = f64::from(self.extras.volt.timelapse_base_yaw.to_radians()).cos();
+                let dist = t * 1.6 * spd;
+                let cam = glam::DVec3::new(a[0] - sy * dist, a[1] + 1.0, a[2] + cy * dist);
+                Some((
+                    cam,
+                    self.extras.volt.timelapse_base_yaw,
+                    self.extras.volt.timelapse_base_pitch,
+                ))
+            }
+            TimelapsePathMode::RiseSweep => {
+                let ang = t * 0.14 * spd + f64::from(self.extras.volt.timelapse_base_yaw.to_radians());
+                let cam = glam::DVec3::new(
+                    a[0] + 5.0 * ang.cos(),
+                    a[1] + t * 1.1 * spd,
+                    a[2] + 5.0 * ang.sin(),
+                );
+                let dx = a[0] - cam.x;
+                let dy = (a[1] - 1.5) - cam.y;
+                let dz = a[2] - cam.z;
+                let yaw = (-(dx)).atan2(dz).to_degrees() as f32;
+                let horiz = (dx * dx + dz * dz).sqrt().max(0.001);
+                let pitch = (-(dy / horiz).atan()).to_degrees() as f32;
+                Some((cam, yaw, pitch.clamp(-85.0, 85.0)))
+            }
         }
     }
 
     pub(super) fn volt_extras_tick(&mut self) {
         self.audio.muffle = self.settings.extras.volt.sound_muffler.clone();
         self.ui.chat.volt_chat = self.settings.extras.volt.chat_tweaks.clone();
+        self.ui.chat.volt_mention = self.settings.extras.volt.chat_mention.clone();
+        self.ui.chat.volt_player_name = self.own_profile_name();
+
+        // Hit Color sync
+        let hc = &self.settings.extras.volt.hit_color;
+        if hc.enabled {
+            crate::mobs::render::set_volt_hit_color(
+                Some(hc.color.rgb()),
+                hc.alpha_pct,
+                hc.include_armor,
+            );
+        } else {
+            crate::mobs::render::set_volt_hit_color(None, 0, false);
+        }
+
+        // Chat Mention Ping chime
+        if self.ui.chat.volt_mention_triggered {
+            self.ui.chat.volt_mention_triggered = false;
+            if self.settings.extras.volt.chat_mention.play_sound {
+                self.play_at_feet("minecraft:block.note_block.bell");
+            }
+            if self.settings.extras.volt.chat_mention.show_banner {
+                let preview: String = self.ui.chat.volt_mention_last.chars().take(42).collect();
+                self.extras.volt.mention_banner = Some((preview, self.ticks + 80));
+            }
+        }
+
+        // Cinematic Time Lapse countdown -> active transition
+        if let Some(until) = self.extras.volt.timelapse_countdown_until {
+            if Instant::now() >= until {
+                self.extras.volt.timelapse_countdown_until = None;
+                self.extras.volt.timelapse_active = true;
+                self.extras.volt.timelapse_started = Some(Instant::now());
+                self.volt_push_toast("Time Lapse STARTED");
+            }
+        }
 
         if let Some(p) = self.player.as_ref() {
             let cur = [p.position.x, p.position.y, p.position.z];
@@ -1131,8 +1670,151 @@ impl Game<'_> {
                 let dz = cur[2] - prev[2];
                 let inst = (dx * dx + dz * dz).sqrt() * 20.0;
                 self.extras.volt.speed_bps = self.extras.volt.speed_bps * 0.75 + inst * 0.25;
+
+                // CameraOverhaul strafe roll inertia
+                if self.settings.extras.volt.cameraoverhaul.enabled {
+                    let sy = self.yaw.to_radians().sin() as f32;
+                    let cy = self.yaw.to_radians().cos() as f32;
+                    let right_speed = (dx as f32 * (-cy) + dz as f32 * (-sy)) * 20.0;
+                    let strength = f32::from(self.settings.extras.volt.cameraoverhaul.roll_strength_pct) / 100.0;
+                    let target_roll = (right_speed * 0.55 * strength).clamp(-6.5, 6.5);
+                    self.extras.volt.camera_roll_deg =
+                        self.extras.volt.camera_roll_deg * 0.8 + target_roll * 0.2;
+                } else {
+                    self.extras.volt.camera_roll_deg = 0.0;
+                }
             }
             self.extras.volt.last_player_pos = Some(cur);
+
+            // Biome Title Banner
+            if self.settings.extras.volt.biome_title.enabled && self.ticks.is_multiple_of(5) {
+                let bx = p.position.x.floor() as i32;
+                let by = p.position.y.floor() as i32;
+                let bz = p.position.z.floor() as i32;
+                if let Some(chunk) = self.world.chunks.get(&(bx >> 4, bz >> 4)) {
+                    let biome = self.res.biomes().get(chunk.biome(bx, by, bz));
+                    let raw = biome.name.strip_prefix("minecraft:").unwrap_or(&biome.name);
+                    if !raw.is_empty() && raw != self.extras.volt.last_biome {
+                        let first_seen = self.extras.volt.last_biome.is_empty();
+                        self.extras.volt.last_biome = raw.to_owned();
+                        let cd = u64::from(self.settings.extras.volt.biome_title.cooldown_secs) * 20;
+                        if !first_seen
+                            && self.ticks.saturating_sub(self.extras.volt.last_biome_banner_tick) >= cd
+                        {
+                            let pretty = raw
+                                .split('_')
+                                .map(|w| {
+                                    let mut ch = w.chars();
+                                    match ch.next() {
+                                        Some(c) => format!("{}{}", c.to_ascii_uppercase(), ch.as_str()),
+                                        None => String::new(),
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            let dur = u64::from(self.settings.extras.volt.biome_title.duration_secs.max(1)) * 20;
+                            self.extras.volt.biome_banner = Some((pretty, self.ticks + dur));
+                            self.extras.volt.last_biome_banner_tick = self.ticks;
+                        }
+                    }
+                }
+            }
+
+            // Offhand Torch auto-swap in dark caves
+            if self.settings.extras.volt.offhand_torch.enabled
+                && self.settings.extras.volt.offhand_torch.auto_swap
+                && self.ticks.is_multiple_of(10)
+                && self.offhand.is_none()
+            {
+                let l = self.world.light(
+                    p.position.x.floor() as i32,
+                    p.position.y.floor() as i32,
+                    p.position.z.floor() as i32,
+                );
+                let eff_light = (l & 15).max(l >> 4);
+                if eff_light <= self.settings.extras.volt.offhand_torch.light_threshold {
+                    if let Some(idx) = self.inventory.iter().position(|slot| {
+                        slot.as_ref().is_some_and(|s| {
+                            matches!(
+                                &*s.item,
+                                "minecraft:torch" | "minecraft:soul_torch" | "minecraft:lantern"
+                            )
+                        })
+                    }) {
+                        self.offhand = self.inventory[idx].take();
+                        self.volt_push_toast("Torch -> Offhand");
+                    }
+                }
+            }
+        }
+
+        // XP Tracker session tracking
+        if self.settings.extras.volt.xp_tracker.enabled {
+            let total_xp = self.experience.level as i32 * 100
+                + (self.experience.progress * 100.0).round() as i32;
+            if self.extras.volt.xp_session_start.is_none() {
+                self.extras.volt.xp_session_start = Some(Instant::now());
+            }
+            if let Some(prev) = self.extras.volt.xp_last_total {
+                if total_xp > prev {
+                    self.extras.volt.xp_gained_session += total_xp - prev;
+                }
+            }
+            self.extras.volt.xp_last_total = Some(total_xp);
+        }
+
+        // Session Stats timer init
+        if self.settings.extras.volt.session_stats.enabled
+            && self.extras.volt.session_started.is_none()
+        {
+            self.extras.volt.session_started = Some(Instant::now());
+        }
+
+        // Hotbar Restock (auto-refill consumed held stack from main inventory)
+        if self.settings.extras.volt.hotbar_restock.enabled {
+            let cur_item = self.stack_in(self.selected).map(|s| s.item.to_string());
+            if self.extras.volt.last_held_slot == self.selected
+                && cur_item.is_none()
+                && let Some(prev_name) = self.extras.volt.last_held_item.clone()
+                && let Some(src_idx) = (9..self.inventory.len().min(36)).find(|&i| {
+                    self.inventory[i]
+                        .as_ref()
+                        .is_some_and(|s| &*s.item == prev_name)
+                })
+            {
+                self.inventory[self.selected] = self.inventory[src_idx].take();
+                if self.settings.extras.volt.hotbar_restock.show_toast {
+                    let short = prev_name.strip_prefix("minecraft:").unwrap_or(&prev_name);
+                    self.volt_push_toast(format!("Restocked {short}"));
+                }
+            }
+            self.extras.volt.last_held_slot = self.selected;
+            self.extras.volt.last_held_item = cur_item;
+        }
+
+        // Low Durability Sound Alert
+        if self.settings.extras.volt.durability_warn.enabled
+            && self.settings.extras.volt.durability_warn.play_sound
+            && self.ticks.saturating_sub(self.extras.volt.last_durability_warn_tick) >= 120
+        {
+            let thresh = self.settings.extras.volt.durability_warn.threshold_pct;
+            let low_any = self
+                .armor
+                .iter()
+                .flatten()
+                .chain(self.stack_in(self.selected))
+                .any(|s| {
+                    let max_d = self.items().get(&s.item).map_or(0, |i| i.max_damage);
+                    if max_d == 0 {
+                        return false;
+                    }
+                    let rem = max_d.saturating_sub(s.damage);
+                    ((rem as f32 / max_d as f32) * 100.0).round() as u8 <= thresh
+                });
+            if low_any {
+                self.extras.volt.last_durability_warn_tick = self.ticks;
+                self.play_at_feet("minecraft:block.note_block.pling");
+            }
         }
 
         // Auto-Sprint
@@ -1311,21 +1993,26 @@ impl Game<'_> {
             }
         }
 
-        // Damage popups tracking from mob HP deltas
-        if self.settings.extras.volt.health_indicators.enabled
-            && self.settings.extras.volt.health_indicators.show_damage_popups
-        {
+        // Damage popups tracking from mob HP deltas + Mob Kills
+        let track_popups = self.settings.extras.volt.health_indicators.enabled
+            && self.settings.extras.volt.health_indicators.show_damage_popups;
+        let track_kills = self.settings.extras.volt.session_stats.enabled;
+        if track_popups || track_kills {
             for m in &self.mobs {
-                if let Some(&prev) = self.extras.volt.mob_last_hp.get(&m.id)
-                    && prev - m.health > 0.25
-                {
-                    let dmg = prev - m.health;
-                    self.extras.volt.damage_popups.push(DamagePopup {
-                        pos: [m.position.x, m.position.y + m.kind.height + 0.35, m.position.z],
-                        amount: dmg,
-                        crit: dmg >= 6.0,
-                        created_tick: self.ticks,
-                    });
+                if let Some(&prev) = self.extras.volt.mob_last_hp.get(&m.id) {
+                    if track_popups && prev - m.health > 0.25 {
+                        let dmg = prev - m.health;
+                        self.extras.volt.damage_popups.push(DamagePopup {
+                            pos: [m.position.x, m.position.y + m.kind.height + 0.35, m.position.z],
+                            amount: dmg,
+                            crit: dmg >= 6.0,
+                            created_tick: self.ticks,
+                        });
+                    }
+                    if track_kills && prev > 0.0 && m.health <= 0.0 {
+                        self.extras.volt.session_mob_kills =
+                            self.extras.volt.session_mob_kills.saturating_add(1);
+                    }
                 }
                 self.extras.volt.mob_last_hp.insert(m.id, m.health);
             }
@@ -1615,6 +2302,111 @@ impl Game<'_> {
                 );
             }
         }
+
+        // 7) Reach Box (#59)
+        if v.reach_box.enabled
+            && let Some((mob_idx, dist)) = self.mob_hit()
+            && let Some(m) = self.mobs.get(mob_idx)
+        {
+            let max_reach = if self.creative { 5.0 } else { 3.0 };
+            let in_reach = dist <= max_reach;
+            let col = if in_reach { 0xFF52_F28A } else { 0xFFFF_5252 };
+            let hw = f64::from(m.kind.width) * 0.5;
+            let hh = f64::from(m.kind.height);
+            g.cuboid_on_top(
+                [m.position.x - hw, m.position.y, m.position.z - hw],
+                [m.position.x + hw, m.position.y + hh, m.position.z + hw],
+                col,
+                2.2,
+            );
+        }
+
+        // 8) Player Highlight (#73)
+        if v.player_highlight.enabled {
+            let [cr, cg, cb] = v.player_highlight.color.rgb();
+            let col = 0xFF00_0000 | (u32::from(cr) << 16) | (u32::from(cg) << 8) | u32::from(cb);
+            for (id, _) in self.remote_player_names() {
+                if let Some(m) = self.mobs.iter().find(|m| m.id == id) {
+                    if v.player_highlight.hide_invis && m.invisible {
+                        continue;
+                    }
+                    let hw = f64::from(m.kind.width) * 0.52;
+                    let hh = f64::from(m.kind.height);
+                    g.cuboid_on_top(
+                        [m.position.x - hw, m.position.y, m.position.z - hw],
+                        [m.position.x + hw, m.position.y + hh, m.position.z + hw],
+                        col,
+                        2.5,
+                    );
+                }
+            }
+            if let Some(host) = &self.lan {
+                for (_, m) in &host.models {
+                    if v.player_highlight.hide_invis && m.invisible {
+                        continue;
+                    }
+                    let hw = f64::from(m.kind.width) * 0.52;
+                    let hh = f64::from(m.kind.height);
+                    g.cuboid_on_top(
+                        [m.position.x - hw, m.position.y, m.position.z - hw],
+                        [m.position.x + hw, m.position.y + hh, m.position.z + hw],
+                        col,
+                        2.5,
+                    );
+                }
+            }
+        }
+
+        // 9) Litematica Ruler / Placement Grid (#74)
+        if v.litematica_grid.enabled {
+            if let (Some(a), Some(b)) = (self.extras.volt.ruler_a, self.extras.volt.ruler_b) {
+                let min_x = f64::from(a[0].min(b[0]));
+                let min_y = f64::from(a[1].min(b[1]));
+                let min_z = f64::from(a[2].min(b[2]));
+                let max_x = f64::from(a[0].max(b[0]) + 1);
+                let max_y = f64::from(a[1].max(b[1]) + 1);
+                let max_z = f64::from(a[2].max(b[2]) + 1);
+                g.cuboid_on_top([min_x, min_y, min_z], [max_x, max_y, max_z], 0xFF55_FFFF, 2.2);
+                if v.litematica_grid.show_grid {
+                    let mut gx = min_x;
+                    while gx <= max_x + 0.01 {
+                        g.line([gx, min_y, min_z], [gx, min_y, max_z], 0x8855_FFFF, 1.0);
+                        gx += 1.0;
+                    }
+                    let mut gz = min_z;
+                    while gz <= max_z + 0.01 {
+                        g.line([min_x, min_y, gz], [max_x, min_y, gz], 0x8855_FFFF, 1.0);
+                        gz += 1.0;
+                    }
+                }
+            } else if v.litematica_grid.show_grid {
+                let bx = px.floor();
+                let by = py.floor() + 0.02;
+                let bz = pz.floor();
+                for d in -4..=4 {
+                    let df = f64::from(d);
+                    g.line([bx - 4.0, by, bz + df], [bx + 4.0, by, bz + df], 0x5555_FFFF, 1.0);
+                    g.line([bx + df, by, bz - 4.0], [bx + df, by, bz + 4.0], 0x5555_FFFF, 1.0);
+                }
+            }
+        }
+
+        // 10) Chunk Pillars (#76)
+        if v.chunk_pillars.enabled {
+            let cx0 = px.floor() as i32 >> 4;
+            let cz0 = pz.floor() as i32 >> 4;
+            let rad = i32::from(v.chunk_pillars.radius_chunks.clamp(1, 3));
+            let y0 = (py - 16.0).max(-64.0);
+            let y1 = py + 48.0;
+            for dcx in -rad..=rad {
+                for dcz in -rad..=rad {
+                    let x = f64::from((cx0 + dcx) * 16);
+                    let z = f64::from((cz0 + dcz) * 16);
+                    let col = if dcx == 0 && dcz == 0 { 0xFF55_FF88 } else { 0xAAFF_DD55 };
+                    g.line([x, y0, z], [x, y1, z], col, 1.8);
+                }
+            }
+        }
     }
 
     fn draw_ring_gizmo(g: &mut Gizmos, center: [f64; 3], radius: f64, color: u32) {
@@ -1679,6 +2471,7 @@ impl Game<'_> {
         self.draw_shield_status_hud(batch, wi, hi);
         self.draw_uku_armor_hud(batch, wi, hi);
         self.draw_uku_potion_hud(batch, wi, hi);
+        self.draw_standalone_potion_hud(batch, wi, hi);
         self.draw_totem_and_low_hp_hud(batch, wi, hi);
         self.draw_elytra_and_mace_hud(batch, wi, hi);
         self.draw_combat_hud(batch, wi, hi);
@@ -1686,6 +2479,7 @@ impl Game<'_> {
         self.draw_crosshair_extras_hud(batch, wi, hi);
 
         self.draw_info_hud(batch, wi, hi);
+        self.draw_new_hud_panels(batch, wi, hi);
         self.draw_compass_hud(batch, wi, hi);
         self.draw_look_and_portal_hud(batch, wi, hi);
         self.draw_quick_strip_and_toast(batch, wi, hi);
@@ -2099,6 +2893,93 @@ impl Game<'_> {
             }
         }
 
+        // Crit Ring (#56)
+        let cr_cfg = &self.settings.extras.volt.crit_ring;
+        if cr_cfg.enabled && self.ticks <= self.extras.volt.crit_ring_until_tick {
+            let rem = self.extras.volt.crit_ring_until_tick.saturating_sub(self.ticks) as f32;
+            let rad = 7.0 + (12.0 - rem) * 0.65;
+            let [r, g, b] = cr_cfg.color.rgb();
+            let alpha = ((rem / 12.0) * 240.0).round() as u8;
+            let col = rgba(r, g, b, alpha);
+            batch.fill(atlas, cx - rad, cy - rad, rad * 2.0, 1.5, col);
+            batch.fill(atlas, cx - rad, cy + rad - 1.5, rad * 2.0, 1.5, col);
+            batch.fill(atlas, cx - rad, cy - rad, 1.5, rad * 2.0, col);
+            batch.fill(atlas, cx + rad - 1.5, cy - rad, 1.5, rad * 2.0, col);
+            if cr_cfg.show_label {
+                let msg = "CRIT!";
+                let tw = HudBatch::text_width(atlas, msg);
+                batch.text(atlas, msg, cx - tw * 0.5, cy - rad - 10.0, col, true);
+            }
+        }
+
+        // Bow Charge Arc / Bar (#57)
+        let bc_cfg = &self.settings.extras.volt.bow_charge;
+        if bc_cfg.enabled
+            && let Some(held) = self.stack_in(self.selected)
+        {
+            let is_bow = &*held.item == "minecraft:bow";
+            let is_xbow = &*held.item == "minecraft:crossbow";
+            let is_trident = &*held.item == "minecraft:trident";
+            if is_bow || is_xbow || is_trident {
+                let frac = if is_xbow && held.data().is_some_and(|d| !d.charged.is_empty()) {
+                    1.0
+                } else if let Some((slot, ticks_used)) = self.using
+                    && slot == self.selected
+                {
+                    let max_t = if is_xbow {
+                        25.0
+                    } else if is_trident {
+                        10.0
+                    } else {
+                        20.0
+                    };
+                    (ticks_used as f32 / max_t).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                if frac > 0.01 {
+                    let bw = 36.0;
+                    let bx = cx - bw * 0.5;
+                    let by = cy + 14.0;
+                    let col = if frac >= 0.99 {
+                        rgba(96, 245, 130, 245)
+                    } else if frac >= 0.5 {
+                        rgba(255, 218, 72, 245)
+                    } else {
+                        rgba(220, 226, 238, 225)
+                    };
+                    batch.fill(atlas, bx, by, bw, 3.0, rgba(16, 18, 24, 195));
+                    batch.fill(atlas, bx, by, bw * frac, 3.0, col);
+                    if bc_cfg.show_percent {
+                        let txt = if frac >= 0.99 {
+                            "MAX".to_owned()
+                        } else {
+                            format!("{:.0}%", frac * 100.0)
+                        };
+                        let tw = HudBatch::text_width(atlas, &txt);
+                        batch.text(atlas, &txt, cx - tw * 0.5, by + 5.0, col, true);
+                    }
+                }
+            }
+        }
+
+        // Reach distance readout (#59)
+        if self.settings.extras.volt.reach_box.enabled
+            && self.settings.extras.volt.reach_box.show_distance
+            && let Some((_, dist)) = self.mob_hit()
+        {
+            let max_reach = if self.creative { 5.0 } else { 3.0 };
+            let txt = format!("{dist:.2}m");
+            let tw = HudBatch::text_width(atlas, &txt);
+            let col = if dist <= max_reach {
+                rgba(96, 245, 138, 255)
+            } else {
+                rgba(255, 92, 92, 255)
+            };
+            batch.fill(atlas, cx - tw * 0.5 - 3.0, cy + 25.0, tw + 6.0, 11.0, rgba(16, 18, 24, 175));
+            batch.text(atlas, &txt, cx - tw * 0.5, cy + 26.5, col, true);
+        }
+
         let scfg = &self.settings.extras.volt.auto_sprint;
         if scfg.enabled && scfg.show_indicator {
             let sprinting = self.player.as_ref().is_some_and(|p| p.sprinting);
@@ -2426,37 +3307,175 @@ impl Game<'_> {
         let atlas = &self.gui.atlas;
         let lcfg = &self.settings.extras.volt.look_inspector;
         if lcfg.enabled {
-            let mut label: Option<String> = None;
+            enum LookCard<'a> {
+                Block {
+                    name: String,
+                    raw_id: String,
+                    pos: [i32; 3],
+                    mining_pct: Option<f32>,
+                },
+                Entity {
+                    name: String,
+                    hp: f32,
+                    max_hp: f32,
+                    cat: &'a str,
+                },
+            }
+            let mut card: Option<LookCard<'_>> = None;
             if lcfg.show_mob_health
-                && let Some(ent) = self.crosshair_entity_type()
+                && let Some((mob_idx, _)) = self.mob_hit()
+                && let Some(m) = self.mobs.get(mob_idx)
             {
-                label = Some(format!(
-                    "Entity: {}",
-                    ent.strip_prefix("minecraft:").unwrap_or(&ent)
-                ));
+                let disp = m
+                    .custom_name
+                    .clone()
+                    .unwrap_or_else(|| {
+                        m.kind
+                            .id
+                            .strip_prefix("minecraft:")
+                            .unwrap_or(&m.kind.id)
+                            .replace('_', " ")
+                    });
+                card = Some(LookCard::Entity {
+                    name: disp,
+                    hp: m.health.max(0.0),
+                    max_hp: m.kind.max_health.max(1.0),
+                    cat: &m.kind.category,
+                });
             } else if lcfg.show_blocks
                 && let Some(pos) = self.debug_block_hit()
             {
                 let id = self.world.block(pos[0], pos[1], pos[2]);
                 if let Some(st) = self.pack.assets.registry.state(id) {
-                    let short = st.name.strip_prefix("minecraft:").unwrap_or(&st.name);
-                    label = Some(if lcfg.compact {
-                        short.to_owned()
-                    } else {
-                        format!("{short} [{},{},{}]", pos[0], pos[1], pos[2])
+                    let short = st
+                        .name
+                        .strip_prefix("minecraft:")
+                        .unwrap_or(&st.name)
+                        .replace('_', " ");
+                    let mining_pct = self
+                        .mining
+                        .as_ref()
+                        .filter(|mn| mn.pos == pos && mn.progress > 0.0)
+                        .map(|mn| mn.progress.clamp(0.0, 1.0));
+                    card = Some(LookCard::Block {
+                        name: short,
+                        raw_id: st.name.clone(),
+                        pos,
+                        mining_pct,
                     });
                 }
             }
-            if let Some(txt) = label {
-                let tw = HudBatch::text_width(atlas, &txt);
-                let x = (wi as f32 - tw) * 0.5;
+            if let Some(c) = card {
                 let y = if self.settings.extras.volt.compass_hud.enabled {
-                    24.0
+                    28.0
                 } else {
-                    8.0
+                    14.0
                 };
-                batch.fill(atlas, x - 5.0, y - 2.0, tw + 10.0, 13.0, rgba(16, 18, 24, 185));
-                batch.text(atlas, &txt, x, y, rgba(236, 242, 255, 255), true);
+                match c {
+                    LookCard::Block {
+                        name,
+                        raw_id,
+                        pos,
+                        mining_pct,
+                    } => {
+                        let sub = if !lcfg.compact && lcfg.show_coords {
+                            format!("[{}, {}, {}]", pos[0], pos[1], pos[2])
+                        } else if !lcfg.compact && lcfg.show_tool_tier {
+                            raw_id
+                                .strip_prefix("minecraft:")
+                                .unwrap_or(&raw_id)
+                                .to_owned()
+                        } else {
+                            String::new()
+                        };
+                        let title_w = HudBatch::text_width(atlas, &name);
+                        let sub_w = if sub.is_empty() {
+                            0.0
+                        } else {
+                            HudBatch::text_width(atlas, &sub)
+                        };
+                        let has_icon = self.items().get(raw_id.as_str()).is_some();
+                        let icon_space = if lcfg.show_block_icon { 26.0 } else { 8.0 };
+                        let cw = (icon_space + title_w.max(sub_w) + 12.0).clamp(112.0, 240.0);
+                        let ch = if sub.is_empty() && mining_pct.is_none() {
+                            26.0
+                        } else if mining_pct.is_some() {
+                            36.0
+                        } else {
+                            32.0
+                        };
+                        let cx = (wi as f32 - cw) * 0.5;
+                        batch.fill(atlas, cx, y, cw, ch, rgba(16, 18, 24, 205));
+                        batch.fill(atlas, cx, y, cw, 1.5, rgba(96, 185, 255, 220));
+                        batch.fill(atlas, cx, y + ch - 1.0, cw, 1.0, rgba(70, 82, 105, 190));
+                        if lcfg.show_block_icon {
+                            let ix = cx + 5.0;
+                            let iy = y + (ch - 18.0) * 0.5;
+                            batch.fill(atlas, ix - 1.0, iy - 1.0, 18.0, 18.0, rgba(255, 255, 255, 24));
+                            if has_icon {
+                                let stack = ItemStack {
+                                    item: Arc::from(raw_id.as_str()),
+                                    count: 1,
+                                    damage: 0,
+                                    extra: None,
+                                };
+                                self.draw_item_model(batch, &stack, ix, iy);
+                            } else {
+                                batch.fill(atlas, ix + 2.0, iy + 2.0, 12.0, 12.0, rgba(105, 185, 255, 210));
+                            }
+                        }
+                        let tx = cx + icon_space;
+                        let ty = if sub.is_empty() { y + 9.0 } else { y + 5.0 };
+                        batch.text(atlas, &name, tx, ty, rgba(242, 246, 255, 255), true);
+                        if !sub.is_empty() {
+                            batch.text(atlas, &sub, tx, ty + 11.0, rgba(168, 182, 208, 255), true);
+                        }
+                        if let Some(pct) = mining_pct
+                            && lcfg.show_break_progress
+                        {
+                            batch.fill(atlas, cx + 4.0, y + ch - 5.0, cw - 8.0, 3.0, rgba(35, 38, 48, 220));
+                            batch.fill(
+                                atlas,
+                                cx + 4.0,
+                                y + ch - 5.0,
+                                (cw - 8.0) * pct,
+                                3.0,
+                                rgba(110, 232, 150, 245),
+                            );
+                        }
+                    }
+                    LookCard::Entity {
+                        name,
+                        hp,
+                        max_hp,
+                        cat,
+                    } => {
+                        let hp_txt = format!("{hp:.0}/{max_hp:.0} HP  •  {cat}");
+                        let tw = HudBatch::text_width(atlas, &name)
+                            .max(HudBatch::text_width(atlas, &hp_txt));
+                        let cw = (34.0 + tw + 12.0).clamp(132.0, 250.0);
+                        let ch = 34.0;
+                        let cx = (wi as f32 - cw) * 0.5;
+                        batch.fill(atlas, cx, y, cw, ch, rgba(18, 16, 24, 210));
+                        batch.fill(atlas, cx, y, cw, 1.5, rgba(255, 110, 110, 225));
+                        let ix = cx + 6.0;
+                        let iy = y + 7.0;
+                        batch.fill(atlas, ix, iy, 18.0, 18.0, rgba(255, 92, 92, 60));
+                        batch.text(atlas, "♥", ix + 5.0, iy + 5.0, rgba(255, 105, 105, 255), true);
+                        batch.text(atlas, &name, cx + 30.0, y + 5.0, rgba(248, 242, 245, 255), true);
+                        batch.text(atlas, &hp_txt, cx + 30.0, y + 15.0, rgba(220, 185, 195, 255), true);
+                        let ratio = (hp / max_hp).clamp(0.0, 1.0);
+                        let bar_col = if ratio > 0.5 {
+                            rgba(88, 232, 130, 245)
+                        } else if ratio > 0.25 {
+                            rgba(255, 208, 72, 245)
+                        } else {
+                            rgba(255, 82, 82, 245)
+                        };
+                        batch.fill(atlas, cx + 30.0, y + 26.0, cw - 36.0, 3.0, rgba(38, 34, 42, 220));
+                        batch.fill(atlas, cx + 30.0, y + 26.0, (cw - 36.0) * ratio, 3.0, bar_col);
+                    }
+                }
             }
         }
 
@@ -2495,5 +3514,666 @@ impl Game<'_> {
             batch.fill(atlas, x - 6.0, y - 2.0, tw + 12.0, 13.0, rgba(14, 16, 22, 210));
             batch.text(atlas, msg, x, y, rgba(255, 255, 255, 255), true);
         }
+
+        // Biome Title Banner (#63)
+        if self.settings.extras.volt.biome_title.enabled
+            && let Some((ref name, until)) = self.extras.volt.biome_banner
+            && self.ticks <= until
+        {
+            let tw = HudBatch::text_width(atlas, name);
+            let x = (wi as f32 - tw) * 0.5;
+            let y = hi as f32 * 0.22;
+            batch.fill(atlas, x - 12.0, y - 4.0, tw + 24.0, 18.0, rgba(14, 16, 22, 185));
+            batch.text(atlas, name, x, y + 1.0, rgba(245, 232, 175, 255), true);
+        }
+
+        // Chat Mention Banner (#78)
+        if self.settings.extras.volt.chat_mention.enabled
+            && let Some((ref msg, until)) = self.extras.volt.mention_banner
+            && self.ticks <= until
+        {
+            let txt = format!("★ Mention: {msg}");
+            let tw = HudBatch::text_width(atlas, &txt);
+            let x = (wi as f32 - tw) * 0.5;
+            let y = hi as f32 * 0.14;
+            batch.fill(atlas, x - 8.0, y - 3.0, tw + 16.0, 15.0, rgba(36, 26, 8, 215));
+            batch.text(atlas, &txt, x, y, rgba(255, 215, 72, 255), true);
+        }
+
+        // Cinematic Time Lapse Countdown / REC Badge (#83)
+        if let Some(until) = self.extras.volt.timelapse_countdown_until {
+            let secs = until
+                .saturating_duration_since(Instant::now())
+                .as_secs_f32()
+                .ceil() as u32;
+            let msg = format!("TIMELAPSE IN {}s", secs.max(1));
+            let tw = HudBatch::text_width(atlas, &msg);
+            let x = (wi as f32 - tw) * 0.5;
+            let y = hi as f32 * 0.34;
+            batch.fill(atlas, x - 12.0, y - 6.0, tw + 24.0, 22.0, rgba(18, 14, 24, 220));
+            batch.text(atlas, &msg, x, y + 1.0, rgba(255, 196, 76, 255), true);
+        } else if self.extras.volt.timelapse_active
+            && !self.settings.extras.volt.cinematic_timelapse.hide_hud
+        {
+            let elapsed = self
+                .extras
+                .volt
+                .timelapse_started
+                .map_or(0, |s| s.elapsed().as_secs());
+            let msg = format!("● REC TIMELAPSE {:02}:{:02}", elapsed / 60, elapsed % 60);
+            let tw = HudBatch::text_width(atlas, &msg);
+            batch.fill(atlas, 8.0, 8.0, tw + 12.0, 14.0, rgba(28, 12, 16, 200));
+            batch.text(atlas, &msg, 14.0, 11.0, rgba(255, 92, 92, 255), true);
+        }
+    }
+
+    fn draw_standalone_potion_hud(&self, batch: &mut HudBatch, wi: i32, hi: i32) {
+        let cfg = &self.settings.extras.volt.potion_hud;
+        if !cfg.enabled || self.potions.effects.list.is_empty() {
+            return;
+        }
+        let atlas = &self.gui.atlas;
+        for (i, eff) in self.potions.effects.list.iter().enumerate() {
+            let short = eff.id.strip_prefix("minecraft:").unwrap_or(eff.id).replace('_', " ");
+            let secs = (eff.duration.max(0) / 20) as u32;
+            let tstr = if eff.duration < 0 {
+                "∞".to_owned()
+            } else {
+                format!("{:02}:{:02}", secs / 60, secs % 60)
+            };
+            let txt = if cfg.compact {
+                format!("{short} {tstr}")
+            } else {
+                format!("{short} {} • {tstr}", eff.amplifier + 1)
+            };
+            let tw = HudBatch::text_width(atlas, &txt);
+            let (x, y) = Self::corner_xy(cfg.corner, wi, hi, tw + 10.0, 13.0, 44.0 + i as f32 * 14.0);
+            let flash = cfg.blink_low && eff.duration >= 0 && eff.duration < 200 && (self.ticks / 6).is_multiple_of(2);
+            let fg = if flash {
+                rgba(255, 108, 108, 255)
+            } else {
+                rgba(232, 238, 252, 255)
+            };
+            batch.fill(atlas, x, y, tw + 10.0, 13.0, rgba(16, 18, 26, 185));
+            batch.text(atlas, &txt, x + 5.0, y + 2.5, fg, true);
+        }
+    }
+
+    fn draw_new_hud_panels(&self, batch: &mut HudBatch, wi: i32, hi: i32) {
+        let atlas = &self.gui.atlas;
+
+        // 1) Cooldown HUD (#58)
+        let cd_cfg = &self.settings.extras.volt.cooldown_hud;
+        if cd_cfg.enabled {
+            let mut pills: Vec<(&str, f32)> = Vec::new();
+            if cd_cfg.show_pearl {
+                let p = self.cooldowns.percent("minecraft:ender_pearl", 0.0);
+                if p > 0.0 {
+                    pills.push(("Pearl", p));
+                }
+            }
+            if cd_cfg.show_wind_charge {
+                let p = self.cooldowns.percent("minecraft:wind_charge", 0.0);
+                if p > 0.0 {
+                    pills.push(("Wind", p));
+                }
+            }
+            let chorus = self.cooldowns.percent("minecraft:chorus_fruit", 0.0);
+            if chorus > 0.0 {
+                pills.push(("Chorus", chorus));
+            }
+            if self.shield_cooldown > 0 {
+                pills.push(("Shield", (self.shield_cooldown as f32 / 100.0).clamp(0.0, 1.0)));
+            }
+            for (i, (lbl, frac)) in pills.into_iter().enumerate() {
+                let txt = format!("{lbl} {:.0}%", frac * 100.0);
+                let tw = HudBatch::text_width(atlas, &txt);
+                let x = (wi / 2 - 91 - 36) as f32 - tw - 12.0;
+                let y = (hi - 46 - i as i32 * 14) as f32;
+                batch.fill(atlas, x, y, tw + 10.0, 12.0, rgba(16, 18, 26, 190));
+                batch.fill(atlas, x, y + 10.0, (tw + 10.0) * frac, 2.0, rgba(112, 206, 255, 240));
+                batch.text(atlas, &txt, x + 5.0, y + 1.5, rgba(235, 242, 255, 255), true);
+            }
+        }
+
+        // 2) Minimap Radar (#60)
+        let rd_cfg = &self.settings.extras.volt.minimap_radar;
+        if rd_cfg.enabled
+            && let Some(p) = self.player.as_ref()
+        {
+            let sz = 74.0;
+            let (rx, ry) = Self::corner_xy(rd_cfg.corner, wi, hi, sz, sz, 18.0);
+            let rcx = rx + sz * 0.5;
+            let rcy = ry + sz * 0.5;
+            batch.fill(atlas, rx, ry, sz, sz, rgba(14, 18, 24, 195));
+            batch.fill(atlas, rx, ry, sz, 1.0, rgba(110, 180, 240, 180));
+            batch.fill(atlas, rx, ry + sz - 1.0, sz, 1.0, rgba(110, 180, 240, 180));
+            batch.fill(atlas, rx, ry, 1.0, sz, rgba(110, 180, 240, 180));
+            batch.fill(atlas, rx + sz - 1.0, ry, 1.0, sz, rgba(110, 180, 240, 180));
+            let range = f64::from(rd_cfg.range.clamp(16, 128));
+            let yr = f64::from(self.yaw.to_radians());
+            let (sy, cy) = (yr.sin(), yr.cos());
+            let plot = |batch: &mut HudBatch, wx: f64, wz: f64, col: u32| {
+                let dx = wx - p.position.x;
+                let dz = wz - p.position.z;
+                let rx_rel = -dx * cy - dz * sy;
+                let rz_rel = -dx * sy + dz * cy;
+                let px = rcx + ((rx_rel / range) * f64::from(sz * 0.45)) as f32;
+                let py = rcy - ((rz_rel / range) * f64::from(sz * 0.45)) as f32;
+                if px >= rx + 2.0 && px <= rx + sz - 4.0 && py >= ry + 2.0 && py <= ry + sz - 4.0 {
+                    batch.fill(atlas, px - 1.5, py - 1.5, 3.0, 3.0, col);
+                }
+            };
+            for m in &self.mobs {
+                let is_hostile = m.kind.category == "monster";
+                if is_hostile && rd_cfg.show_hostiles {
+                    plot(batch, m.position.x, m.position.z, rgba(255, 86, 86, 255));
+                } else if !is_hostile && rd_cfg.show_passives {
+                    plot(batch, m.position.x, m.position.z, rgba(102, 235, 132, 255));
+                }
+            }
+            if rd_cfg.show_players {
+                for (id, _) in self.remote_player_names() {
+                    if let Some(m) = self.mobs.iter().find(|m| m.id == id) {
+                        plot(batch, m.position.x, m.position.z, rgba(96, 232, 255, 255));
+                    }
+                }
+            }
+            batch.fill(atlas, rcx - 2.0, rcy - 2.0, 4.0, 4.0, rgba(255, 255, 255, 255));
+        }
+
+        // 3) Durability Warning Banner (#62)
+        let dw_cfg = &self.settings.extras.volt.durability_warn;
+        if dw_cfg.enabled {
+            let mut worst: Option<(&str, u8)> = None;
+            for s in self.armor.iter().flatten().chain(self.stack_in(self.selected)) {
+                let max_d = self.items().get(&s.item).map_or(0, |i| i.max_damage);
+                if max_d == 0 {
+                    continue;
+                }
+                let rem = max_d.saturating_sub(s.damage);
+                let pct = ((rem as f32 / max_d as f32) * 100.0).round() as u8;
+                if pct <= dw_cfg.threshold_pct && worst.is_none_or(|(_, wp)| pct < wp) {
+                    let short = s.item.strip_prefix("minecraft:").unwrap_or(&s.item);
+                    worst = Some((short, pct));
+                }
+            }
+            if let Some((item, pct)) = worst {
+                let msg = format!("LOW DURABILITY: {item} ({pct}%)");
+                let tw = HudBatch::text_width(atlas, &msg);
+                let x = (wi as f32 - tw) * 0.5;
+                let y = (hi as f32) - 74.0;
+                batch.fill(atlas, x - 6.0, y - 2.0, tw + 12.0, 13.0, rgba(58, 16, 16, 215));
+                batch.text(atlas, &msg, x, y, rgba(255, 118, 118, 255), true);
+            }
+        }
+
+        // 4) XP Tracker (#64)
+        let xp_cfg = &self.settings.extras.volt.xp_tracker;
+        if xp_cfg.enabled {
+            let secs = self
+                .extras
+                .volt
+                .xp_session_start
+                .map_or(1.0, |s| s.elapsed().as_secs_f32().max(1.0));
+            let rate = (self.extras.volt.xp_gained_session as f32 / secs) * 60.0;
+            let mut txt = format!("Lvl {}", self.experience.level);
+            if xp_cfg.show_rate {
+                txt.push_str(&format!(" • +{:.0} XP/m", rate));
+            }
+            let tw = HudBatch::text_width(atlas, &txt);
+            let (x, y) = Self::corner_xy(xp_cfg.corner, wi, hi, tw + 10.0, 14.0, 46.0);
+            batch.fill(atlas, x, y, tw + 10.0, 14.0, rgba(16, 22, 16, 185));
+            batch.text(atlas, &txt, x + 5.0, y + 3.0, rgba(132, 255, 112, 255), true);
+        }
+
+        // 5) Mini Inventory HUD (#65)
+        let inv_cfg = &self.settings.extras.volt.inventory_hud;
+        if inv_cfg.enabled {
+            let pw = 9.0 * 18.0 + 4.0;
+            let ph = 3.0 * 18.0 + 4.0;
+            let (x0, y0) = Self::corner_xy(inv_cfg.corner, wi, hi, pw, ph, 16.0);
+            let bg_a = ((f32::from(inv_cfg.opacity_pct.clamp(15, 100)) / 100.0) * 215.0) as u8;
+            batch.fill(atlas, x0, y0, pw, ph, rgba(16, 18, 24, bg_a));
+            for slot in 9..36usize {
+                let col = (slot - 9) % 9;
+                let row = (slot - 9) / 9;
+                let sx = x0 + 2.0 + col as f32 * 18.0;
+                let sy = y0 + 2.0 + row as f32 * 18.0;
+                batch.fill(atlas, sx, sy, 16.0, 16.0, rgba(255, 255, 255, 16));
+                if let Some(stack) = self.inventory.get(slot).and_then(|o| o.as_ref()) {
+                    self.draw_item(batch, stack, sx, sy);
+                    if stack.count > 1 {
+                        batch.text(
+                            atlas,
+                            &format!("{}", stack.count),
+                            sx + 7.0,
+                            sy + 8.0,
+                            u32::MAX,
+                            true,
+                        );
+                    }
+                }
+            }
+        }
+
+        // 6) Moon Phase (#67)
+        let mp_cfg = &self.settings.extras.volt.moon_phase;
+        if mp_cfg.enabled {
+            let phase = (self.world.day_time.div_euclid(24000)).rem_euclid(8);
+            let (name, slime_pct) = match phase {
+                0 => ("Full Moon", 100),
+                1 => ("Waning Gibbous", 75),
+                2 => ("Last Quarter", 50),
+                3 => ("Waning Crescent", 25),
+                4 => ("New Moon", 0),
+                5 => ("Waxing Crescent", 25),
+                6 => ("First Quarter", 50),
+                _ => ("Waxing Gibbous", 75),
+            };
+            let txt = if mp_cfg.show_slime_chance {
+                format!("{name} • Slime {slime_pct}%")
+            } else {
+                name.to_owned()
+            };
+            let tw = HudBatch::text_width(atlas, &txt);
+            let (x, y) = Self::corner_xy(mp_cfg.corner, wi, hi, tw + 10.0, 13.0, 16.0);
+            batch.fill(atlas, x, y, tw + 10.0, 13.0, rgba(16, 18, 28, 185));
+            batch.text(atlas, &txt, x + 5.0, y + 2.5, rgba(205, 224, 255, 255), true);
+        }
+
+        // 7) Session Stats (#68)
+        let ss_cfg = &self.settings.extras.volt.session_stats;
+        if ss_cfg.enabled {
+            let secs = self
+                .extras
+                .volt
+                .session_started
+                .map_or(0, |s| s.elapsed().as_secs());
+            let mut parts = Vec::new();
+            parts.push(format!("{:02}:{:02}", secs / 60, secs % 60));
+            if ss_cfg.show_blocks {
+                parts.push(format!(
+                    "M:{} P:{}",
+                    self.extras.volt.session_blocks_mined,
+                    self.extras.volt.session_blocks_placed
+                ));
+            }
+            if ss_cfg.show_kills {
+                parts.push(format!("Kills:{}", self.extras.volt.session_mob_kills));
+            }
+            let txt = parts.join(" · ");
+            let tw = HudBatch::text_width(atlas, &txt);
+            let (x, y) = Self::corner_xy(ss_cfg.corner, wi, hi, tw + 10.0, 13.0, 62.0);
+            batch.fill(atlas, x, y, tw + 10.0, 13.0, rgba(16, 18, 24, 180));
+            batch.text(atlas, &txt, x + 5.0, y + 2.5, rgba(226, 234, 248, 255), true);
+        }
+
+        // 8) Litematica Ruler Distance HUD (#74)
+        if self.settings.extras.volt.litematica_grid.enabled
+            && let (Some(a), Some(b)) = (self.extras.volt.ruler_a, self.extras.volt.ruler_b)
+        {
+            let dx = (a[0] - b[0]).abs() + 1;
+            let dy = (a[1] - b[1]).abs() + 1;
+            let dz = (a[2] - b[2]).abs() + 1;
+            let vol = i64::from(dx) * i64::from(dy) * i64::from(dz);
+            let txt = format!("Ruler: {dx}×{dy}×{dz} ({vol} blocks)");
+            let tw = HudBatch::text_width(atlas, &txt);
+            let x = (wi as f32 - tw) * 0.5;
+            batch.fill(atlas, x - 6.0, 48.0, tw + 12.0, 13.0, rgba(16, 22, 28, 195));
+            batch.text(atlas, &txt, x, 50.5, rgba(105, 242, 255, 255), true);
+        }
+    }
+
+    // =========================================================================
+    // 9. JEI (Just Enough Items) Interactive Overlay + Recipe Browser (#82)
+    // =========================================================================
+
+    pub(super) fn volt_jei_visible(&self) -> bool {
+        let cfg = &self.settings.extras.volt.jei;
+        if !cfg.enabled {
+            return false;
+        }
+        self.extras.volt.jei_open
+            || (cfg.show_in_inventory && matches!(self.screen, Screen::Inventory | Screen::Creative))
+    }
+
+    fn jei_filtered_items(&self) -> Vec<String> {
+        let q = self.extras.volt.jei_search.trim().to_ascii_lowercase();
+        let items = self.items();
+        let src = if items.registry_order.is_empty() {
+            &items.order
+        } else {
+            &items.registry_order
+        };
+        src.iter()
+            .filter(|id| {
+                if q.is_empty() {
+                    return true;
+                }
+                id.to_ascii_lowercase().contains(&q)
+            })
+            .map(|id| id.to_string())
+            .collect()
+    }
+
+    fn jei_recipes_for(&self, item_id: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let recipes = self.recipes();
+        for (_rid, rec) in &recipes.crafting {
+            match rec {
+                Recipe::Shaped {
+                    width,
+                    height,
+                    cells,
+                    result,
+                } => {
+                    if result.item.as_deref() == Some(item_id) {
+                        let mut parts = Vec::new();
+                        for r in 0..*height {
+                            let mut row = Vec::new();
+                            for c in 0..*width {
+                                let cell = cells.get(r * width + c).and_then(|o| o.as_ref());
+                                let name = cell
+                                    .and_then(|ing| ing.1.first())
+                                    .map(|s| s.strip_prefix("minecraft:").unwrap_or(s))
+                                    .unwrap_or("_");
+                                row.push(name);
+                            }
+                            parts.push(row.join("+"));
+                        }
+                        out.push(format!("Craft ({width}×{height}): {}", parts.join(" / ")));
+                    }
+                }
+                Recipe::Shapeless {
+                    ingredients,
+                    result,
+                } => {
+                    if result.item.as_deref() == Some(item_id) {
+                        let list: Vec<&str> = ingredients
+                            .iter()
+                            .filter_map(|ing| ing.1.first())
+                            .map(|s| s.strip_prefix("minecraft:").unwrap_or(s))
+                            .collect();
+                        out.push(format!("Shapeless: {}", list.join(" + ")));
+                    }
+                }
+                Recipe::Special(_) => {}
+            }
+        }
+        for Cooking {
+            kind,
+            ingredient,
+            result,
+            ..
+        } in &recipes.cooking
+        {
+            if &*result.item == item_id {
+                let in_item = ingredient
+                    .1
+                    .first()
+                    .map(|s| s.strip_prefix("minecraft:").unwrap_or(s))
+                    .unwrap_or("?");
+                let k = kind.strip_prefix("minecraft:").unwrap_or(kind);
+                out.push(format!("{k}: {in_item} -> {}", item_id.strip_prefix("minecraft:").unwrap_or(item_id)));
+            }
+        }
+        out
+    }
+
+    fn jei_panel_rect(wi: f32, hi: f32) -> [f32; 4] {
+        let pw = 128.0_f32.min(wi * 0.34);
+        let ph = (hi - 36.0).clamp(160.0, 290.0);
+        [wi - pw - 6.0, (hi - ph) * 0.5, pw, ph]
+    }
+
+    pub(super) fn draw_volt_jei_overlay(&self, batch: &mut HudBatch) {
+        if !self.volt_jei_visible() {
+            return;
+        }
+        let atlas = &self.gui.atlas;
+        let [px, py, pw, ph] = Self::jei_panel_rect(batch.width, batch.height);
+        batch.fill(atlas, px, py, pw, ph, rgba(16, 18, 24, 225));
+        batch.fill(atlas, px, py, pw, 1.5, rgba(105, 195, 255, 220));
+        batch.fill(atlas, px, py + ph - 1.0, pw, 1.0, rgba(80, 90, 110, 210));
+
+        // Title + Close
+        batch.text(atlas, "JEI Items", px + 6.0, py + 5.0, rgba(235, 244, 255, 255), true);
+        batch.fill(atlas, px + pw - 16.0, py + 4.0, 12.0, 12.0, rgba(90, 28, 32, 220));
+        batch.text(atlas, "x", px + pw - 13.0, py + 6.0, rgba(255, 210, 210, 255), true);
+
+        // Search box
+        let s_col = if self.extras.volt.jei_search_focused {
+            rgba(38, 48, 68, 240)
+        } else {
+            rgba(26, 30, 40, 220)
+        };
+        batch.fill(atlas, px + 6.0, py + 19.0, pw - 12.0, 15.0, s_col);
+        let search_txt = if self.extras.volt.jei_search.is_empty() {
+            "Search items..."
+        } else {
+            &self.extras.volt.jei_search
+        };
+        batch.text(
+            atlas,
+            search_txt,
+            px + 10.0,
+            py + 23.0,
+            if self.extras.volt.jei_search.is_empty() {
+                rgba(140, 150, 170, 255)
+            } else {
+                rgba(255, 255, 255, 255)
+            },
+            true,
+        );
+
+        let items = self.jei_filtered_items();
+        let cols = 6usize;
+        let rows = ((ph - 62.0) / 18.0).floor().max(3.0) as usize;
+        let per_page = cols * rows;
+        let pages = items.len().div_ceil(per_page.max(1)).max(1);
+        let page = self.extras.volt.jei_page.min(pages - 1);
+        let start = page * per_page;
+        let end = (start + per_page).min(items.len());
+        let gx = px + 8.0;
+        let gy = py + 38.0;
+
+        for (i, item_id) in items[start..end].iter().enumerate() {
+            let col = i % cols;
+            let row = i / cols;
+            let sx = gx + col as f32 * 19.0;
+            let sy = gy + row as f32 * 18.0;
+            let selected = self
+                .extras
+                .volt
+                .jei_selected_item
+                .as_deref()
+                .is_some_and(|s| s == item_id);
+            batch.fill(
+                atlas,
+                sx,
+                sy,
+                16.0,
+                16.0,
+                if selected {
+                    rgba(96, 185, 255, 110)
+                } else {
+                    rgba(255, 255, 255, 20)
+                },
+            );
+            let stack = ItemStack {
+                item: Arc::from(item_id.as_str()),
+                count: 1,
+                damage: 0,
+                extra: None,
+            };
+            self.draw_item_model(batch, &stack, sx, sy);
+        }
+
+        // Pagination footer
+        let fy = py + ph - 18.0;
+        batch.fill(atlas, px + 6.0, fy, 24.0, 13.0, rgba(32, 36, 48, 225));
+        batch.text(atlas, "<", px + 15.0, fy + 3.0, u32::MAX, true);
+        let ptxt = format!("{}/{}", page + 1, pages);
+        let ptw = HudBatch::text_width(atlas, &ptxt);
+        batch.text(atlas, &ptxt, px + (pw - ptw) * 0.5, fy + 3.0, rgba(210, 220, 235, 255), true);
+        batch.fill(atlas, px + pw - 30.0, fy, 24.0, 13.0, rgba(32, 36, 48, 225));
+        batch.text(atlas, ">", px + pw - 21.0, fy + 3.0, u32::MAX, true);
+
+        // Selected Item Recipe Popup (to the left of the JEI sidebar)
+        if let Some(ref sel) = self.extras.volt.jei_selected_item {
+            let recs = self.jei_recipes_for(sel);
+            let rw = 190.0_f32.min(px - 10.0).max(120.0);
+            let rx = (px - rw - 6.0).max(6.0);
+            let ry = py + 18.0;
+            let line_count = recs.len().clamp(1, 5);
+            let rh = 34.0 + line_count as f32 * 13.0;
+            batch.fill(atlas, rx, ry, rw, rh, rgba(14, 16, 22, 238));
+            batch.fill(atlas, rx, ry, rw, 1.5, rgba(255, 214, 92, 230));
+            let title = sel.strip_prefix("minecraft:").unwrap_or(sel);
+            let stack = ItemStack {
+                item: Arc::from(sel.as_str()),
+                count: 1,
+                damage: 0,
+                extra: None,
+            };
+            self.draw_item_model(batch, &stack, rx + 5.0, ry + 5.0);
+            batch.text(atlas, title, rx + 25.0, ry + 8.0, rgba(255, 224, 120, 255), true);
+            if recs.is_empty() {
+                batch.text(
+                    atlas,
+                    "No crafting/smelting recipe",
+                    rx + 8.0,
+                    ry + 28.0,
+                    rgba(175, 182, 198, 255),
+                    true,
+                );
+            } else {
+                for (ri, line) in recs.iter().take(5).enumerate() {
+                    let trimmed: String = line.chars().take(34).collect();
+                    batch.text(
+                        atlas,
+                        &trimmed,
+                        rx + 8.0,
+                        ry + 27.0 + ri as f32 * 13.0,
+                        rgba(228, 236, 248, 255),
+                        true,
+                    );
+                }
+            }
+        }
+    }
+
+    pub(super) fn volt_jei_click(&mut self, w: f32, h: f32) -> bool {
+        if !self.volt_jei_visible() {
+            return false;
+        }
+        let [px, py, pw, ph] = Self::jei_panel_rect(w, h);
+        let (cx, cy) = self.cursor;
+        if cx < px || cx > px + pw || cy < py || cy > py + ph {
+            self.extras.volt.jei_search_focused = false;
+            return false;
+        }
+        // Close button
+        if cx >= px + pw - 16.0 && cx <= px + pw - 4.0 && cy >= py + 4.0 && cy <= py + 16.0 {
+            self.extras.volt.jei_open = false;
+            self.extras.volt.jei_search_focused = false;
+            self.extras.volt.jei_selected_item = None;
+            return true;
+        }
+        // Search bar
+        if cx >= px + 6.0 && cx <= px + pw - 6.0 && cy >= py + 19.0 && cy <= py + 34.0 {
+            self.extras.volt.jei_search_focused = true;
+            return true;
+        }
+        self.extras.volt.jei_search_focused = false;
+
+        let items = self.jei_filtered_items();
+        let cols = 6usize;
+        let rows = ((ph - 62.0) / 18.0).floor().max(3.0) as usize;
+        let per_page = cols * rows;
+        let pages = items.len().div_ceil(per_page.max(1)).max(1);
+        let page = self.extras.volt.jei_page.min(pages - 1);
+
+        // Footer pagination
+        let fy = py + ph - 18.0;
+        if cy >= fy && cy <= fy + 14.0 {
+            if cx >= px + 6.0 && cx <= px + 30.0 && page > 0 {
+                self.extras.volt.jei_page = page - 1;
+            } else if cx >= px + pw - 30.0 && cx <= px + pw - 6.0 && page + 1 < pages {
+                self.extras.volt.jei_page = page + 1;
+            }
+            return true;
+        }
+
+        // Item grid
+        let start = page * per_page;
+        let end = (start + per_page).min(items.len());
+        let gx = px + 8.0;
+        let gy = py + 38.0;
+        for (i, item_id) in items[start..end].iter().enumerate() {
+            let col = i % cols;
+            let row = i / cols;
+            let sx = gx + col as f32 * 19.0;
+            let sy = gy + row as f32 * 18.0;
+            if cx >= sx && cx <= sx + 17.0 && cy >= sy && cy <= sy + 17.0 {
+                self.extras.volt.jei_selected_item = Some(item_id.clone());
+                self.extras.volt.jei_recipe_idx = 0;
+                if self.creative && self.modifiers.shift_key() {
+                    let _ = self.give(ItemStack {
+                        item: Arc::from(item_id.as_str()),
+                        count: 1,
+                        damage: 0,
+                        extra: None,
+                    });
+                }
+                return true;
+            }
+        }
+        true
+    }
+
+    pub(super) fn volt_jei_scroll(&mut self, delta: f32, w: f32, h: f32) -> bool {
+        if !self.volt_jei_visible() {
+            return false;
+        }
+        let [px, py, pw, ph] = Self::jei_panel_rect(w, h);
+        let (cx, cy) = self.cursor;
+        if cx < px || cx > px + pw || cy < py || cy > py + ph {
+            return false;
+        }
+        let items = self.jei_filtered_items();
+        let rows = ((ph - 62.0) / 18.0).floor().max(3.0) as usize;
+        let per_page = (6 * rows).max(1);
+        let pages = items.len().div_ceil(per_page).max(1);
+        if delta < 0.0 && self.extras.volt.jei_page + 1 < pages {
+            self.extras.volt.jei_page += 1;
+        } else if delta > 0.0 && self.extras.volt.jei_page > 0 {
+            self.extras.volt.jei_page -= 1;
+        }
+        true
+    }
+
+    pub(super) fn volt_jei_key(&mut self, key: KeyCode, typed: Option<&str>) -> bool {
+        if !self.volt_jei_visible() || !self.extras.volt.jei_search_focused {
+            return false;
+        }
+        if key == KeyCode::Escape {
+            self.extras.volt.jei_search_focused = false;
+            return true;
+        }
+        if key == KeyCode::Backspace {
+            self.extras.volt.jei_search.pop();
+            self.extras.volt.jei_page = 0;
+            return true;
+        }
+        if let Some(txt) = typed {
+            for ch in txt.chars().filter(|c| !c.is_control()) {
+                self.extras.volt.jei_search.push(ch);
+            }
+            self.extras.volt.jei_page = 0;
+            return true;
+        }
+        false
     }
 }

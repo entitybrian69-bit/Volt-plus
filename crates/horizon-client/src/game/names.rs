@@ -76,7 +76,9 @@ impl Game<'_> {
     /// name, while that model shows in third person. Vanilla never names the
     /// camera entity (`LivingEntityRenderer.shouldShowName`).
     fn own_name_tag(&self) -> Option<(&Mob, String)> {
-        if !self.settings.extras.own_name_tag
+        let ntp = &self.settings.extras.volt.name_tags_plus;
+        let show_own = self.settings.extras.own_name_tag || (ntp.enabled && ntp.always_show_own);
+        if !show_own
             || self.camera_type.first_person()
             || self.sleeping.is_some()
             || self.spectator()
@@ -210,11 +212,24 @@ impl Game<'_> {
             };
             // StringDecomposer.iterateFormatted: `§` codes a server leaves
             // inside the team prefix or the name itself apply at draw time.
-            let shown = match team {
+            let mut shown = match team {
                 Some(t) => t.formatted_name(member),
                 None => member,
             }
             .resolve_legacy();
+            let ntp = &self.settings.extras.volt.name_tags_plus;
+            if ntp.enabled {
+                let mut extra_txt = String::new();
+                if ntp.show_distance {
+                    extra_txt.push_str(&format!(" [{:.0}m]", distance_sqr.sqrt()));
+                }
+                if ntp.show_health {
+                    extra_txt.push_str(&format!(" [{:.0}❤]", m.health.max(0.0)));
+                }
+                if !extra_txt.is_empty() {
+                    shown.push(Text::literal(&extra_txt).with_color(horizon_client::text::GRAY));
+                }
+            }
             let mut lines = Vec::new();
             // EntityRenderer.extractNameTags: the score shows within the
             // below-name distance (10), under the name.

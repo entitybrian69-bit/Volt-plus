@@ -3739,6 +3739,11 @@ impl Game<'_> {
         }
         let spectator = self.spectator();
         let sel = self.selected.min(self.inventory.len().saturating_sub(1));
+        if let Some(cur) = self.inventory[sel].clone()
+            && !self.volt_drop_guard_allows(&cur)
+        {
+            return;
+        }
         let Some(thrown) = horizon_client::items::take_held_drop(
             &mut self.inventory[sel],
             all,
@@ -5452,6 +5457,8 @@ impl Game<'_> {
         self.stats.add("used", &stack.item, 1);
     }
     fn break_block(&mut self, pos: [i32; 3]) -> Result<()> {
+        self.extras.volt.session_blocks_mined =
+            self.extras.volt.session_blocks_mined.saturating_add(1);
         self.lan_break_pos = Some(pos);
         let broken = self.with_player_actor(|game| game.break_block_as_player(pos));
         self.lan_break_pos = None;
@@ -6190,6 +6197,8 @@ impl Game<'_> {
             return Ok(true);
         };
         let target = [pos.x, pos.y, pos.z];
+        self.extras.volt.session_blocks_placed =
+            self.extras.volt.session_blocks_placed.saturating_add(1);
         let state = self.apply_item_block_state(target, state, &stack)?;
         self.mod_block_event(target, state, true);
         let name = self.res.facts().get(state).name.clone();
@@ -8197,7 +8206,7 @@ impl Game<'_> {
         // the sleep overlay, debug screen and open screens still draw.
         let spectator = self.spectator();
         let (wi, hi) = (w as i32, h as i32);
-        let show_hud = !self.ui.hide_gui;
+        let show_hud = !self.volt_effective_hide_gui();
         // max(Hud.leftHeight, Hud.rightHeight) after the bars: the item name and
         // the action bar sit above it.
         let mut bar_height = 39;
@@ -8485,6 +8494,12 @@ impl Game<'_> {
             Screen::Chat => self.draw_chat_screen(&mut batch),
             Screen::Mod => self.draw_mod_screen(&mut batch),
             Screen::Playing | Screen::Options | Screen::Win => {}
+        }
+        if matches!(
+            screen,
+            Screen::Inventory | Screen::Creative | Screen::Playing
+        ) {
+            self.draw_volt_jei_overlay(&mut batch);
         }
         self.fire_screen_render_post(&mut batch);
         horizon_client::hud::inset_overlay(&mut batch, margins, |b| self.draw_saving_indicator(b));
@@ -13595,8 +13610,16 @@ impl Game<'_> {
                 }
                 _ => ItemPose::Swing,
             };
-            let m = to_world
+            let mut m = to_world
                 * horizon_client::first_person::item_pose(left, inverse_height, attack, pose);
+            let ls = &self.settings.extras.volt.low_shield;
+            if ls.enabled
+                && &*stack.item == "minecraft:shield"
+                && (!using || ls.apply_while_blocking)
+            {
+                let drop_y = (f32::from(ls.offset_pct.clamp(0, 60)) / 100.0) * 0.42;
+                m = m * glam::Mat4::from_translation(glam::Vec3::new(0.0, -drop_y, 0.0));
+            }
             // Seeded by the player id plus the context ordinal.
             let (context, seed) = if left {
                 (
@@ -16776,6 +16799,28 @@ impl Game<'_> {
                     return;
                 }
             }
+            if self.pad.touch_ui.volt_key_picker.is_some() {
+                if let PhysicalKey::Code(code) = event.physical_key
+                    && let Some(volt) = self.pad.touch_ui.capture_volt_key_picker_key(code)
+                {
+                    crate::platform::hide();
+                    self.settings.extras.volt = volt;
+                    self.settings.extras.save(std::path::Path::new("."));
+                    self.apply_ui_settings();
+                    self.sync_volt_touch_ui();
+                    return;
+                }
+                if let Some(txt) = event.text.as_deref()
+                    && let Some(volt) = self.pad.touch_ui.capture_volt_key_picker_text(txt)
+                {
+                    crate::platform::hide();
+                    self.settings.extras.volt = volt;
+                    self.settings.extras.save(std::path::Path::new("."));
+                    self.apply_ui_settings();
+                    self.sync_volt_touch_ui();
+                    return;
+                }
+            }
             if self.pad.touch_ui.custom_input_picker != horizon_client::touch::PickerStep::None {
                 if let PhysicalKey::Code(code) = event.physical_key
                     && let Some(token) = self.pad.touch_ui.capture_custom_input_key(code)
@@ -17778,6 +17823,10 @@ impl Game<'_> {
                     if self.screen == Screen::Advancements {
                         self.advancements_scroll(scaled(raw_x) as f32, d);
                     }
+                    if d != 0.0 && matches!(self.screen, Screen::Inventory | Screen::Creative | Screen::Playing) {
+                        let (w, h) = self.gui_size();
+                        let _ = self.volt_jei_scroll(d, w, h);
+                    }
                 }
                 WindowEvent::MouseInput { state, button, .. } if self.link_prompt.is_some() => {
                     if state == ElementState::Pressed && button == MouseButton::Left {
@@ -17920,15 +17969,29 @@ impl Game<'_> {
                     if pressed && (self.sort_mouse_press(button) || self.hdr_mouse_press(button)) {
                         return Ok(());
                     }
+                    if pressed
+                        && button == MouseButton::Left
+                        && matches!(self.screen, Screen::Inventory | Screen::Creative | Screen::Playing)
+                    {
+                        let (w, h) = self.gui_size();
+                        if self.volt_jei_click(w, h) {
+                            return Ok(());
+                        }
+                    }
                     match self.screen {
                         Screen::Playing => {
-                            if pressed && !self.captured {
+                            if pressed && !self.captured && !self.extras.volt.jei_open {
                                 self.capture(true);
                                 #[cfg(not(target_os = "android"))]
                                 return Ok(());
                             }
                             self.extras_mouse(button, pressed);
                             self.mod_mouse_key(button, pressed);
+                            let _ = self.volt_handle_key_token(
+                                horizon_client::keybinds::mouse_name(button),
+                                pressed,
+                                false,
+                            );
                             if pressed
                                 && self.settings.keys.get("key.smoothCamera")
                                     == horizon_client::keybinds::mouse_name(button)
@@ -18308,8 +18371,22 @@ impl Game<'_> {
                     let PhysicalKey::Code(key) = event.physical_key else {
                         return Ok(());
                     };
+                    if event.state == ElementState::Pressed
+                        && self.volt_jei_key(key, event.text.as_deref())
+                    {
+                        return Ok(());
+                    }
                     self.mod_key(key, event.state == ElementState::Pressed, event.repeat);
                     self.native_key_event(key, event.state == ElementState::Pressed, event.repeat);
+                    if self.screen == Screen::Playing
+                        && let Some(tok) = horizon_client::keybinds::key_name(key)
+                    {
+                        let _ = self.volt_handle_key_token(
+                            tok,
+                            event.state == ElementState::Pressed,
+                            event.repeat,
+                        );
+                    }
                     // Screen.keyPressed sees the physical key, repeats included.
                     if event.state == ElementState::Pressed
                         && self.screen == Screen::Inventory

@@ -267,6 +267,11 @@ pub struct Chat {
     deletions: Vec<(Box<Signature>, u64)>,
     /// Volt+ Extras Chat Tweaks (timestamps, compact duplicates, keep history).
     pub volt_chat: crate::volt_extras_cfg::ChatTweaksConfig,
+    /// Volt+ Extras Chat Mention Ping configuration.
+    pub volt_mention: crate::volt_extras_cfg::ChatMentionConfig,
+    pub volt_player_name: String,
+    pub volt_mention_triggered: bool,
+    pub volt_mention_last: String,
     last_plain: String,
     last_repeat: u32,
     last_line_count: usize,
@@ -390,8 +395,25 @@ impl Chat {
             self.messages.remove(0);
             compacted = true;
         } else {
-            self.last_plain = plain;
+            self.last_plain = plain.clone();
             self.last_repeat = 1;
+        }
+        if self.volt_mention.enabled && !plain.is_empty() && !plain.starts_with("[Volt+]") {
+            let lower = plain.to_ascii_lowercase();
+            let hit_name = self.volt_mention.highlight_username
+                && !self.volt_player_name.is_empty()
+                && lower.contains(&self.volt_player_name.to_ascii_lowercase());
+            let hit_kw = self.volt_mention.keywords.split(',').any(|kw| {
+                let k = kw.trim();
+                !k.is_empty() && lower.contains(&k.to_ascii_lowercase())
+            });
+            if hit_name || hit_kw {
+                self.volt_mention_triggered = true;
+                self.volt_mention_last = plain;
+                message.content = Text::empty()
+                    .append(Text::literal("[★] ").with_color(text::GOLD))
+                    .append(message.content);
+            }
         }
         if self.volt_chat.enabled && self.volt_chat.timestamps {
             let secs = std::time::SystemTime::now()

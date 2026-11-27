@@ -823,6 +823,29 @@ impl Game<'_> {
         };
         let draws = self.tab_list.layout(&inputs, &self.gui.atlas.font);
         horizon_client::hud_layout::paint(batch, &self.gui.atlas, &draws);
+        let tp = &self.settings.extras.volt.tab_ping;
+        if tp.enabled {
+            let atlas = &self.gui.atlas;
+            let mut y = 14.0_f32;
+            for p in &players {
+                let ms = p.latency;
+                let txt = format!("{}: {}ms", p.name, ms);
+                let col = if !tp.color_coded {
+                    horizon_client::hud::rgba(235, 240, 250, 255)
+                } else if ms < 70 {
+                    horizon_client::hud::rgba(105, 242, 130, 255)
+                } else if ms < 160 {
+                    horizon_client::hud::rgba(255, 212, 76, 255)
+                } else {
+                    horizon_client::hud::rgba(255, 92, 92, 255)
+                };
+                let tw = HudBatch::text_width(atlas, &txt);
+                let x = batch.width - tw - 12.0;
+                batch.fill(atlas, x - 4.0, y - 1.5, tw + 8.0, 11.0, horizon_client::hud::rgba(16, 18, 24, 185));
+                batch.text(atlas, &txt, x, y, col, true);
+                y += 12.0;
+            }
+        }
     }
 }
 

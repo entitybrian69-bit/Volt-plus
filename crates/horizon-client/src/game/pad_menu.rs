@@ -123,7 +123,9 @@ impl Game<'_> {
         let android_hub_open = self.pad.touch_ui.floating_menu
             || self.pad.touch_ui.preset_dialog.is_some()
             || self.pad.touch_ui.presets_modal_open
-            || self.pad.touch_ui.custom_input_picker != horizon_client::touch::PickerStep::None;
+            || self.pad.touch_ui.custom_input_picker != horizon_client::touch::PickerStep::None
+            || self.pad.touch_ui.volt_key_picker.is_some()
+            || self.pad.touch_ui.volt_waypoint_manager;
         #[cfg(not(target_os = "android"))]
         let android_hub_open = false;
         self.title.is_some()

@@ -508,8 +508,52 @@ pub fn body(m: &Mob) -> (String, String) {
     }
 }
 /// LivingEntityRenderer.getModelTint (tropical fish base colour).
+static VOLT_HIT_ABGR: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static VOLT_HIT_ALPHA: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static VOLT_HIT_ARMOR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_volt_hit_color(rgb: Option<[u8; 3]>, alpha_pct: u8, include_armor: bool) {
+    use std::sync::atomic::Ordering::Relaxed;
+    match rgb {
+        Some([r, g, b]) => {
+            let abgr = 0xFF00_0000 | (u32::from(b) << 16) | (u32::from(g) << 8) | u32::from(r);
+            VOLT_HIT_ABGR.store(abgr, Relaxed);
+            VOLT_HIT_ALPHA.store(alpha_pct.clamp(10, 100), Relaxed);
+            VOLT_HIT_ARMOR.store(include_armor, Relaxed);
+        }
+        None => {
+            VOLT_HIT_ABGR.store(0, Relaxed);
+            VOLT_HIT_ALPHA.store(0, Relaxed);
+            VOLT_HIT_ARMOR.store(false, Relaxed);
+        }
+    }
+}
+
+fn volt_tint_abgr(base: u32) -> u32 {
+    use std::sync::atomic::Ordering::Relaxed;
+    let tint = VOLT_HIT_ABGR.load(Relaxed);
+    if tint == 0 {
+        return base;
+    }
+    let t = f32::from(VOLT_HIT_ALPHA.load(Relaxed)) / 100.0;
+    let blend = |a: u8, b: u8| -> u8 {
+        ((f32::from(a) * (1.0 - t)) + (f32::from(b) * t)).round().clamp(0.0, 255.0) as u8
+    };
+    let ba = (base >> 24) & 0xFF;
+    let bb = ((base >> 16) & 0xFF) as u8;
+    let bg = ((base >> 8) & 0xFF) as u8;
+    let br = (base & 0xFF) as u8;
+    let tb = ((tint >> 16) & 0xFF) as u8;
+    let tg = ((tint >> 8) & 0xFF) as u8;
+    let tr = (tint & 0xFF) as u8;
+    (ba << 24)
+        | (u32::from(blend(bb, tb)) << 16)
+        | (u32::from(blend(bg, tg)) << 8)
+        | u32::from(blend(br, tr))
+}
+
 pub fn body_color(m: &Mob, alpha: f32) -> u32 {
-    match m.species() {
+    let base = match m.species() {
         Species::Wolf => super::tame::tint(m, alpha),
         Species::TropicalFish => abgr(DYE[m.extra.variant2 as usize & 15]),
         // LivingEntityRenderer.submit: a spectator is invisible
@@ -517,6 +561,11 @@ pub fn body_color(m: &Mob, alpha: f32) -> u32 {
         // itself, so its body is forced translucent (654311423, alpha 38).
         _ if avatar(m) && m.extra.spectator => 0x26FF_FFFF,
         _ => 0xFFFF_FFFF,
+    };
+    if red_overlay(m) {
+        volt_tint_abgr(base)
+    } else {
+        base
     }
 }
 /// Extra render layers drawn over the body with the same pose. `age` is the
@@ -1181,7 +1230,8 @@ fn body_overlay(m: &Mob, alpha: f32) -> u32 {
     } else {
         0.0
     };
-    crate::overlay::living(white, red_overlay(m))
+    let custom_hit = VOLT_HIT_ABGR.load(std::sync::atomic::Ordering::Relaxed) != 0;
+    crate::overlay::living(white, !custom_hit && red_overlay(m))
 }
 /// LivingEntityRenderState.hasRedOverlay: hurt or dying (not a creaking
 /// tearing down).
@@ -1706,7 +1756,12 @@ fn render_visible(
         draw_body(out);
     }
     for (part, uv, color, layer_overlay) in extra {
-        draw(part, base, &poses, *uv, *color, light, *layer_overlay, out);
+        let use_tint = red_overlay(m)
+            && VOLT_HIT_ARMOR.load(std::sync::atomic::Ordering::Relaxed)
+            && VOLT_HIT_ABGR.load(std::sync::atomic::Ordering::Relaxed) != 0;
+        let final_color = if use_tint { volt_tint_abgr(*color) } else { *color };
+        let final_ov = if use_tint { 0 } else { *layer_overlay };
+        draw(part, base, &poses, *uv, final_color, light, final_ov, out);
     }
     let mut all_layers = layers(m, s.age);
     // WardenRenderer: the translucent emissive layers fade with the animations.

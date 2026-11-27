@@ -68,12 +68,20 @@ pub struct TouchUi {
     pub music_search_tab: bool,
     /// Whether the in-game Music search field is currently focused for Android OSK input.
     pub music_editing_search: bool,
-    /// Built-in Volt+ Extras mods state (all 52 built-in client mods).
+    /// Built-in Volt+ Extras mods state (all 84 built-in client mods).
     pub volt_extras: crate::extras::VoltExtras,
-    /// Which Volt+ Extras mod (`0..52`) is currently opened for per-mod configuration (`None` = list).
+    /// Which Volt+ Extras mod (`0..84`) is currently opened for per-mod configuration (`None` = list).
     pub volt_extras_config_mod: Option<u8>,
     /// Active Volt+ Extras category filter tab (`0=All, 1=PvP, 2=HUD, 3=Camera, 4=World, 5=Utility`).
     pub volt_extras_cat: u8,
+    /// Step state for per-mod Toggle/Use Keybind picker `(mod_id, is_use, step)`.
+    pub volt_key_picker: Option<(u8, bool, crate::touch::PickerStep)>,
+    /// Whether the Waypoint Manager modal is open inside Control Hub.
+    pub volt_waypoint_manager: bool,
+    /// Page index for Waypoint Manager list.
+    pub volt_waypoints_page: usize,
+    /// Live waypoint rows synced from `Game` for Waypoint Manager UI.
+    pub volt_waypoints_snapshot: Vec<VoltWaypointUiRow>,
     /// Step state for the Floating Menu "Send Custom Input" picker modal.
     pub custom_input_picker: crate::touch::PickerStep,
     /// Horizontal scroll offset for the Floating Menu custom keyboard picker.
@@ -145,6 +153,10 @@ impl Default for TouchUi {
             volt_extras: crate::extras::VoltExtras::default(),
             volt_extras_config_mod: None,
             volt_extras_cat: 0,
+            volt_key_picker: None,
+            volt_waypoint_manager: false,
+            volt_waypoints_page: 0,
+            volt_waypoints_snapshot: Vec::new(),
             custom_input_picker: crate::touch::PickerStep::None,
             custom_kb_scroll_x: 0.0,
             custom_kb_drag: None,
@@ -275,6 +287,15 @@ pub enum InGameMenuAction {
     VoltQuickAction(crate::extras::VoltQuickAction),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct VoltWaypointUiRow {
+    pub name: String,
+    pub coords: [i32; 3],
+    pub dim_label: &'static str,
+    pub is_death: bool,
+    pub color: u32,
+}
+
 fn volt_extras_modrinth_icon_url(key: &'static str) -> Option<String> {
     crate::volt_extras_ui::modrinth_icon_url(key)
 }
@@ -283,6 +304,15 @@ impl TouchUi {
     pub fn sync_volt_extras(&mut self, volt: &crate::extras::VoltExtras) {
         if self.volt_extras != *volt {
             self.volt_extras = volt.clone();
+        }
+    }
+    pub fn set_volt_mod_key(&mut self, mod_id: u8, is_use: bool, token: String) {
+        if let Some(b) = self.volt_extras.binds.0.get_mut(usize::from(mod_id)) {
+            if is_use {
+                b.use_key = token;
+            } else {
+                b.toggle_key = token;
+            }
         }
     }
 }
@@ -742,6 +772,8 @@ impl TouchUi {
                 || self.preset_dialog.is_some()
                 || self.presets_modal_open
                 || self.custom_input_picker != crate::touch::PickerStep::None
+                || self.volt_key_picker.is_some()
+                || self.volt_waypoint_manager
             {
                 return false;
             }
@@ -751,6 +783,8 @@ impl TouchUi {
             || self.preset_dialog.is_some()
             || self.presets_modal_open
             || self.custom_input_picker != crate::touch::PickerStep::None
+            || self.volt_key_picker.is_some()
+            || self.volt_waypoint_manager
         {
             return false;
         }
@@ -795,6 +829,29 @@ impl TouchUi {
         self.custom_input_picker = crate::touch::PickerStep::None;
         self.floating_menu = false;
         Some(tok.to_owned())
+    }
+
+    /// Captures a physical or soft-keyboard `KeyCode` when a Volt+ Extras mod keybind picker is open.
+    pub fn capture_volt_key_picker_key(&mut self, code: KeyCode) -> Option<crate::extras::VoltExtras> {
+        let (mod_id, is_use, _) = self.volt_key_picker?;
+        if code == KeyCode::Escape {
+            self.volt_key_picker = None;
+            return None;
+        }
+        let token = crate::keybinds::key_name(code)?.to_owned();
+        self.set_volt_mod_key(mod_id, is_use, token);
+        self.volt_key_picker = None;
+        Some(self.volt_extras.clone())
+    }
+
+    /// Captures a typed character from the Android soft keyboard when a Volt+ Extras mod keybind picker is open.
+    pub fn capture_volt_key_picker_text(&mut self, text: &str) -> Option<crate::extras::VoltExtras> {
+        let (mod_id, is_use, _) = self.volt_key_picker?;
+        let ch = text.chars().find(|c| !c.is_control())?;
+        let tok = crate::touch::TouchControls::char_to_key_token(ch)?;
+        self.set_volt_mod_key(mod_id, is_use, tok.to_owned());
+        self.volt_key_picker = None;
+        Some(self.volt_extras.clone())
     }
 
     pub fn refresh_presets_cache(&mut self, style: crate::touch::ControlStyle) {
@@ -2314,6 +2371,237 @@ impl TouchUi {
             }
         }
 
+        // 0a. If Volt+ Extras Mod Keybind Picker Modal is open:
+        if let Some((mod_id, is_use, step)) = self.volt_key_picker {
+            use crate::touch::PickerStep;
+            if let Some((drag_id, last_x, mut moved)) = self.custom_kb_drag
+                && drag_id == id
+            {
+                match phase {
+                    TouchPhase::Moved => {
+                        let dx_k = p[0] - last_x;
+                        if dx_k.abs() > 3.5 {
+                            moved = true;
+                        }
+                        let mdw = (w - 20.0).clamp(300.0, 620.0);
+                        let max_kb_scroll = (880.0 - (mdw - 28.0)).max(0.0);
+                        self.custom_kb_scroll_x =
+                            (self.custom_kb_scroll_x - dx_k).clamp(0.0, max_kb_scroll);
+                        self.custom_kb_drag = Some((drag_id, p[0], moved));
+                        return Some(InGameMenuAction::Close);
+                    }
+                    TouchPhase::Ended => {
+                        self.custom_kb_drag = None;
+                        if !moved && matches!(step, PickerStep::Keyboard { .. }) {
+                            let mdw = (w - 20.0).clamp(300.0, 620.0);
+                            let mdh = (h - 20.0).clamp(235.0, 340.0);
+                            let mdx = (w - mdw) * 0.5;
+                            let mdy = (h - mdh) * 0.5;
+                            let kb_top = mdy + 40.0;
+                            let kb_h = mdh - 56.0;
+                            let row_h = ((kb_h - 25.0) / 6.0).clamp(24.0, 38.0);
+                            let key_unit = 38.0;
+                            let gap = 4.0;
+                            for (r_idx, row) in KB_ROWS.iter().enumerate() {
+                                let ry = kb_top + r_idx as f32 * (row_h + 4.0);
+                                let mut kx = mdx + 14.0 - self.custom_kb_scroll_x;
+                                for (_lbl, tok, width_mult) in *row {
+                                    let kw = key_unit * (*width_mult)
+                                        + (*width_mult - 1.0).max(0.0) * gap;
+                                    if inside([kx, ry, kw, row_h])
+                                        && p[0] >= mdx + 10.0
+                                        && p[0] <= mdx + mdw - 10.0
+                                    {
+                                        self.set_volt_mod_key(mod_id, is_use, (*tok).to_owned());
+                                        self.volt_key_picker = None;
+                                        return Some(InGameMenuAction::UpdateVoltExtras(
+                                            self.volt_extras.clone(),
+                                        ));
+                                    }
+                                    kx += kw + gap;
+                                }
+                            }
+                        }
+                        return Some(InGameMenuAction::Close);
+                    }
+                    TouchPhase::Cancelled => {
+                        self.custom_kb_drag = None;
+                        return Some(InGameMenuAction::Close);
+                    }
+                    _ => {}
+                }
+            }
+            if phase != TouchPhase::Started {
+                return Some(InGameMenuAction::Close);
+            }
+            match step {
+                PickerStep::AskInputType { event_slot } => {
+                    let mdw = (w - 36.0).clamp(270.0, 440.0);
+                    let mdh = 236.0;
+                    let mdx = (w - mdw) * 0.5;
+                    let mdy = (h - mdh) * 0.5;
+                    let mcw = (mdw - 40.0) * 0.5;
+                    if inside([mdx + 16.0, mdy + 54.0, mcw, 76.0]) {
+                        self.volt_key_picker = Some((mod_id, is_use, PickerStep::Keyboard { event_slot }));
+                        return Some(InGameMenuAction::Close);
+                    }
+                    if inside([mdx + 24.0 + mcw, mdy + 54.0, mcw, 76.0]) {
+                        self.volt_key_picker = Some((mod_id, is_use, PickerStep::MouseAndActions { event_slot }));
+                        return Some(InGameMenuAction::Close);
+                    }
+                    if inside([mdx + 16.0, mdy + 138.0, mdw - 32.0, 34.0]) {
+                        return Some(InGameMenuAction::OpenKeyboard);
+                    }
+                    if inside([mdx + 16.0, mdy + 180.0, mcw, 36.0]) {
+                        self.set_volt_mod_key(mod_id, is_use, String::new());
+                        self.volt_key_picker = None;
+                        return Some(InGameMenuAction::UpdateVoltExtras(
+                            self.volt_extras.clone(),
+                        ));
+                    }
+                    if inside([mdx + 24.0 + mcw, mdy + 180.0, mcw, 36.0])
+                        || !inside([mdx, mdy, mdw, mdh])
+                    {
+                        self.volt_key_picker = None;
+                        return Some(InGameMenuAction::Close);
+                    }
+                    return Some(InGameMenuAction::Close);
+                }
+                PickerStep::Keyboard { event_slot } => {
+                    let mdw = (w - 20.0).clamp(300.0, 620.0);
+                    let mdh = (h - 20.0).clamp(235.0, 340.0);
+                    let mdx = (w - mdw) * 0.5;
+                    let mdy = (h - mdh) * 0.5;
+                    let max_kb_scroll = (880.0 - (mdw - 28.0)).max(0.0);
+                    if inside([mdx + mdw - 266.0, mdy + 8.0, 64.0, 26.0]) {
+                        return Some(InGameMenuAction::OpenKeyboard);
+                    }
+                    if inside([mdx + mdw - 196.0, mdy + 8.0, 56.0, 26.0]) {
+                        self.custom_kb_scroll_x =
+                            (self.custom_kb_scroll_x - 140.0).clamp(0.0, max_kb_scroll);
+                        return Some(InGameMenuAction::Close);
+                    }
+                    if inside([mdx + mdw - 134.0, mdy + 8.0, 56.0, 26.0]) {
+                        self.custom_kb_scroll_x =
+                            (self.custom_kb_scroll_x + 140.0).clamp(0.0, max_kb_scroll);
+                        return Some(InGameMenuAction::Close);
+                    }
+                    if inside([mdx + mdw - 72.0, mdy + 8.0, 58.0, 26.0])
+                        || !inside([mdx, mdy, mdw, mdh])
+                    {
+                        self.volt_key_picker = Some((mod_id, is_use, PickerStep::AskInputType { event_slot }));
+                        return Some(InGameMenuAction::Close);
+                    }
+                    self.custom_kb_drag = Some((id, p[0], false));
+                    return Some(InGameMenuAction::Close);
+                }
+                PickerStep::MouseAndActions { event_slot } => {
+                    let mdw = (w - 24.0).clamp(290.0, 560.0);
+                    let mdh = (h - 20.0).clamp(235.0, 355.0);
+                    let mdx = (w - mdw) * 0.5;
+                    let mdy = (h - mdh) * 0.5;
+                    if inside([mdx + mdw - 72.0, mdy + 8.0, 58.0, 26.0])
+                        || !inside([mdx, mdy, mdw, mdh])
+                    {
+                        self.volt_key_picker = Some((mod_id, is_use, PickerStep::AskInputType { event_slot }));
+                        return Some(InGameMenuAction::Close);
+                    }
+                    let cols = 3usize;
+                    let rows = MOUSE_AND_ACTION_ITEMS.len().div_ceil(cols).max(1);
+                    let gx = mdx + 12.0;
+                    let gy = mdy + 40.0;
+                    let gw = mdw - 24.0;
+                    let gh = mdh - 50.0;
+                    let mcw = (gw - (cols as f32 - 1.0) * 6.0) / cols as f32;
+                    let mch = ((gh - (rows as f32 - 1.0) * 4.0) / rows as f32).clamp(21.0, 32.0);
+                    for (i, (_lbl, tok)) in MOUSE_AND_ACTION_ITEMS.iter().enumerate() {
+                        let col = i % cols;
+                        let row = i / cols;
+                        let icx = gx + col as f32 * (mcw + 6.0);
+                        let icy = gy + row as f32 * (mch + 4.0);
+                        if inside([icx, icy, mcw, mch]) {
+                            self.set_volt_mod_key(mod_id, is_use, (*tok).to_owned());
+                            self.volt_key_picker = None;
+                            return Some(InGameMenuAction::UpdateVoltExtras(
+                                self.volt_extras.clone(),
+                            ));
+                        }
+                    }
+                    return Some(InGameMenuAction::Close);
+                }
+                PickerStep::None => {}
+            }
+        }
+
+        // 0b. If Waypoint Manager Modal is open:
+        if self.volt_waypoint_manager {
+            if phase != TouchPhase::Started {
+                return Some(InGameMenuAction::Close);
+            }
+            let mdw = (w - 24.0).clamp(310.0, 540.0);
+            let mdh = (h - 24.0).clamp(235.0, 350.0);
+            let mdx = (w - mdw) * 0.5;
+            let mdy = (h - mdh) * 0.5;
+            let close_r = [mdx + mdw - 72.0, mdy + 10.0, 58.0, 26.0];
+            if inside(close_r) || !inside([mdx, mdy, mdw, mdh]) {
+                self.volt_waypoint_manager = false;
+                return Some(InGameMenuAction::Close);
+            }
+            let top_y = mdy + 42.0;
+            let btn_w = (mdw - 40.0) / 3.0;
+            if inside([mdx + 14.0, top_y, btn_w, 26.0]) {
+                return Some(InGameMenuAction::VoltQuickAction(
+                    crate::extras::VoltQuickAction::AddWaypointHere,
+                ));
+            }
+            if inside([mdx + 20.0 + btn_w, top_y, btn_w, 26.0]) {
+                return Some(InGameMenuAction::VoltQuickAction(
+                    crate::extras::VoltQuickAction::ClearDeathWaypoints,
+                ));
+            }
+            if inside([mdx + 26.0 + btn_w * 2.0, top_y, btn_w, 26.0]) {
+                self.volt_waypoints_page = 0;
+                return Some(InGameMenuAction::VoltQuickAction(
+                    crate::extras::VoltQuickAction::ClearAllWaypoints,
+                ));
+            }
+            let per_page = 4usize;
+            let total = self.volt_waypoints_snapshot.len();
+            let pages = total.div_ceil(per_page).max(1);
+            let page = self.volt_waypoints_page.min(pages - 1);
+            let list_y = top_y + 34.0;
+            let start = page * per_page;
+            let end = (start + per_page).min(total);
+            for (slot_i, wp_idx) in (start..end).enumerate() {
+                let ry = list_y + slot_i as f32 * 46.0;
+                let del_r = [mdx + mdw - 68.0, ry + 7.0, 54.0, 26.0];
+                let share_r = [del_r[0] - 54.0, ry + 7.0, 48.0, 26.0];
+                let col_r = [share_r[0] - 32.0, ry + 7.0, 26.0, 26.0];
+                if inside(del_r) {
+                    return Some(InGameMenuAction::VoltQuickAction(
+                        crate::extras::VoltQuickAction::DeleteWaypoint(wp_idx),
+                    ));
+                }
+                if inside(share_r) {
+                    return Some(InGameMenuAction::VoltQuickAction(
+                        crate::extras::VoltQuickAction::ShareWaypoint(wp_idx),
+                    ));
+                }
+                if inside(col_r) {
+                    return Some(InGameMenuAction::VoltQuickAction(
+                        crate::extras::VoltQuickAction::CycleWaypointColor(wp_idx),
+                    ));
+                }
+            }
+            let pager_y = mdy + mdh - 34.0;
+            if inside([mdx + 14.0, pager_y, 74.0, 24.0]) && page > 0 {
+                self.volt_waypoints_page = page - 1;
+            } else if inside([mdx + mdw - 88.0, pager_y, 74.0, 24.0]) && page + 1 < pages {
+                self.volt_waypoints_page = page + 1;
+            }
+            return Some(InGameMenuAction::Close);
+        }
+
         // 0. If "Send Custom Input" Picker Modal is open:
         if self.custom_input_picker != crate::touch::PickerStep::None {
             use crate::touch::PickerStep;
@@ -3335,7 +3623,25 @@ impl TouchUi {
                                 mod_idx,
                                 r,
                             ) {
-                                return Some(InGameMenuAction::VoltQuickAction(act));
+                                match act {
+                                    crate::extras::VoltQuickAction::OpenModKeyPicker {
+                                        mod_id,
+                                        is_use,
+                                    } => {
+                                        self.volt_key_picker = Some((
+                                            mod_id,
+                                            is_use,
+                                            crate::touch::PickerStep::AskInputType { event_slot: 0 },
+                                        ));
+                                        return Some(InGameMenuAction::Close);
+                                    }
+                                    crate::extras::VoltQuickAction::OpenWaypointManager => {
+                                        self.volt_waypoint_manager = true;
+                                        self.volt_waypoints_page = 0;
+                                        return Some(InGameMenuAction::Close);
+                                    }
+                                    other => return Some(InGameMenuAction::VoltQuickAction(other)),
+                                }
                             }
                             return Some(InGameMenuAction::UpdateVoltExtras(self.volt_extras.clone()));
                         }
@@ -5838,7 +6144,10 @@ impl TouchUi {
                         cx,
                         body_y + 14.0,
                         muted_c,
-                        "52 built-in client mods (all off by default — tap Configure to customize)",
+                        &format!(
+                            "{} built-in client mods (all off by default — tap Configure to customize)",
+                            crate::extras::VOLT_MOD_COUNT
+                        ),
                     );
 
                     let cat_y = body_y + 30.0;
@@ -6192,6 +6501,147 @@ impl TouchUi {
                 ui.border(cancel_r[0], cancel_r[1], cancel_r[2], cancel_r[3], 10.0, border_c);
                 ui.centered_fit(Face::SemiBold, 11.0, cancel_r, text_c, "Cancel");
             }
+        }
+
+        // Volt+ Extras Waypoint Manager Sub-Modal
+        if self.volt_waypoint_manager {
+            ui.fill(0.0, 0.0, w, h, rgba(0, 0, 0, 205));
+            let mdw = (w - 24.0).clamp(310.0, 540.0);
+            let mdh = (h - 24.0).clamp(235.0, 350.0);
+            let mdx = (w - mdw) * 0.5;
+            let mdy = (h - mdh) * 0.5;
+            ui.rounded(mdx, mdy, mdw, mdh, 16.0, rgba(0, 0, 0, 248));
+            ui.border(mdx, mdy, mdw, mdh, 16.0, accent);
+            let total = self.volt_waypoints_snapshot.len();
+            ui.text(
+                Face::SemiBold,
+                12.5,
+                mdx + 14.0,
+                mdy + 12.0,
+                text_c,
+                &format!("Waypoint Manager  •  {total} saved"),
+            );
+            let close_r = [mdx + mdw - 72.0, mdy + 10.0, 58.0, 26.0];
+            ui.rounded(close_r[0], close_r[1], close_r[2], close_r[3], 8.0, card_bg);
+            ui.border(close_r[0], close_r[1], close_r[2], close_r[3], 8.0, border_c);
+            ui.centered_fit(Face::SemiBold, 9.5, close_r, text_c, "Close");
+
+            let top_y = mdy + 42.0;
+            let btn_w = (mdw - 40.0) / 3.0;
+            for (bi, (lbl, fill_c)) in [
+                ("+ Add Here", accent),
+                ("Clear Deaths", card_sel),
+                ("Clear All", card_bg),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let bx = mdx + 14.0 + bi as f32 * (btn_w + 6.0);
+                ui.rounded(bx, top_y, btn_w, 26.0, 8.0, fill_c);
+                ui.border(bx, top_y, btn_w, 26.0, 8.0, border_c);
+                ui.centered_fit(
+                    Face::SemiBold,
+                    9.2,
+                    [bx, top_y, btn_w, 26.0],
+                    if bi == 0 { accent_fg } else { text_c },
+                    lbl,
+                );
+            }
+
+            let per_page = 4usize;
+            let pages = total.div_ceil(per_page).max(1);
+            let page = self.volt_waypoints_page.min(pages - 1);
+            let list_y = top_y + 34.0;
+            if total == 0 {
+                ui.centered_fit(
+                    Face::Regular,
+                    10.2,
+                    [mdx + 14.0, list_y + 28.0, mdw - 28.0, 32.0],
+                    muted_c,
+                    "No waypoints saved yet. Tap '+ Add Here' to bookmark this spot.",
+                );
+            } else {
+                let start = page * per_page;
+                let end = (start + per_page).min(total);
+                for (slot_i, wp) in self.volt_waypoints_snapshot[start..end].iter().enumerate() {
+                    let ry = list_y + slot_i as f32 * 46.0;
+                    ui.rounded(mdx + 14.0, ry, mdw - 28.0, 40.0, 10.0, card_bg);
+                    ui.border(mdx + 14.0, ry, mdw - 28.0, 40.0, 10.0, border_c);
+                    ui.rounded(mdx + 22.0, ry + 11.0, 10.0, 18.0, 4.0, wp.color);
+
+                    let del_r = [mdx + mdw - 68.0, ry + 7.0, 54.0, 26.0];
+                    let share_r = [del_r[0] - 54.0, ry + 7.0, 48.0, 26.0];
+                    let col_r = [share_r[0] - 32.0, ry + 7.0, 26.0, 26.0];
+                    let tx = mdx + 40.0;
+                    let tw = (col_r[0] - tx - 8.0).max(40.0);
+                    let tag = if wp.is_death { " [Death]" } else { "" };
+                    ui.text_clipped(
+                        Face::SemiBold,
+                        10.0,
+                        tx,
+                        ry + 5.0,
+                        tw,
+                        text_c,
+                        &format!("{}{}", wp.name, tag),
+                    );
+                    ui.text_clipped(
+                        Face::Regular,
+                        8.4,
+                        tx,
+                        ry + 21.0,
+                        tw,
+                        muted_c,
+                        &format!(
+                            "{}, {}, {}  •  {}",
+                            wp.coords[0], wp.coords[1], wp.coords[2], wp.dim_label
+                        ),
+                    );
+                    ui.rounded(col_r[0], col_r[1], col_r[2], col_r[3], 7.0, wp.color);
+                    ui.border(col_r[0], col_r[1], col_r[2], col_r[3], 7.0, border_c);
+                    ui.rounded(share_r[0], share_r[1], share_r[2], share_r[3], 7.0, card_sel);
+                    ui.border(share_r[0], share_r[1], share_r[2], share_r[3], 7.0, border_c);
+                    ui.centered_fit(Face::Medium, 8.6, share_r, text_c, "Share");
+                    ui.rounded(del_r[0], del_r[1], del_r[2], del_r[3], 7.0, rgba(90, 26, 26, 230));
+                    ui.border(del_r[0], del_r[1], del_r[2], del_r[3], 7.0, rgba(235, 96, 96, 220));
+                    ui.centered_fit(Face::SemiBold, 8.8, del_r, rgba(255, 220, 220, 255), "Delete");
+                }
+            }
+            let pager_y = mdy + mdh - 34.0;
+            let prev_r = [mdx + 14.0, pager_y, 74.0, 24.0];
+            let next_r = [mdx + mdw - 88.0, pager_y, 74.0, 24.0];
+            ui.rounded(prev_r[0], prev_r[1], prev_r[2], prev_r[3], 7.0, card_bg);
+            ui.border(prev_r[0], prev_r[1], prev_r[2], prev_r[3], 7.0, border_c);
+            ui.centered_fit(Face::Medium, 8.8, prev_r, if page > 0 { text_c } else { muted_c }, "< Prev");
+            ui.centered_fit(
+                Face::Regular,
+                8.8,
+                [mdx + 94.0, pager_y, mdw - 188.0, 24.0],
+                muted_c,
+                &format!("Page {} / {}", page + 1, pages),
+            );
+            ui.rounded(next_r[0], next_r[1], next_r[2], next_r[3], 7.0, card_bg);
+            ui.border(next_r[0], next_r[1], next_r[2], next_r[3], 7.0, border_c);
+            ui.centered_fit(
+                Face::Medium,
+                8.8,
+                next_r,
+                if page + 1 < pages { text_c } else { muted_c },
+                "Next >",
+            );
+        }
+
+        // Volt+ Extras Mod Keybind Picker Sub-Modal (same picker UI as Controls)
+        if let Some((_mod_id, _is_use, step)) = self.volt_key_picker {
+            draw_input_picker_modal(
+                &mut ui,
+                w,
+                h,
+                step,
+                self.custom_kb_scroll_x,
+                false,
+                false,
+                true,
+            );
         }
 
         // Send Custom Input Picker Sub-Modal

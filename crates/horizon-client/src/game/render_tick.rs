@@ -154,6 +154,17 @@ impl Game<'_> {
                 horizon_client::fog::clear_distance_fog(&mut fog, &input);
             }
         }
+        let cc = &self.settings.extras.volt.clear_caves;
+        if cc.enabled && cc.clear_cave_fog && fog_type == FogType::Atmospheric {
+            let sky_light = self.world.light(
+                eye[0].floor() as i32,
+                eye[1].floor() as i32,
+                eye[2].floor() as i32,
+            ) >> 4;
+            if sky_light <= 2 {
+                horizon_client::fog::clear_distance_fog(&mut fog, &input);
+            }
+        }
         fog
     }
     /// `FogRenderer.computeFogColor`'s night vision brightenFactor:
@@ -275,15 +286,17 @@ impl Game<'_> {
         }
         let in_water =
             fog_type(&self.world, self.res.facts(), eye, self.forward()) == FogType::Water;
-        let water =
-            (in_water && !spectator).then(|| (self.eye_brightness(eye), self.yaw, self.pitch));
+        let cv = &self.settings.extras.volt.clean_view;
+        let water = (in_water && !spectator && !(cv.enabled && cv.hide_water_overlay))
+            .then(|| (self.eye_brightness(eye), self.yaw, self.pitch));
         // Hud.extractCameraOverlays; the spyglass scope (and its easing) is
         // drawn on the HUD by draw_spyglass.
         let fx = &self.screen_fx;
         let pvp = &self.settings.extras.volt.pvp_visuals;
-        let hide_pumpkin = pvp.enabled && pvp.hide_pumpkin;
-        let hide_portal = pvp.enabled && pvp.hide_portal_overlay;
-        let hide_fire = pvp.enabled && pvp.low_fire_pct == 0;
+        let hide_pumpkin = (pvp.enabled && pvp.hide_pumpkin) || (cv.enabled && cv.hide_pumpkin);
+        let hide_portal = (pvp.enabled && pvp.hide_portal_overlay) || (cv.enabled && cv.hide_portal_overlay);
+        let hide_fire = (pvp.enabled && pvp.low_fire_pct == 0) || (cv.enabled && cv.hide_fire_overlay);
+        let hide_freeze = cv.enabled && cv.hide_freezing;
         let overlays = hud_overlays::CameraOverlays {
             vignette: self.settings.vignette.then_some((
                 fx.vignette_brightness,
@@ -298,8 +311,8 @@ impl Game<'_> {
                 }
                 _ => Vec::new(),
             },
-            ticks_frozen: p.ticks_frozen,
-            percent_frozen: p.percent_frozen(),
+            ticks_frozen: if hide_freeze { 0 } else { p.ticks_frozen },
+            percent_frozen: if hide_freeze { 0.0 } else { p.percent_frozen() },
             partial,
             portal: if hide_portal {
                 [0.0, 0.0]
@@ -535,10 +548,19 @@ impl Game<'_> {
                         } else {
                             ("minecraft:weather.rain", 0.2, 1.0)
                         };
-                        let p = at.map(|c| f64::from(c) + 0.5);
-                        // playLocalSound: guests make their own rain, so a host
-                        // must not capture it for them.
-                        self.audio.play_unshared(name, Some(p), volume, pitch);
+                        let ws = &self.settings.extras.volt.weather_sound;
+                        let vol_scale = if ws.enabled {
+                            f32::from(ws.rain_volume_pct.min(100)) / 100.0
+                        } else {
+                            1.0
+                        };
+                        if vol_scale > 0.0 {
+                            let p = at.map(|c| f64::from(c) + 0.5);
+                            // playLocalSound: guests make their own rain, so a host
+                            // must not capture it for them.
+                            self.audio
+                                .play_unshared(name, Some(p), volume * vol_scale, pitch);
+                        }
                     }
                 }
             }

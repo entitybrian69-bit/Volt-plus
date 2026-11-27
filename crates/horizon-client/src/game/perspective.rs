@@ -246,6 +246,10 @@ impl Game<'_> {
             self.view.detached = true;
             return Some((pos, yaw, pitch));
         }
+        if let Some((pos, yaw, pitch)) = self.volt_timelapse_camera() {
+            self.view.detached = true;
+            return Some((pos, yaw, pitch));
+        }
         if self.extras.volt.freecam_active {
             self.view.detached = true;
             return Some((
@@ -307,10 +311,21 @@ impl Game<'_> {
                 self.extras.volt.freelook_pitch,
             ));
         }
+        let pitch_sway = if self.settings.extras.volt.cameraoverhaul.enabled {
+            let sw = f32::from(self.settings.extras.volt.cameraoverhaul.pitch_sway_pct) / 100.0;
+            self.extras.volt.camera_roll_deg * 0.18 * sw
+        } else {
+            0.0
+        };
+        let yaw_sway = if self.settings.extras.volt.cameraoverhaul.enabled {
+            self.extras.volt.camera_roll_deg * 0.28
+        } else {
+            0.0
+        };
         Some((
             glam::DVec3::from_array(view.position),
-            view.y_rot,
-            view.x_rot,
+            view.y_rot + yaw_sway,
+            (view.x_rot + pitch_sway).clamp(-90.0, 90.0),
         ))
     }
     /// The player as `Camera.alignWithEntity` sees it.

@@ -1,7 +1,7 @@
 //! UI metadata, Modrinth icon fetching, and per-mod settings rows/actions
-//! for all 52 built-in Volt+ Extras mods inside the Control Hub.
+//! for all 84 built-in Volt+ Extras mods inside the Control Hub.
 use crate::extras::{
-    VOLT_MODS, VoltExtras, VoltModCategory, VoltQuickAction, volt_mod_enabled,
+    VOLT_MODS, VoltExtras, VoltModCategory, VoltModKeybind, VoltQuickAction, volt_mod_enabled,
 };
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -32,46 +32,48 @@ pub fn modrinth_icon_url(key: &'static str) -> Option<String> {
     static STARTED: OnceLock<()> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if STARTED.set(()).is_ok() {
-        std::thread::spawn(move || {
-            let agent = ureq::AgentBuilder::new()
-                .timeout(std::time::Duration::from_secs(7))
-                .build();
-            let ua = "VoltPlus/1.0 (https://github.com/entitybrian69-bit/volt-plus)";
-            for m in VOLT_MODS.iter() {
-                let mut found: Option<String> = None;
-                for &slug in m.modrinth_slugs {
-                    let url = format!("https://api.modrinth.com/v2/project/{slug}");
-                    if let Ok(resp) = agent.get(&url).set("User-Agent", ua).call()
-                        && let Ok(val) = resp.into_json::<serde_json::Value>()
-                        && let Some(icon) = val.get("icon_url").and_then(|v| v.as_str())
-                        && icon.starts_with("https://")
+        for chunk in VOLT_MODS.chunks(21) {
+            std::thread::spawn(move || {
+                let agent = ureq::AgentBuilder::new()
+                    .timeout(std::time::Duration::from_secs(6))
+                    .build();
+                let ua = "VoltPlus/1.0 (https://github.com/entitybrian69-bit/volt-plus)";
+                for m in chunk {
+                    let mut found: Option<String> = None;
+                    for &slug in m.modrinth_slugs {
+                        let url = format!("https://api.modrinth.com/v2/project/{slug}");
+                        if let Ok(resp) = agent.get(&url).set("User-Agent", ua).call()
+                            && let Ok(val) = resp.into_json::<serde_json::Value>()
+                            && let Some(icon) = val.get("icon_url").and_then(|v| v.as_str())
+                            && icon.starts_with("https://")
+                        {
+                            found = Some(icon.to_owned());
+                            break;
+                        }
+                    }
+                    if found.is_none() && !m.search_query.is_empty() {
+                        let q = percent_encode(m.search_query);
+                        let url = format!("https://api.modrinth.com/v2/search?query={q}&limit=1");
+                        if let Ok(resp) = agent.get(&url).set("User-Agent", ua).call()
+                            && let Ok(val) = resp.into_json::<serde_json::Value>()
+                            && let Some(icon) = val
+                                .get("hits")
+                                .and_then(|h| h.get(0))
+                                .and_then(|h| h.get("icon_url"))
+                                .and_then(|v| v.as_str())
+                            && icon.starts_with("https://")
+                        {
+                            found = Some(icon.to_owned());
+                        }
+                    }
+                    if let Some(icon) = found
+                        && let Ok(mut guard) = cache.lock()
                     {
-                        found = Some(icon.to_owned());
-                        break;
+                        guard.insert(m.key, icon);
                     }
                 }
-                if found.is_none() && !m.search_query.is_empty() {
-                    let q = percent_encode(m.search_query);
-                    let url = format!("https://api.modrinth.com/v2/search?query={q}&limit=1");
-                    if let Ok(resp) = agent.get(&url).set("User-Agent", ua).call()
-                        && let Ok(val) = resp.into_json::<serde_json::Value>()
-                        && let Some(icon) = val
-                            .get("hits")
-                            .and_then(|h| h.get(0))
-                            .and_then(|h| h.get("icon_url"))
-                            .and_then(|v| v.as_str())
-                        && icon.starts_with("https://")
-                    {
-                        found = Some(icon.to_owned());
-                    }
-                }
-                if let Some(icon) = found
-                    && let Ok(mut guard) = cache.lock()
-                {
-                    guard.insert(m.key, icon);
-                }
-            }
-        });
+            });
+        }
     }
     cache.lock().ok().and_then(|g| g.get(key).cloned())
 }
@@ -112,7 +114,53 @@ fn r_val(title: &'static str, sub: &'static str, val: String) -> SettingRow {
     }
 }
 
+fn format_keybind_badge(tok: &str) -> String {
+    if tok.is_empty() {
+        return "Not bound".to_owned();
+    }
+    match tok {
+        "key.mouse.left" | "key.mouse.1" => "LMB".to_owned(),
+        "key.mouse.right" | "key.mouse.2" => "RMB".to_owned(),
+        "key.mouse.middle" | "key.mouse.3" => "MMB".to_owned(),
+        "mouse:scroll_up" => "Scroll Up".to_owned(),
+        "mouse:scroll_down" => "Scroll Down".to_owned(),
+        _ => {
+            if let Some(act) = tok.strip_prefix("action:") {
+                act.trim_start_matches("key.").to_owned()
+            } else {
+                crate::keybinds::display_name(tok).plain()
+            }
+        }
+    }
+}
+
 pub fn mod_setting_rows(v: &VoltExtras, idx: u8) -> Vec<SettingRow> {
+    let mut rows = base_mod_setting_rows(v, idx);
+    let bind = v
+        .binds
+        .0
+        .get(usize::from(idx))
+        .cloned()
+        .unwrap_or_else(|| VoltModKeybind::default_for_id(idx));
+    rows.push(r_val(
+        "Toggle Keybind",
+        "Tap to bind a key/button that turns this mod ON or OFF",
+        format_keybind_badge(&bind.toggle_key),
+    ));
+    rows.push(r_val(
+        "Use Keybind",
+        "Tap to bind a key/button for this mod's active trigger",
+        format_keybind_badge(&bind.use_key),
+    ));
+    rows.push(r_val(
+        "Keybind Activation Mode",
+        "Choose Tap (toggle) or Hold (active only while held down)",
+        bind.mode.label().to_owned(),
+    ));
+    rows
+}
+
+fn base_mod_setting_rows(v: &VoltExtras, idx: u8) -> Vec<SettingRow> {
     match idx {
         0 => {
             let c = &v.appleskin;
@@ -124,6 +172,8 @@ pub fn mod_setting_rows(v: &VoltExtras, idx: u8) -> Vec<SettingRow> {
                 r_tog("Food Value Tooltips", "Show hunger & saturation icons in item tooltips", c.show_food_tooltip),
                 r_tog("Always Show Tooltip", "Show food values even without holding Shift", c.always_show_tooltip),
                 r_tog("F3 Debug Food Stats", "Display saturation & exhaustion on debug screen", c.show_debug_stats),
+                r_tog("Highlight Full Hunger Bar", "Outline every active food drumstick cleanly", c.highlight_full_bar),
+                r_val("Preview Pulse Speed", "Animation speed for held food saturation flash", format!("{}%", c.pulse_speed_pct)),
             ]
         }
         1 => {
@@ -229,6 +279,7 @@ pub fn mod_setting_rows(v: &VoltExtras, idx: u8) -> Vec<SettingRow> {
         10 => {
             let c = &v.waypoints;
             vec![
+                r_val("Waypoint Manager", "View, recolor, share coords & delete saved waypoints", "Manage".into()),
                 r_val("Add Waypoint Here", "Save a new waypoint at your current position", "+ Save".into()),
                 r_val("Clear Death Markers", "Remove saved death waypoints", "Clear".into()),
                 r_tog("Auto Death Waypoint", "Save marker automatically on death", c.auto_death_waypoint),
@@ -522,9 +573,13 @@ pub fn mod_setting_rows(v: &VoltExtras, idx: u8) -> Vec<SettingRow> {
         43 => {
             let c = &v.look_inspector;
             vec![
-                r_tog("Show Targeted Block", "Top HUD pill with looked-at block", c.show_blocks),
-                r_tog("Show Targeted Entity", "Show mob/player name under crosshair", c.show_mob_health),
-                r_tog("Compact Mode", "Hide XYZ block coordinates in pill", c.compact),
+                r_tog("Show Targeted Block", "Top HUD card with looked-at block", c.show_blocks),
+                r_tog("Show 3D Block/Item Icon", "Render looked-at block in 3D inside Jade card", c.show_3d_icon),
+                r_tog("Show Targeted Entity", "Show mob/player name & HP bar under crosshair", c.show_mob_health),
+                r_tog("Tool & Break Hint", "Display recommended tool / breakable status", c.show_tool_hint),
+                r_tog("Show Mod Source", "Display Minecraft / mod namespace in blue", c.show_mod_source),
+                r_tog("Compact Mode", "Hide XYZ block coordinates in card", c.compact),
+                r_val("Top Bar Offset", "Vertical clearance below top touch bar", format!("{}px", c.y_offset)),
             ]
         }
         44 => {
@@ -590,7 +645,7 @@ pub fn mod_setting_rows(v: &VoltExtras, idx: u8) -> Vec<SettingRow> {
                 r_tog("Armor Stand Presets", "Enable quick pose presets", c.armor_stand_presets),
             ]
         }
-        _ => {
+        51 => {
             let c = &v.dynamic_lights;
             vec![
                 r_tog("Held Light Items", "Torches, glowstone & lanterns emit light in hand", c.held_items),
@@ -599,10 +654,320 @@ pub fn mod_setting_rows(v: &VoltExtras, idx: u8) -> Vec<SettingRow> {
                 r_val("Minimum Light Level", "Clamp minimum emitted light level", format!("{}", c.min_level)),
             ]
         }
+        52 => {
+            let c = &v.low_shield;
+            vec![
+                r_val("Shield Drop", "Lower 1st-person shield height", format!("{}%", c.shield_drop_pct)),
+                r_val("Offhand Drop", "Lower offhand item/totem height", format!("{}%", c.offhand_drop_pct)),
+                r_val("Mainhand Drop", "Lower mainhand weapon height", format!("{}%", c.mainhand_drop_pct)),
+                r_tog("Hide Blocking Tilt", "Keep view steady while raising shield", c.hide_blocking_tilt),
+            ]
+        }
+        53 => {
+            let c = &v.clean_view;
+            vec![
+                r_tog("Hide Self Potion Swirls", "Stop your own effect particles blocking sight", c.hide_self_potions),
+                r_tog("Hide Ambient Beacons", "Suppress ambient beacon swirl particles", c.hide_ambient_beacons),
+                r_tog("Keep Enemy Particles", "Still render opponents' potion particles", c.keep_enemy_particles),
+            ]
+        }
+        54 => {
+            let c = &v.name_tags_plus;
+            vec![
+                r_tog("Show Own NameTag", "Display your own nametag in 3rd-person", c.show_own_nametag),
+                r_tog("Show Distance", "Append distance in meters on player tags", c.show_distance),
+                r_tog("Show Health Tag", "Append HP badge on player nametags", c.show_hp_tag),
+                r_tog("No Sneak Fade", "Keep tags bright even when sneaking", c.no_sneak_fade),
+            ]
+        }
+        55 => {
+            let c = &v.hit_color;
+            vec![
+                r_val("Hit Flash Color", "Tint color when hitting entities", c.color.label().to_owned()),
+                r_val("Flash Intensity", "Damage flash opacity strength", format!("{}%", c.intensity_pct)),
+                r_tog("Flash Worn Armor", "Tint equipped armor pieces during hurt flash", c.flash_armor),
+            ]
+        }
+        56 => {
+            let c = &v.crit_ring;
+            vec![
+                r_tog("Airborne CRIT Badge", "Show CRIT READY cue when falling for a crit", c.show_crit_badge),
+                r_tog("Attack Cooldown Bar", "Draw compact swing recharge bar under crosshair", c.show_cooldown_bar),
+                r_val("Crit Accent Color", "Badge & bar highlight color", c.crit_color.label().to_owned()),
+            ]
+        }
+        57 => {
+            let c = &v.bow_charge;
+            vec![
+                r_tog("Draw % Progress Bar", "Show bow/crossbow pull percentage", c.show_pct_bar),
+                r_tog("Full Draw Chime", "Audio ding when bow reaches 100% power", c.full_draw_chime),
+                r_tog("Auto-Release at 100%", "Release arrow automatically at max charge", c.auto_release_full),
+                r_val("HUD Corner", "Corner for bow gauge", c.corner.label().to_owned()),
+            ]
+        }
+        58 => {
+            let c = &v.cooldown_hud;
+            vec![
+                r_tog("Track Ender Pearls", "Show live pearl throw cooldown", c.track_pearls),
+                r_tog("Track Wind Charges", "Show wind charge cooldown", c.track_wind_charge),
+                r_tog("Track Chorus & Gapples", "Show chorus fruit & enchanted apple cooldowns", c.track_chorus_gapple),
+                r_val("HUD Corner", "Corner for cooldown pill", c.corner.label().to_owned()),
+            ]
+        }
+        59 => {
+            let c = &v.reach_box;
+            vec![
+                r_tog("Highlight Target Box", "Draw wireframe box on aimed entity in 3.0m reach", c.draw_target_box),
+                r_tog("3.0m Reach Ring", "Draw ground reach circle around target", c.draw_reach_ring),
+                r_tog("Recolor on Crit Ready", "Turn box gold/orange when airborne crit armed", c.color_on_crit),
+                r_val("Box Color", "Wireframe highlight color", c.color.label().to_owned()),
+            ]
+        }
+        60 => {
+            let c = &v.minimap_radar;
+            vec![
+                r_val("Minimap Size", "Pixel width & height of minimap", format!("{}px", c.size_px)),
+                r_val("Terrain Radius", "Blocks sampled around player", format!("{}m", c.zoom_blocks)),
+                r_tog("Show Mob Dots", "Render nearby mob blips", c.show_mobs),
+                r_tog("Show Player Dots", "Render nearby player blips", c.show_players),
+                r_tog("Show Waypoints", "Render saved waypoint pins", c.show_waypoints),
+                r_val("HUD Corner", "Screen corner for minimap", c.corner.label().to_owned()),
+            ]
+        }
+        61 => {
+            let c = &v.potion_hud;
+            vec![
+                r_tog("Show MM:SS Timers", "Display remaining time on effect pills", c.show_timers),
+                r_tog("Blink Under 10s", "Pulse icon when effect is nearly expired", c.blink_under_10s),
+                r_tog("Compact Pills", "Use slim horizontal chips", c.compact_pills),
+                r_val("HUD Corner", "Screen corner for effects bar", c.corner.label().to_owned()),
+            ]
+        }
+        62 => {
+            let c = &v.durability_warn;
+            vec![
+                r_val("Alert Threshold", "Trigger warning below durability %", format!("{}%", c.warn_pct)),
+                r_tog("Check Worn Armor", "Monitor helmet, chest, legs & boots", c.check_armor),
+                r_tog("Check Held Tool / Shield", "Monitor active mainhand & offhand items", c.check_held),
+                r_tog("Play Warning Chime", "Sound alert when durability crosses threshold", c.play_chime),
+            ]
+        }
+        63 => {
+            let c = &v.biome_title;
+            vec![
+                r_tog("Biome Entry Banner", "Show title banner when stepping into new biome", c.show_biome_changes),
+                r_tog("Dimension Entry Banner", "Show banner when entering Nether/End/Overworld", c.show_dimension_changes),
+                r_val("Display Duration", "Banner visibility seconds", format!("{}s", c.display_secs)),
+                r_tog("Include Coordinates", "Show XYZ subtitle beneath biome name", c.show_sub_coords),
+            ]
+        }
+        64 => {
+            let c = &v.xp_tracker;
+            vec![
+                r_tog("XP to Next Level", "Show exact points & % needed to level up", c.show_next_level_xp),
+                r_tog("Mending Repair Summary", "Show total missing durability across Mending gear", c.show_mending_summary),
+                r_val("HUD Corner", "Corner for XP tracker pill", c.corner.label().to_owned()),
+            ]
+        }
+        65 => {
+            let c = &v.inventory_hud;
+            vec![
+                r_tog("Show 3x9 Inventory Grid", "Compact translucent grid of main inventory", c.show_3x9_grid),
+                r_tog("Show Free Slots Counter", "Display empty slot count badge", c.show_free_slots),
+                r_val("Background Opacity", "Transparency of inventory preview card", format!("{}%", c.bg_opacity_pct)),
+                r_val("HUD Corner", "Screen corner for preview grid", c.corner.label().to_owned()),
+            ]
+        }
+        66 => {
+            let c = &v.tab_ping;
+            vec![
+                r_tog("Show Ping (ms)", "Display server latency next to online status", c.show_ping_ms),
+                r_tog("Show Player Count", "Display active nearby/server player count", c.show_player_count),
+                r_tog("Show Dimension Tag", "Display Overworld/Nether/End pill", c.show_dim_tag),
+                r_val("HUD Corner", "Corner for status list", c.corner.label().to_owned()),
+            ]
+        }
+        67 => {
+            let c = &v.moon_phase;
+            vec![
+                r_tog("Show Moon Phase", "Current lunar phase & illumination %", c.show_moon_phase),
+                r_tog("Swamp Slime Rating", "Indicate high/low slime spawn moon phase", c.show_slime_rating),
+                r_tog("Phantom Insomnia Timer", "Warn after 3 in-game days without sleep", c.show_insomnia_warn),
+                r_val("HUD Corner", "Corner for lunar pill", c.corner.label().to_owned()),
+            ]
+        }
+        68 => {
+            let c = &v.session_stats;
+            vec![
+                r_val("Reset Session Stats", "Zero out kills, blocks & distance", "Reset".into()),
+                r_tog("Track Kills", "Count mobs & players defeated", c.show_kills),
+                r_tog("Track Blocks", "Count blocks mined & placed", c.show_blocks),
+                r_tog("Track Distance", "Measure blocks traveled this session", c.show_distance),
+                r_val("HUD Corner", "Corner for stats pill", c.corner.label().to_owned()),
+            ]
+        }
+        69 => {
+            let c = &v.cameraoverhaul;
+            vec![
+                r_val("Strafe Roll Tilt", "Camera lean when strafing left/right", format!("{}%", c.strafe_roll_pct)),
+                r_val("Turning Roll Tilt", "Camera lean when turning quickly", format!("{}%", c.turn_roll_pct)),
+                r_val("Elytra Bank Tilt", "Dynamic roll while gliding with Elytra", format!("{}%", c.elytra_bank_pct)),
+                r_tog("Clamp Sprint FOV", "Prevent extreme speed FOV distortion", c.clamp_sprint_fov),
+            ]
+        }
+        70 => {
+            let c = &v.weather_sound;
+            vec![
+                r_tog("Suppress Lightning Flash", "Remove blinding white sky flash on strikes", c.suppress_lightning_flash),
+                r_tog("Limit Rain Splashes", "Reduce heavy rain splash particles for FPS", c.limit_rain_splashes),
+                r_tog("Mute Thunder Shake", "Keep camera steady during thunderstorms", c.mute_thunder_shake),
+            ]
+        }
+        71 => {
+            let c = &v.custom_glint;
+            vec![
+                r_val("Glint Color Preset", "Visual tint style for enchanted items", c.preset.label().to_owned()),
+                r_val("Glint Speed", "Shimmer animation speed", format!("{}%", c.speed_pct)),
+                r_val("Glint Strength", "Shimmer brightness alpha", format!("{}%", c.strength_pct)),
+                r_tog("Compact Item Scale", "Slightly shrink 1st-person held items", c.compact_item_scale),
+            ]
+        }
+        72 => {
+            let c = &v.clear_caves;
+            vec![
+                r_tog("Remove Void/Bedrock Fog", "Clear dark underground distance haze", c.remove_void_fog),
+                r_tog("Smooth Night Vision", "Eliminate flickering in last 10s of Night Vision", c.smooth_night_vision),
+                r_tog("Boost Lava Clarity", "Push back thick orange fog near lava", c.boost_lava_clarity),
+            ]
+        }
+        73 => {
+            let c = &v.player_highlight;
+            vec![
+                r_tog("Highlight Players", "Draw clean outline box around visible players", c.highlight_players),
+                r_tog("Highlight Hostiles", "Draw outline box around nearby monster mobs", c.highlight_hostiles),
+                r_val("Scan Range", "Maximum highlight distance", format!("{}m", c.range)),
+                r_val("Outline Color", "Box highlight color", c.color.label().to_owned()),
+            ]
+        }
+        74 => {
+            let c = &v.litematica_grid;
+            vec![
+                r_val("Set Point A (Here)", "Anchor first corner of 3D measure box", "Set A".into()),
+                r_val("Set Point B (Here)", "Anchor second corner of 3D measure box", "Set B".into()),
+                r_val("Clear Ruler Box", "Reset current Point A & B selection", "Clear".into()),
+                r_tog("Show Volume HUD", "Display dX x dY x dZ and total block volume", c.show_volume_hud),
+                r_tog("Show 3D Wireframe Box", "Render bounding box & inner grid lines", c.show_3d_box),
+                r_val("Box Color", "Wireframe outline color", c.color.label().to_owned()),
+            ]
+        }
+        75 => {
+            let c = &v.death_history;
+            vec![
+                r_val("Waypoint Manager", "View, manage & delete death/home markers", "Manage".into()),
+                r_val("Set Home Bookmark", "Save current coordinates as your Home point", "Set Home".into()),
+                r_val("History Limit", "How many recent deaths to keep", format!("{}", c.keep_count)),
+                r_tog("Show Home Distance Pill", "Keep Home distance badge on HUD", c.show_home_pill),
+                r_tog("Auto-Log Death History", "Write death spot & dimension to chat", c.auto_log_chat),
+                r_val("HUD Corner", "Corner for death/home pill", c.corner.label().to_owned()),
+            ]
+        }
+        76 => {
+            let c = &v.chunk_pillars;
+            vec![
+                r_tog("Chunk Corner Pillars", "Vertical glowing pillars at chunk corners", c.draw_corner_pillars),
+                r_tog("Biome Transition Lines", "Ground markers where biomes change", c.draw_biome_borders),
+                r_val("Pillar Height", "Vertical span of corner markers", format!("{}m", c.pillar_height)),
+            ]
+        }
+        77 => {
+            let c = &v.offhand_torch;
+            vec![
+                r_tog("Auto-Place in Dark", "Place offhand torch when standing in dark caves", c.auto_place_dark),
+                r_val("Light Threshold", "Trigger placement below light level", format!("L{}", c.light_threshold)),
+                r_tog("Low Torches Alert", "Warn when offhand torches drop below 8", c.notify_low_torches),
+            ]
+        }
+        78 => {
+            let c = &v.chat_mention;
+            vec![
+                r_tog("Ping on Username", "Chime & banner when someone says your name", c.alert_on_username),
+                r_tog("Ping on TPA / Raid", "Alert on /tpa, whisper, or raid keywords", c.alert_on_tpa_msg),
+                r_tog("Play Ping Chime", "Audible notification sound on mention", c.play_ping_chime),
+                r_tog("Show Mention Banner", "Flash top banner with mentioning message", c.show_popup_banner),
+            ]
+        }
+        79 => {
+            let c = &v.drop_guard;
+            vec![
+                r_tog("Protect Tools & Weapons", "Prevent accidental Q-drop of swords/picks/axes", c.protect_tools_weapons),
+                r_tog("Protect Totems", "Prevent dropping Totems of Undying", c.protect_totems),
+                r_tog("Lock Hotbar Slots 1-3", "Guard primary combat/tool slots", c.lock_slots_1_to_3),
+                r_tog("Double-Tap Bypass", "Press Drop twice within 1s to intentionally drop", c.double_tap_bypass),
+            ]
+        }
+        80 => {
+            let c = &v.hotbar_restock;
+            vec![
+                r_tog("Restock Building Blocks", "Auto-pull matching blocks when hotbar stack runs out", c.restock_blocks),
+                r_tog("Restock Pearls & Rockets", "Auto-refill ender pearls & firework stacks", c.restock_pearls_fireworks),
+                r_tog("Restock Food", "Auto-refill food stacks from main inventory", c.restock_food),
+                r_tog("Restock Toast", "Show brief confirmation when slot refills", c.show_toast),
+            ]
+        }
+        81 => {
+            let c = &v.photo_mode;
+            vec![
+                r_val("Toggle Photo Mode", "Enter or exit clean HUD-free photo view now", if c.active { "Active".into() } else { "Activate".into() }),
+                r_tog("Hide All HUD", "Hide hotbar, crosshairs, chat & overlays", c.hide_all_hud),
+                r_tog("Rule-of-Thirds Guides", "Draw subtle composition grid lines", c.show_frame_guides),
+                r_tog("Pair With Freecam", "Freeze body & move camera freely", c.lock_freecam_pose),
+            ]
+        }
+        82 => {
+            let c = &v.jei;
+            vec![
+                r_val("Open / Toggle JEI Overlay", "Open searchable item & recipe browser now", if c.overlay_open { "Open".into() } else { "Toggle".into() }),
+                r_tog("Show Beside Inventory", "Auto-dock JEI panel when opening Inventory/Crafting", c.show_in_inventory),
+                r_tog("Show Furnace / Cooking", "Include smelting, blasting & smoking recipes", c.show_cooking_recipes),
+                r_tog("Show Item IDs", "Display minecraft:item_id under tooltip header", c.show_item_ids),
+                r_tog("Compact Grid", "Tighter 5-column item tiles for smaller screens", c.compact_grid),
+            ]
+        }
+        _ => {
+            let c = &v.cinematic_timelapse;
+            vec![
+                r_val("Start / Stop Time Lapse", "Begin countdown & launch cinematic timelapse", "Start / Stop".into()),
+                r_val("Time Lapse Start Delay", "Seconds countdown before timelapse starts (0/3/5/10/15/30)", format!("{}s", c.start_delay_secs)),
+                r_val("Camera Path Mode", "Smooth camera motion path during timelapse", c.path_mode.label().to_owned()),
+                r_val("Motion Speed", "Camera orbit / pan speed degrees per sec", format!("{}°/s", c.orbit_speed_deg)),
+                r_tog("Hide HUD While Active", "Hide touch buttons & bars during timelapse", c.hide_hud),
+                r_tog("Show Countdown Timer", "Display live 'Starts in Xs' overlay before start", c.show_countdown),
+            ]
+        }
     }
 }
 
 pub fn click_mod_setting_row(v: &mut VoltExtras, idx: u8, row: usize) -> Option<VoltQuickAction> {
+    let base_len = base_mod_setting_rows(v, idx).len();
+    if row >= base_len {
+        return match row - base_len {
+            0 => Some(VoltQuickAction::OpenModKeyPicker {
+                mod_id: idx,
+                is_use: false,
+            }),
+            1 => Some(VoltQuickAction::OpenModKeyPicker {
+                mod_id: idx,
+                is_use: true,
+            }),
+            2 => {
+                if let Some(b) = v.binds.0.get_mut(usize::from(idx)) {
+                    b.mode = b.mode.next();
+                }
+                None
+            }
+            _ => None,
+        };
+    }
     match (idx, row) {
         (0, 0) => v.appleskin.show_saturation_overlay = !v.appleskin.show_saturation_overlay,
         (0, 1) => v.appleskin.show_exhaustion_underlay = !v.appleskin.show_exhaustion_underlay,
@@ -611,6 +976,15 @@ pub fn click_mod_setting_row(v: &mut VoltExtras, idx: u8, row: usize) -> Option<
         (0, 4) => v.appleskin.show_food_tooltip = !v.appleskin.show_food_tooltip,
         (0, 5) => v.appleskin.always_show_tooltip = !v.appleskin.always_show_tooltip,
         (0, 6) => v.appleskin.show_debug_stats = !v.appleskin.show_debug_stats,
+        (0, 7) => v.appleskin.highlight_full_bar = !v.appleskin.highlight_full_bar,
+        (0, 8) => {
+            v.appleskin.pulse_speed_pct = match v.appleskin.pulse_speed_pct {
+                100 => 150,
+                150 => 200,
+                200 => 50,
+                _ => 100,
+            };
+        }
 
         (1, 0) => v.crystal_optimizer.instant_break = !v.crystal_optimizer.instant_break,
         (1, 1) => v.crystal_optimizer.respect_weakness = !v.crystal_optimizer.respect_weakness,
@@ -710,12 +1084,13 @@ pub fn click_mod_setting_row(v: &mut VoltExtras, idx: u8, row: usize) -> Option<
         (9, 2) => v.elytra_hud.show_fireworks = !v.elytra_hud.show_fireworks,
         (9, 3) => v.elytra_hud.show_mace_damage = !v.elytra_hud.show_mace_damage,
 
-        (10, 0) => return Some(VoltQuickAction::AddWaypointHere),
-        (10, 1) => return Some(VoltQuickAction::ClearDeathWaypoints),
-        (10, 2) => v.waypoints.auto_death_waypoint = !v.waypoints.auto_death_waypoint,
-        (10, 3) => v.waypoints.show_beacons = !v.waypoints.show_beacons,
-        (10, 4) => v.waypoints.show_hud_distances = !v.waypoints.show_hud_distances,
-        (10, 5) => {
+        (10, 0) => return Some(VoltQuickAction::OpenWaypointManager),
+        (10, 1) => return Some(VoltQuickAction::AddWaypointHere),
+        (10, 2) => return Some(VoltQuickAction::ClearDeathWaypoints),
+        (10, 3) => v.waypoints.auto_death_waypoint = !v.waypoints.auto_death_waypoint,
+        (10, 4) => v.waypoints.show_beacons = !v.waypoints.show_beacons,
+        (10, 5) => v.waypoints.show_hud_distances = !v.waypoints.show_hud_distances,
+        (10, 6) => {
             v.waypoints.max_distance = match v.waypoints.max_distance {
                 500 => 1000,
                 1000 => 2500,
@@ -986,8 +1361,19 @@ pub fn click_mod_setting_row(v: &mut VoltExtras, idx: u8, row: usize) -> Option<
         (42, 3) => v.auto_fish.auto_recast = !v.auto_fish.auto_recast,
 
         (43, 0) => v.look_inspector.show_blocks = !v.look_inspector.show_blocks,
-        (43, 1) => v.look_inspector.show_mob_health = !v.look_inspector.show_mob_health,
-        (43, 2) => v.look_inspector.compact = !v.look_inspector.compact,
+        (43, 1) => v.look_inspector.show_3d_icon = !v.look_inspector.show_3d_icon,
+        (43, 2) => v.look_inspector.show_mob_health = !v.look_inspector.show_mob_health,
+        (43, 3) => v.look_inspector.show_tool_hint = !v.look_inspector.show_tool_hint,
+        (43, 4) => v.look_inspector.show_mod_source = !v.look_inspector.show_mod_source,
+        (43, 5) => v.look_inspector.compact = !v.look_inspector.compact,
+        (43, 6) => {
+            v.look_inspector.y_offset = match v.look_inspector.y_offset {
+                12 => 36,
+                36 => 52,
+                52 => 72,
+                _ => 12,
+            };
+        }
 
         (44, 0) => v.sound_muffler.mute_portals = !v.sound_muffler.mute_portals,
         (44, 1) => v.sound_muffler.mute_ghasts = !v.sound_muffler.mute_ghasts,
@@ -1052,6 +1438,302 @@ pub fn click_mod_setting_row(v: &mut VoltExtras, idx: u8, row: usize) -> Option<
                 _ => 0,
             };
         }
+
+        (52, 0) => {
+            v.low_shield.shield_drop_pct = match v.low_shield.shield_drop_pct {
+                25 => 45,
+                45 => 65,
+                65 => 0,
+                _ => 25,
+            };
+        }
+        (52, 1) => {
+            v.low_shield.offhand_drop_pct = match v.low_shield.offhand_drop_pct {
+                25 => 45,
+                45 => 65,
+                65 => 0,
+                _ => 25,
+            };
+        }
+        (52, 2) => {
+            v.low_shield.mainhand_drop_pct = match v.low_shield.mainhand_drop_pct {
+                0 => 15,
+                15 => 30,
+                30 => 45,
+                _ => 0,
+            };
+        }
+        (52, 3) => v.low_shield.hide_blocking_tilt = !v.low_shield.hide_blocking_tilt,
+
+        (53, 0) => v.clean_view.hide_self_potions = !v.clean_view.hide_self_potions,
+        (53, 1) => v.clean_view.hide_ambient_beacons = !v.clean_view.hide_ambient_beacons,
+        (53, 2) => v.clean_view.keep_enemy_particles = !v.clean_view.keep_enemy_particles,
+
+        (54, 0) => v.name_tags_plus.show_own_nametag = !v.name_tags_plus.show_own_nametag,
+        (54, 1) => v.name_tags_plus.show_distance = !v.name_tags_plus.show_distance,
+        (54, 2) => v.name_tags_plus.show_hp_tag = !v.name_tags_plus.show_hp_tag,
+        (54, 3) => v.name_tags_plus.no_sneak_fade = !v.name_tags_plus.no_sneak_fade,
+
+        (55, 0) => v.hit_color.color = v.hit_color.color.next_any(),
+        (55, 1) => {
+            v.hit_color.intensity_pct = match v.hit_color.intensity_pct {
+                40 => 70,
+                70 => 100,
+                _ => 40,
+            };
+        }
+        (55, 2) => v.hit_color.flash_armor = !v.hit_color.flash_armor,
+
+        (56, 0) => v.crit_ring.show_crit_badge = !v.crit_ring.show_crit_badge,
+        (56, 1) => v.crit_ring.show_cooldown_bar = !v.crit_ring.show_cooldown_bar,
+        (56, 2) => v.crit_ring.crit_color = v.crit_ring.crit_color.next_any(),
+
+        (57, 0) => v.bow_charge.show_pct_bar = !v.bow_charge.show_pct_bar,
+        (57, 1) => v.bow_charge.full_draw_chime = !v.bow_charge.full_draw_chime,
+        (57, 2) => v.bow_charge.auto_release_full = !v.bow_charge.auto_release_full,
+        (57, 3) => v.bow_charge.corner = v.bow_charge.corner.next(),
+
+        (58, 0) => v.cooldown_hud.track_pearls = !v.cooldown_hud.track_pearls,
+        (58, 1) => v.cooldown_hud.track_wind_charge = !v.cooldown_hud.track_wind_charge,
+        (58, 2) => v.cooldown_hud.track_chorus_gapple = !v.cooldown_hud.track_chorus_gapple,
+        (58, 3) => v.cooldown_hud.corner = v.cooldown_hud.corner.next(),
+
+        (59, 0) => v.reach_box.draw_target_box = !v.reach_box.draw_target_box,
+        (59, 1) => v.reach_box.draw_reach_ring = !v.reach_box.draw_reach_ring,
+        (59, 2) => v.reach_box.color_on_crit = !v.reach_box.color_on_crit,
+        (59, 3) => v.reach_box.color = v.reach_box.color.next_any(),
+
+        (60, 0) => {
+            v.minimap_radar.size_px = match v.minimap_radar.size_px {
+                68 => 84,
+                84 => 108,
+                _ => 68,
+            };
+        }
+        (60, 1) => {
+            v.minimap_radar.zoom_blocks = match v.minimap_radar.zoom_blocks {
+                24 => 32,
+                32 => 48,
+                _ => 24,
+            };
+        }
+        (60, 2) => v.minimap_radar.show_mobs = !v.minimap_radar.show_mobs,
+        (60, 3) => v.minimap_radar.show_players = !v.minimap_radar.show_players,
+        (60, 4) => v.minimap_radar.show_waypoints = !v.minimap_radar.show_waypoints,
+        (60, 5) => v.minimap_radar.corner = v.minimap_radar.corner.next(),
+
+        (61, 0) => v.potion_hud.show_timers = !v.potion_hud.show_timers,
+        (61, 1) => v.potion_hud.blink_under_10s = !v.potion_hud.blink_under_10s,
+        (61, 2) => v.potion_hud.compact_pills = !v.potion_hud.compact_pills,
+        (61, 3) => v.potion_hud.corner = v.potion_hud.corner.next(),
+
+        (62, 0) => {
+            v.durability_warn.warn_pct = match v.durability_warn.warn_pct {
+                10 => 15,
+                15 => 25,
+                25 => 35,
+                _ => 10,
+            };
+        }
+        (62, 1) => v.durability_warn.check_armor = !v.durability_warn.check_armor,
+        (62, 2) => v.durability_warn.check_held = !v.durability_warn.check_held,
+        (62, 3) => v.durability_warn.play_chime = !v.durability_warn.play_chime,
+
+        (63, 0) => v.biome_title.show_biome_changes = !v.biome_title.show_biome_changes,
+        (63, 1) => v.biome_title.show_dimension_changes = !v.biome_title.show_dimension_changes,
+        (63, 2) => {
+            v.biome_title.display_secs = match v.biome_title.display_secs {
+                2 => 3,
+                3 => 5,
+                _ => 2,
+            };
+        }
+        (63, 3) => v.biome_title.show_sub_coords = !v.biome_title.show_sub_coords,
+
+        (64, 0) => v.xp_tracker.show_next_level_xp = !v.xp_tracker.show_next_level_xp,
+        (64, 1) => v.xp_tracker.show_mending_summary = !v.xp_tracker.show_mending_summary,
+        (64, 2) => v.xp_tracker.corner = v.xp_tracker.corner.next(),
+
+        (65, 0) => v.inventory_hud.show_3x9_grid = !v.inventory_hud.show_3x9_grid,
+        (65, 1) => v.inventory_hud.show_free_slots = !v.inventory_hud.show_free_slots,
+        (65, 2) => {
+            v.inventory_hud.bg_opacity_pct = match v.inventory_hud.bg_opacity_pct {
+                45 => 65,
+                65 => 85,
+                _ => 45,
+            };
+        }
+        (65, 3) => v.inventory_hud.corner = v.inventory_hud.corner.next(),
+
+        (66, 0) => v.tab_ping.show_ping_ms = !v.tab_ping.show_ping_ms,
+        (66, 1) => v.tab_ping.show_player_count = !v.tab_ping.show_player_count,
+        (66, 2) => v.tab_ping.show_dim_tag = !v.tab_ping.show_dim_tag,
+        (66, 3) => v.tab_ping.corner = v.tab_ping.corner.next(),
+
+        (67, 0) => v.moon_phase.show_moon_phase = !v.moon_phase.show_moon_phase,
+        (67, 1) => v.moon_phase.show_slime_rating = !v.moon_phase.show_slime_rating,
+        (67, 2) => v.moon_phase.show_insomnia_warn = !v.moon_phase.show_insomnia_warn,
+        (67, 3) => v.moon_phase.corner = v.moon_phase.corner.next(),
+
+        (68, 0) => return Some(VoltQuickAction::ResetSessionStats),
+        (68, 1) => v.session_stats.show_kills = !v.session_stats.show_kills,
+        (68, 2) => v.session_stats.show_blocks = !v.session_stats.show_blocks,
+        (68, 3) => v.session_stats.show_distance = !v.session_stats.show_distance,
+        (68, 4) => v.session_stats.corner = v.session_stats.corner.next(),
+
+        (69, 0) => {
+            v.cameraoverhaul.strafe_roll_pct = match v.cameraoverhaul.strafe_roll_pct {
+                25 => 40,
+                40 => 70,
+                70 => 0,
+                _ => 25,
+            };
+        }
+        (69, 1) => {
+            v.cameraoverhaul.turn_roll_pct = match v.cameraoverhaul.turn_roll_pct {
+                20 => 30,
+                30 => 60,
+                60 => 0,
+                _ => 20,
+            };
+        }
+        (69, 2) => {
+            v.cameraoverhaul.elytra_bank_pct = match v.cameraoverhaul.elytra_bank_pct {
+                40 => 70,
+                70 => 100,
+                100 => 0,
+                _ => 40,
+            };
+        }
+        (69, 3) => v.cameraoverhaul.clamp_sprint_fov = !v.cameraoverhaul.clamp_sprint_fov,
+
+        (70, 0) => v.weather_sound.suppress_lightning_flash = !v.weather_sound.suppress_lightning_flash,
+        (70, 1) => v.weather_sound.limit_rain_splashes = !v.weather_sound.limit_rain_splashes,
+        (70, 2) => v.weather_sound.mute_thunder_shake = !v.weather_sound.mute_thunder_shake,
+
+        (71, 0) => v.custom_glint.preset = v.custom_glint.preset.next(),
+        (71, 1) => {
+            v.custom_glint.speed_pct = match v.custom_glint.speed_pct {
+                50 => 100,
+                100 => 150,
+                150 => 200,
+                _ => 50,
+            };
+        }
+        (71, 2) => {
+            v.custom_glint.strength_pct = match v.custom_glint.strength_pct {
+                50 => 90,
+                90 => 100,
+                100 => 25,
+                _ => 50,
+            };
+        }
+        (71, 3) => v.custom_glint.compact_item_scale = !v.custom_glint.compact_item_scale,
+
+        (72, 0) => v.clear_caves.remove_void_fog = !v.clear_caves.remove_void_fog,
+        (72, 1) => v.clear_caves.smooth_night_vision = !v.clear_caves.smooth_night_vision,
+        (72, 2) => v.clear_caves.boost_lava_clarity = !v.clear_caves.boost_lava_clarity,
+
+        (73, 0) => v.player_highlight.highlight_players = !v.player_highlight.highlight_players,
+        (73, 1) => v.player_highlight.highlight_hostiles = !v.player_highlight.highlight_hostiles,
+        (73, 2) => {
+            v.player_highlight.range = match v.player_highlight.range {
+                24 => 32,
+                32 => 48,
+                _ => 24,
+            };
+        }
+        (73, 3) => v.player_highlight.color = v.player_highlight.color.next_any(),
+
+        (74, 0) => return Some(VoltQuickAction::SetRulerPointA),
+        (74, 1) => return Some(VoltQuickAction::SetRulerPointB),
+        (74, 2) => return Some(VoltQuickAction::ClearRuler),
+        (74, 3) => v.litematica_grid.show_volume_hud = !v.litematica_grid.show_volume_hud,
+        (74, 4) => v.litematica_grid.show_3d_box = !v.litematica_grid.show_3d_box,
+        (74, 5) => v.litematica_grid.color = v.litematica_grid.color.next_any(),
+
+        (75, 0) => return Some(VoltQuickAction::OpenWaypointManager),
+        (75, 1) => return Some(VoltQuickAction::SetHomeWaypoint),
+        (75, 2) => {
+            v.death_history.keep_count = match v.death_history.keep_count {
+                3 => 5,
+                5 => 10,
+                _ => 3,
+            };
+        }
+        (75, 3) => v.death_history.show_home_pill = !v.death_history.show_home_pill,
+        (75, 4) => v.death_history.auto_log_chat = !v.death_history.auto_log_chat,
+        (75, 5) => v.death_history.corner = v.death_history.corner.next(),
+
+        (76, 0) => v.chunk_pillars.draw_corner_pillars = !v.chunk_pillars.draw_corner_pillars,
+        (76, 1) => v.chunk_pillars.draw_biome_borders = !v.chunk_pillars.draw_biome_borders,
+        (76, 2) => {
+            v.chunk_pillars.pillar_height = match v.chunk_pillars.pillar_height {
+                32 => 64,
+                64 => 128,
+                _ => 32,
+            };
+        }
+
+        (77, 0) => v.offhand_torch.auto_place_dark = !v.offhand_torch.auto_place_dark,
+        (77, 1) => {
+            v.offhand_torch.light_threshold = match v.offhand_torch.light_threshold {
+                2 => 4,
+                4 => 6,
+                _ => 2,
+            };
+        }
+        (77, 2) => v.offhand_torch.notify_low_torches = !v.offhand_torch.notify_low_torches,
+
+        (78, 0) => v.chat_mention.alert_on_username = !v.chat_mention.alert_on_username,
+        (78, 1) => v.chat_mention.alert_on_tpa_msg = !v.chat_mention.alert_on_tpa_msg,
+        (78, 2) => v.chat_mention.play_ping_chime = !v.chat_mention.play_ping_chime,
+        (78, 3) => v.chat_mention.show_popup_banner = !v.chat_mention.show_popup_banner,
+
+        (79, 0) => v.drop_guard.protect_tools_weapons = !v.drop_guard.protect_tools_weapons,
+        (79, 1) => v.drop_guard.protect_totems = !v.drop_guard.protect_totems,
+        (79, 2) => v.drop_guard.lock_slots_1_to_3 = !v.drop_guard.lock_slots_1_to_3,
+        (79, 3) => v.drop_guard.double_tap_bypass = !v.drop_guard.double_tap_bypass,
+
+        (80, 0) => v.hotbar_restock.restock_blocks = !v.hotbar_restock.restock_blocks,
+        (80, 1) => v.hotbar_restock.restock_pearls_fireworks = !v.hotbar_restock.restock_pearls_fireworks,
+        (80, 2) => v.hotbar_restock.restock_food = !v.hotbar_restock.restock_food,
+        (80, 3) => v.hotbar_restock.show_toast = !v.hotbar_restock.show_toast,
+
+        (81, 0) => return Some(VoltQuickAction::TogglePhotoMode),
+        (81, 1) => v.photo_mode.hide_all_hud = !v.photo_mode.hide_all_hud,
+        (81, 2) => v.photo_mode.show_frame_guides = !v.photo_mode.show_frame_guides,
+        (81, 3) => v.photo_mode.lock_freecam_pose = !v.photo_mode.lock_freecam_pose,
+
+        (82, 0) => return Some(VoltQuickAction::ToggleJei),
+        (82, 1) => v.jei.show_in_inventory = !v.jei.show_in_inventory,
+        (82, 2) => v.jei.show_cooking_recipes = !v.jei.show_cooking_recipes,
+        (82, 3) => v.jei.show_item_ids = !v.jei.show_item_ids,
+        (82, 4) => v.jei.compact_grid = !v.jei.compact_grid,
+
+        (83, 0) => return Some(VoltQuickAction::StartStopTimelapse),
+        (83, 1) => {
+            v.cinematic_timelapse.start_delay_secs = match v.cinematic_timelapse.start_delay_secs {
+                0 => 3,
+                3 => 5,
+                5 => 10,
+                10 => 15,
+                15 => 30,
+                _ => 0,
+            };
+        }
+        (83, 2) => v.cinematic_timelapse.path_mode = v.cinematic_timelapse.path_mode.next(),
+        (83, 3) => {
+            v.cinematic_timelapse.orbit_speed_deg = match v.cinematic_timelapse.orbit_speed_deg {
+                0 => 2,
+                2 => 5,
+                5 => 10,
+                10 => 20,
+                _ => 0,
+            };
+        }
+        (83, 4) => v.cinematic_timelapse.hide_hud = !v.cinematic_timelapse.hide_hud,
+        (83, 5) => v.cinematic_timelapse.show_countdown = !v.cinematic_timelapse.show_countdown,
         _ => {}
     }
     None

@@ -1,9 +1,74 @@
-//! Configuration structs, metadata, Modrinth project slugs, and persistence
-//! for all 52 built-in Volt+ Extras mods (every mod defaults to `enabled: false`).
+//! Configuration structs, metadata, Modrinth project slugs, keybinds, and persistence
+//! for all 84 built-in Volt+ Extras mods (every mod defaults to `enabled: false`).
 use crate::extras::Corner;
 use std::fmt::Write as _;
 
-pub const VOLT_MOD_COUNT: usize = 52;
+pub const VOLT_MOD_COUNT: usize = 84;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoltKeybindMode {
+    Tap,
+    Hold,
+}
+impl VoltKeybindMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Tap => "tap",
+            Self::Hold => "hold",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Tap => "Tap (Toggle)",
+            Self::Hold => "Hold (While Held)",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Tap => Self::Hold,
+            Self::Hold => Self::Tap,
+        }
+    }
+    pub fn parse(s: &str, default: Self) -> Self {
+        match s {
+            "tap" => Self::Tap,
+            "hold" => Self::Hold,
+            _ => default,
+        }
+    }
+}
+
+/// Smart per-mod default activation style (`Hold` for momentary camera/movement mods, `Tap` for toggles).
+pub fn default_keybind_mode_for_mod(id: u8) -> VoltKeybindMode {
+    match id {
+        4 | 16 | 25 | 47 | 59 => VoltKeybindMode::Hold, // Freelook, Zoomify, Freecam, Safe-Walk, PvP Reach Box
+        _ => VoltKeybindMode::Tap,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VoltModKeybind {
+    pub toggle_key: String,
+    pub use_key: String,
+    pub mode: VoltKeybindMode,
+}
+impl VoltModKeybind {
+    pub fn default_for_id(id: u8) -> Self {
+        Self {
+            toggle_key: String::new(),
+            use_key: String::new(),
+            mode: default_keybind_mode_for_mod(id),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VoltModKeybinds(pub [VoltModKeybind; VOLT_MOD_COUNT]);
+impl Default for VoltModKeybinds {
+    fn default() -> Self {
+        Self(std::array::from_fn(|i| VoltModKeybind::default_for_id(i as u8)))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VoltModCategory {
@@ -454,6 +519,107 @@ impl TimeMood {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlintColorPreset {
+    Vanilla,
+    Rainbow,
+    Gold,
+    Ice,
+    Crimson,
+    Emerald,
+    Off,
+}
+impl GlintColorPreset {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Vanilla => "vanilla",
+            Self::Rainbow => "rainbow",
+            Self::Gold => "gold",
+            Self::Ice => "ice",
+            Self::Crimson => "crimson",
+            Self::Emerald => "emerald",
+            Self::Off => "off",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Vanilla => "Vanilla Purple",
+            Self::Rainbow => "Rainbow",
+            Self::Gold => "Solar Gold",
+            Self::Ice => "Frost Cyan",
+            Self::Crimson => "Crimson",
+            Self::Emerald => "Emerald",
+            Self::Off => "Off",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Vanilla => Self::Rainbow,
+            Self::Rainbow => Self::Gold,
+            Self::Gold => Self::Ice,
+            Self::Ice => Self::Crimson,
+            Self::Crimson => Self::Emerald,
+            Self::Emerald => Self::Off,
+            Self::Off => Self::Vanilla,
+        }
+    }
+    pub fn parse(s: &str, default: Self) -> Self {
+        match s {
+            "vanilla" => Self::Vanilla,
+            "rainbow" => Self::Rainbow,
+            "gold" => Self::Gold,
+            "ice" => Self::Ice,
+            "crimson" => Self::Crimson,
+            "emerald" => Self::Emerald,
+            "off" => Self::Off,
+            _ => default,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimelapsePathMode {
+    Orbit,
+    DollyForward,
+    PanSide,
+    StaticTripod,
+}
+impl TimelapsePathMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Orbit => "orbit",
+            Self::DollyForward => "dolly",
+            Self::PanSide => "pan",
+            Self::StaticTripod => "static",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Orbit => "360° Orbit",
+            Self::DollyForward => "Slow Dolly",
+            Self::PanSide => "Lateral Pan",
+            Self::StaticTripod => "Static Tripod",
+        }
+    }
+    pub fn next(self) -> Self {
+        match self {
+            Self::Orbit => Self::DollyForward,
+            Self::DollyForward => Self::PanSide,
+            Self::PanSide => Self::StaticTripod,
+            Self::StaticTripod => Self::Orbit,
+        }
+    }
+    pub fn parse(s: &str, default: Self) -> Self {
+        match s {
+            "orbit" => Self::Orbit,
+            "dolly" => Self::DollyForward,
+            "pan" => Self::PanSide,
+            "static" => Self::StaticTripod,
+            _ => default,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AppleSkinConfig {
     pub enabled: bool,
@@ -464,6 +630,8 @@ pub struct AppleSkinConfig {
     pub show_food_tooltip: bool,
     pub always_show_tooltip: bool,
     pub show_debug_stats: bool,
+    pub highlight_full_bar: bool,
+    pub pulse_speed_pct: u8,
 }
 impl Default for AppleSkinConfig {
     fn default() -> Self {
@@ -476,6 +644,8 @@ impl Default for AppleSkinConfig {
             show_food_tooltip: true,
             always_show_tooltip: false,
             show_debug_stats: true,
+            highlight_full_bar: false,
+            pulse_speed_pct: 100,
         }
     }
 }
@@ -1414,6 +1584,10 @@ pub struct LookInspectorConfig {
     pub show_mob_health: bool,
     pub show_container_info: bool,
     pub compact: bool,
+    pub show_3d_icon: bool,
+    pub show_tool_hint: bool,
+    pub show_mod_source: bool,
+    pub y_offset: u8,
 }
 impl Default for LookInspectorConfig {
     fn default() -> Self {
@@ -1424,6 +1598,10 @@ impl Default for LookInspectorConfig {
             show_mob_health: true,
             show_container_info: true,
             compact: false,
+            show_3d_icon: true,
+            show_tool_hint: true,
+            show_mod_source: true,
+            y_offset: 36,
         }
     }
 }
@@ -1594,6 +1772,638 @@ impl Default for DynamicLightsModConfig {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LowShieldConfig {
+    pub enabled: bool,
+    pub shield_drop_pct: u8,
+    pub offhand_drop_pct: u8,
+    pub mainhand_drop_pct: u8,
+    pub hide_blocking_tilt: bool,
+}
+impl Default for LowShieldConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            shield_drop_pct: 45,
+            offhand_drop_pct: 25,
+            mainhand_drop_pct: 0,
+            hide_blocking_tilt: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CleanViewConfig {
+    pub enabled: bool,
+    pub hide_self_potions: bool,
+    pub hide_ambient_beacons: bool,
+    pub keep_enemy_particles: bool,
+}
+impl Default for CleanViewConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            hide_self_potions: true,
+            hide_ambient_beacons: true,
+            keep_enemy_particles: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NameTagsPlusConfig {
+    pub enabled: bool,
+    pub show_own_nametag: bool,
+    pub show_distance: bool,
+    pub show_hp_tag: bool,
+    pub no_sneak_fade: bool,
+}
+impl Default for NameTagsPlusConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_own_nametag: true,
+            show_distance: true,
+            show_hp_tag: true,
+            no_sneak_fade: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HitColorConfig {
+    pub enabled: bool,
+    pub color: ShieldColorPreset,
+    pub intensity_pct: u8,
+    pub flash_armor: bool,
+}
+impl Default for HitColorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            color: ShieldColorPreset::White,
+            intensity_pct: 70,
+            flash_armor: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CritRingConfig {
+    pub enabled: bool,
+    pub show_crit_badge: bool,
+    pub show_cooldown_bar: bool,
+    pub crit_color: ShieldColorPreset,
+}
+impl Default for CritRingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_crit_badge: true,
+            show_cooldown_bar: true,
+            crit_color: ShieldColorPreset::Orange,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BowChargeConfig {
+    pub enabled: bool,
+    pub show_pct_bar: bool,
+    pub full_draw_chime: bool,
+    pub auto_release_full: bool,
+    pub corner: Corner,
+}
+impl Default for BowChargeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_pct_bar: true,
+            full_draw_chime: true,
+            auto_release_full: false,
+            corner: Corner::BottomRight,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CooldownHudConfig {
+    pub enabled: bool,
+    pub track_pearls: bool,
+    pub track_wind_charge: bool,
+    pub track_chorus_gapple: bool,
+    pub corner: Corner,
+}
+impl Default for CooldownHudConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            track_pearls: true,
+            track_wind_charge: true,
+            track_chorus_gapple: true,
+            corner: Corner::TopLeft,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReachBoxConfig {
+    pub enabled: bool,
+    pub draw_target_box: bool,
+    pub draw_reach_ring: bool,
+    pub color_on_crit: bool,
+    pub color: ShieldColorPreset,
+}
+impl Default for ReachBoxConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            draw_target_box: true,
+            draw_reach_ring: true,
+            color_on_crit: true,
+            color: ShieldColorPreset::Cyan,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MinimapRadarConfig {
+    pub enabled: bool,
+    pub size_px: u8,
+    pub zoom_blocks: u8,
+    pub show_mobs: bool,
+    pub show_players: bool,
+    pub show_waypoints: bool,
+    pub corner: Corner,
+}
+impl Default for MinimapRadarConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            size_px: 84,
+            zoom_blocks: 32,
+            show_mobs: true,
+            show_players: true,
+            show_waypoints: true,
+            corner: Corner::TopRight,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PotionHudConfig {
+    pub enabled: bool,
+    pub show_timers: bool,
+    pub blink_under_10s: bool,
+    pub compact_pills: bool,
+    pub corner: Corner,
+}
+impl Default for PotionHudConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_timers: true,
+            blink_under_10s: true,
+            compact_pills: true,
+            corner: Corner::TopLeft,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DurabilityWarnConfig {
+    pub enabled: bool,
+    pub warn_pct: u8,
+    pub check_armor: bool,
+    pub check_held: bool,
+    pub play_chime: bool,
+}
+impl Default for DurabilityWarnConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            warn_pct: 15,
+            check_armor: true,
+            check_held: true,
+            play_chime: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BiomeTitleConfig {
+    pub enabled: bool,
+    pub show_biome_changes: bool,
+    pub show_dimension_changes: bool,
+    pub display_secs: u8,
+    pub show_sub_coords: bool,
+}
+impl Default for BiomeTitleConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_biome_changes: true,
+            show_dimension_changes: true,
+            display_secs: 3,
+            show_sub_coords: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct XpTrackerConfig {
+    pub enabled: bool,
+    pub show_next_level_xp: bool,
+    pub show_mending_summary: bool,
+    pub corner: Corner,
+}
+impl Default for XpTrackerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_next_level_xp: true,
+            show_mending_summary: true,
+            corner: Corner::BottomLeft,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InventoryHudConfig {
+    pub enabled: bool,
+    pub show_3x9_grid: bool,
+    pub show_free_slots: bool,
+    pub bg_opacity_pct: u8,
+    pub corner: Corner,
+}
+impl Default for InventoryHudConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_3x9_grid: true,
+            show_free_slots: true,
+            bg_opacity_pct: 65,
+            corner: Corner::BottomRight,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TabPingConfig {
+    pub enabled: bool,
+    pub show_ping_ms: bool,
+    pub show_player_count: bool,
+    pub show_dim_tag: bool,
+    pub corner: Corner,
+}
+impl Default for TabPingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_ping_ms: true,
+            show_player_count: true,
+            show_dim_tag: true,
+            corner: Corner::TopRight,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MoonPhaseConfig {
+    pub enabled: bool,
+    pub show_moon_phase: bool,
+    pub show_slime_rating: bool,
+    pub show_insomnia_warn: bool,
+    pub corner: Corner,
+}
+impl Default for MoonPhaseConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_moon_phase: true,
+            show_slime_rating: true,
+            show_insomnia_warn: true,
+            corner: Corner::TopLeft,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionStatsConfig {
+    pub enabled: bool,
+    pub show_kills: bool,
+    pub show_blocks: bool,
+    pub show_distance: bool,
+    pub corner: Corner,
+}
+impl Default for SessionStatsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_kills: true,
+            show_blocks: true,
+            show_distance: true,
+            corner: Corner::BottomLeft,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CameraOverhaulConfig {
+    pub enabled: bool,
+    pub strafe_roll_pct: u8,
+    pub turn_roll_pct: u8,
+    pub elytra_bank_pct: u8,
+    pub clamp_sprint_fov: bool,
+}
+impl Default for CameraOverhaulConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            strafe_roll_pct: 40,
+            turn_roll_pct: 30,
+            elytra_bank_pct: 70,
+            clamp_sprint_fov: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WeatherSoundConfig {
+    pub enabled: bool,
+    pub suppress_lightning_flash: bool,
+    pub limit_rain_splashes: bool,
+    pub mute_thunder_shake: bool,
+}
+impl Default for WeatherSoundConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            suppress_lightning_flash: true,
+            limit_rain_splashes: true,
+            mute_thunder_shake: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CustomGlintConfig {
+    pub enabled: bool,
+    pub preset: GlintColorPreset,
+    pub speed_pct: u8,
+    pub strength_pct: u8,
+    pub compact_item_scale: bool,
+}
+impl Default for CustomGlintConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            preset: GlintColorPreset::Gold,
+            speed_pct: 100,
+            strength_pct: 90,
+            compact_item_scale: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClearCavesConfig {
+    pub enabled: bool,
+    pub remove_void_fog: bool,
+    pub smooth_night_vision: bool,
+    pub boost_lava_clarity: bool,
+}
+impl Default for ClearCavesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            remove_void_fog: true,
+            smooth_night_vision: true,
+            boost_lava_clarity: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlayerHighlightConfig {
+    pub enabled: bool,
+    pub highlight_players: bool,
+    pub highlight_hostiles: bool,
+    pub range: u8,
+    pub color: ShieldColorPreset,
+}
+impl Default for PlayerHighlightConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            highlight_players: true,
+            highlight_hostiles: false,
+            range: 32,
+            color: ShieldColorPreset::Cyan,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LitematicaGridConfig {
+    pub enabled: bool,
+    pub show_volume_hud: bool,
+    pub show_3d_box: bool,
+    pub show_grid_lines: bool,
+    pub color: ShieldColorPreset,
+}
+impl Default for LitematicaGridConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            show_volume_hud: true,
+            show_3d_box: true,
+            show_grid_lines: true,
+            color: ShieldColorPreset::Cyan,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeathHistoryConfig {
+    pub enabled: bool,
+    pub keep_count: u8,
+    pub show_home_pill: bool,
+    pub auto_log_chat: bool,
+    pub corner: Corner,
+}
+impl Default for DeathHistoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            keep_count: 5,
+            show_home_pill: true,
+            auto_log_chat: true,
+            corner: Corner::TopLeft,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChunkPillarsConfig {
+    pub enabled: bool,
+    pub draw_corner_pillars: bool,
+    pub draw_biome_borders: bool,
+    pub pillar_height: u8,
+}
+impl Default for ChunkPillarsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            draw_corner_pillars: true,
+            draw_biome_borders: true,
+            pillar_height: 64,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OffhandTorchConfig {
+    pub enabled: bool,
+    pub auto_place_dark: bool,
+    pub light_threshold: u8,
+    pub notify_low_torches: bool,
+}
+impl Default for OffhandTorchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_place_dark: false,
+            light_threshold: 4,
+            notify_low_torches: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChatMentionConfig {
+    pub enabled: bool,
+    pub alert_on_username: bool,
+    pub alert_on_tpa_msg: bool,
+    pub play_ping_chime: bool,
+    pub show_popup_banner: bool,
+}
+impl Default for ChatMentionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            alert_on_username: true,
+            alert_on_tpa_msg: true,
+            play_ping_chime: true,
+            show_popup_banner: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DropGuardConfig {
+    pub enabled: bool,
+    pub protect_tools_weapons: bool,
+    pub protect_totems: bool,
+    pub lock_slots_1_to_3: bool,
+    pub double_tap_bypass: bool,
+}
+impl Default for DropGuardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            protect_tools_weapons: true,
+            protect_totems: true,
+            lock_slots_1_to_3: true,
+            double_tap_bypass: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HotbarRestockConfig {
+    pub enabled: bool,
+    pub restock_blocks: bool,
+    pub restock_pearls_fireworks: bool,
+    pub restock_food: bool,
+    pub show_toast: bool,
+}
+impl Default for HotbarRestockConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            restock_blocks: true,
+            restock_pearls_fireworks: true,
+            restock_food: true,
+            show_toast: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PhotoModeConfig {
+    pub enabled: bool,
+    pub active: bool,
+    pub hide_all_hud: bool,
+    pub lock_freecam_pose: bool,
+    pub show_frame_guides: bool,
+}
+impl Default for PhotoModeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            active: false,
+            hide_all_hud: true,
+            lock_freecam_pose: false,
+            show_frame_guides: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JeiConfig {
+    pub enabled: bool,
+    pub overlay_open: bool,
+    pub show_in_inventory: bool,
+    pub show_item_ids: bool,
+    pub show_cooking_recipes: bool,
+    pub compact_grid: bool,
+}
+impl Default for JeiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            overlay_open: false,
+            show_in_inventory: true,
+            show_item_ids: false,
+            show_cooking_recipes: true,
+            compact_grid: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CinematicTimelapseConfig {
+    pub enabled: bool,
+    pub start_delay_secs: u8,
+    pub path_mode: TimelapsePathMode,
+    pub orbit_speed_deg: u8,
+    pub hide_hud: bool,
+    pub show_countdown: bool,
+}
+impl Default for CinematicTimelapseConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            start_delay_secs: 5,
+            path_mode: TimelapsePathMode::Orbit,
+            orbit_speed_deg: 5,
+            hide_hud: true,
+            show_countdown: true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VoltExtras {
     pub appleskin: AppleSkinConfig,
@@ -1648,6 +2458,39 @@ pub struct VoltExtras {
     pub scoreboard_tweaks: ScoreboardTweaksConfig,
     pub sign_stand_helper: SignStandConfig,
     pub dynamic_lights: DynamicLightsModConfig,
+    pub low_shield: LowShieldConfig,
+    pub clean_view: CleanViewConfig,
+    pub name_tags_plus: NameTagsPlusConfig,
+    pub hit_color: HitColorConfig,
+    pub crit_ring: CritRingConfig,
+    pub bow_charge: BowChargeConfig,
+    pub cooldown_hud: CooldownHudConfig,
+    pub reach_box: ReachBoxConfig,
+    pub minimap_radar: MinimapRadarConfig,
+    pub potion_hud: PotionHudConfig,
+    pub durability_warn: DurabilityWarnConfig,
+    pub biome_title: BiomeTitleConfig,
+    pub xp_tracker: XpTrackerConfig,
+    pub inventory_hud: InventoryHudConfig,
+    pub tab_ping: TabPingConfig,
+    pub moon_phase: MoonPhaseConfig,
+    pub session_stats: SessionStatsConfig,
+    pub cameraoverhaul: CameraOverhaulConfig,
+    pub weather_sound: WeatherSoundConfig,
+    pub custom_glint: CustomGlintConfig,
+    pub clear_caves: ClearCavesConfig,
+    pub player_highlight: PlayerHighlightConfig,
+    pub litematica_grid: LitematicaGridConfig,
+    pub death_history: DeathHistoryConfig,
+    pub chunk_pillars: ChunkPillarsConfig,
+    pub offhand_torch: OffhandTorchConfig,
+    pub chat_mention: ChatMentionConfig,
+    pub drop_guard: DropGuardConfig,
+    pub hotbar_restock: HotbarRestockConfig,
+    pub photo_mode: PhotoModeConfig,
+    pub jei: JeiConfig,
+    pub cinematic_timelapse: CinematicTimelapseConfig,
+    pub binds: VoltModKeybinds,
 }
 
 pub const VOLT_MODS: [VoltModMeta; VOLT_MOD_COUNT] = [
@@ -1703,6 +2546,38 @@ pub const VOLT_MODS: [VoltModMeta; VOLT_MOD_COUNT] = [
     VoltModMeta { id: 49, key: "scoreboard_tweaks", title: "Scoreboard & Bossbar Tweaks", summary: "Hide red scoreboard numbers, compact bossbars & resize sidebar", badge: "SB", category: VoltModCategory::Hud, modrinth_slugs: &["scoreboard-tweaks", "custom-scoreboard"], search_query: "Scoreboard Tweaks" },
     VoltModMeta { id: 50, key: "sign_stand_helper", title: "Quick Sign & Stand Presets", summary: "Auto-copy/paste last sign text & quick armor stand pose presets", badge: "SG", category: VoltModCategory::Utility, modrinth_slugs: &["armor-stand-editor", "sign-copy"], search_query: "Sign" },
     VoltModMeta { id: 51, key: "dynamic_lights", title: "LambDynamicLights", summary: "Real-time held, dropped & burning dynamic light sources in caves", badge: "DL", category: VoltModCategory::Camera, modrinth_slugs: &["lambdynamiclights"], search_query: "LambDynamicLights" },
+    VoltModMeta { id: 52, key: "low_shield", title: "Low Shield & Compact Viewmodel", summary: "Lowers 1st-person shield & offhand item height for clear PvP sightlines", badge: "LS", category: VoltModCategory::Pvp, modrinth_slugs: &["low-shield", "compact-viewmodel"], search_query: "Low Shield" },
+    VoltModMeta { id: 53, key: "clean_view", title: "Clean View", summary: "Hides your own swirling potion & beacon particles while keeping enemy FX", badge: "CV", category: VoltModCategory::Pvp, modrinth_slugs: &["cleanview", "particles-off"], search_query: "CleanView" },
+    VoltModMeta { id: 54, key: "name_tags_plus", title: "Better NameTags+", summary: "Shows own 3rd-person nametag plus distance, HP & ping beside players", badge: "NT", category: VoltModCategory::Pvp, modrinth_slugs: &["better-nametags", "namepain"], search_query: "Better NameTags" },
+    VoltModMeta { id: 55, key: "hit_color", title: "Custom Hit Color & Flash", summary: "Customize damage hit flash tint, intensity & armor flash on entities", badge: "HC", category: VoltModCategory::Pvp, modrinth_slugs: &["custom-hit-color", "hit-color"], search_query: "Custom Hit Color" },
+    VoltModMeta { id: 56, key: "crit_ring", title: "Crit & Attack Cooldown Ring", summary: "Live crosshair attack cooldown bar & airborne CRIT READY indicator", badge: "CR", category: VoltModCategory::Pvp, modrinth_slugs: &["better-combat", "attack-indicator"], search_query: "Better Combat" },
+    VoltModMeta { id: 57, key: "bow_charge", title: "Bow & Crossbow Charge HUD", summary: "Live draw % progress bar, full-charge chime & optional auto-release", badge: "BW", category: VoltModCategory::Pvp, modrinth_slugs: &["tipthescales", "crossbow-indicator"], search_query: "Bow" },
+    VoltModMeta { id: 58, key: "cooldown_hud", title: "Pearl & Item Cooldown Pill", summary: "Floating countdown timers for Ender Pearls, Wind Charges & Chorus", badge: "CD", category: VoltModCategory::Pvp, modrinth_slugs: &["cooldown-hud", "ender-pearl-cooldown"], search_query: "Cooldown" },
+    VoltModMeta { id: 59, key: "reach_box", title: "PvP Target Reach Box", summary: "Highlights targeted entities inside 3.0m reach & changes color on crit", badge: "RB", category: VoltModCategory::Pvp, modrinth_slugs: &["hitboxes-plus", "accurate-block-placement"], search_query: "Hitboxes" },
+    VoltModMeta { id: 60, key: "minimap_radar", title: "Live Terrain Minimap & Radar", summary: "Corner terrain minimap from live block colors with N, mobs & waypoints", badge: "MM", category: VoltModCategory::Hud, modrinth_slugs: &["xaeros-minimap", "journeymap"], search_query: "Xaero's Minimap" },
+    VoltModMeta { id: 61, key: "potion_hud", title: "Compact Status Effects Bar", summary: "Sleek timed status effect pills with MM:SS countdown & expiry blink", badge: "PE", category: VoltModCategory::Hud, modrinth_slugs: &["status-effect-bars", "stylisheffects"], search_query: "Status Effect Bars" },
+    VoltModMeta { id: 62, key: "durability_warn", title: "Durability Notifier & Chime", summary: "Audible chime + HUD alert when tool, shield or armor drops below %", badge: "DW", category: VoltModCategory::Hud, modrinth_slugs: &["durability-notifier", "durability-viewer"], search_query: "Durability Notifier" },
+    VoltModMeta { id: 63, key: "biome_title", title: "Traveler's Titles (Biome Banner)", summary: "Smooth fade-in/out title banner when entering a new biome or dimension", badge: "BT", category: VoltModCategory::Hud, modrinth_slugs: &["travelers-titles", "biome-title"], search_query: "Traveler's Titles" },
+    VoltModMeta { id: 64, key: "xp_tracker", title: "XP & Mending Progress HUD", summary: "Exact XP needed for next level, % progress & damaged Mending gear status", badge: "XP", category: VoltModCategory::Hud, modrinth_slugs: &["xp-bar-text", "more-xp-info"], search_query: "XP" },
+    VoltModMeta { id: 65, key: "inventory_hud", title: "Mini Inventory Preview Grid", summary: "Translucent 3x9 mini-grid overlay showing free slots & stack counts", badge: "IH", category: VoltModCategory::Hud, modrinth_slugs: &["inventory-hud-plus", "inventoryhud"], search_query: "Inventory HUD+" },
+    VoltModMeta { id: 66, key: "tab_ping", title: "Better Tab & Latency List", summary: "Compact online player count, numeric ping ms & dimension tags", badge: "TB", category: VoltModCategory::Hud, modrinth_slugs: &["better-tab", "tab-ping"], search_query: "Better Tab" },
+    VoltModMeta { id: 67, key: "moon_phase", title: "Moon Phase & Insomnia Timer", summary: "Shows current Moon Phase for swamp slimes + Phantom insomnia alert", badge: "MN", category: VoltModCategory::Hud, modrinth_slugs: &["moon-phase", "minihud"], search_query: "Moon" },
+    VoltModMeta { id: 68, key: "session_stats", title: "Session Combat & Mining Stats", summary: "Tracks kills, blocks mined/placed & distance traveled this session", badge: "ST", category: VoltModCategory::Hud, modrinth_slugs: &["session-stats", "stat-tracker"], search_query: "Stats" },
+    VoltModMeta { id: 69, key: "cameraoverhaul", title: "CameraOverhaul (Dynamic Roll)", summary: "Subtle camera roll/tilt when strafing, turning & flying with Elytra", badge: "CO", category: VoltModCategory::Camera, modrinth_slugs: &["cameraoverhaul", "do-a-barrel-roll"], search_query: "CameraOverhaul" },
+    VoltModMeta { id: 70, key: "weather_sound", title: "Lightning & Weather Tweaks", summary: "Suppresses lightning sky flashes, thunder shake & heavy rain splashes", badge: "WS", category: VoltModCategory::Camera, modrinth_slugs: &["clear-despawn", "ambient-sounds"], search_query: "AmbientSounds" },
+    VoltModMeta { id: 71, key: "custom_glint", title: "Custom Enchant Glint & Scale", summary: "Custom glint colors (Rainbow, Gold, Ice, Crimson, Off) & held scale", badge: "GL", category: VoltModCategory::Camera, modrinth_slugs: &["custom-glint", "glint-colorizer"], search_query: "Enchant Glint" },
+    VoltModMeta { id: 72, key: "clear_caves", title: "Cave & Void Fog Clearer", summary: "Clears dark subterranean void fog & smooths Night Vision transitions", badge: "CC", category: VoltModCategory::Camera, modrinth_slugs: &["no-fog", "nofog"], search_query: "No Fog" },
+    VoltModMeta { id: 73, key: "player_highlight", title: "Line-of-Sight Entity Glow", summary: "Optional highlight boxes around nearby players or mobs in view", badge: "PH", category: VoltModCategory::Camera, modrinth_slugs: &["player-highlighter", "glowing-entities"], search_query: "Highlighter" },
+    VoltModMeta { id: 74, key: "litematica_grid", title: "Build Measure / Ruler Box (A-B)", summary: "Set Point A & B to draw a 3D wireframe box with live X x Y x Z volume", badge: "LM", category: VoltModCategory::World, modrinth_slugs: &["litematica", "worldedit"], search_query: "Litematica" },
+    VoltModMeta { id: 75, key: "death_history", title: "Death History & Home Marker", summary: "Tracks last 5 death locations + 1-tap Home bookmark & distance pill", badge: "DH", category: VoltModCategory::World, modrinth_slugs: &["death-backup", "xaeros-world-map"], search_query: "Death" },
+    VoltModMeta { id: 76, key: "chunk_pillars", title: "Chunk Pillars & Biome Borders", summary: "Draws vertical chunk corner pillars & ground biome transition lines", badge: "CP", category: VoltModCategory::World, modrinth_slugs: &["chunk-borders", "chunkdebug"], search_query: "Chunk Borders" },
+    VoltModMeta { id: 77, key: "offhand_torch", title: "Offhand Torch Auto-Placer", summary: "Auto-places an offhand torch when mining in dark caves (light < 4)", badge: "OT", category: VoltModCategory::World, modrinth_slugs: &["offhand-torch", "rightclickharvest"], search_query: "Torch" },
+    VoltModMeta { id: 78, key: "chat_mention", title: "Chat Mention & Keyword Ping", summary: "Highlights chat messages & plays a chime when your name is mentioned", badge: "CM", category: VoltModCategory::Utility, modrinth_slugs: &["chat-mention", "chime"], search_query: "Chat Mention" },
+    VoltModMeta { id: 79, key: "drop_guard", title: "Drop Guard & Locked Hotbar", summary: "Blocks accidental dropping of tools, weapons, totems & slots 1-3", badge: "DG", category: VoltModCategory::Utility, modrinth_slugs: &["no-drop", "lock-slots"], search_query: "Drop Guard" },
+    VoltModMeta { id: 80, key: "hotbar_restock", title: "Hotbar Stack Auto-Restock", summary: "Refills empty building blocks, fireworks & pearls from main inventory", badge: "HR", category: VoltModCategory::Utility, modrinth_slugs: &["mouse-tweaks", "inventory-profiles-next"], search_query: "Mouse Tweaks" },
+    VoltModMeta { id: 81, key: "photo_mode", title: "Photo Mode & Clean Capture", summary: "Hides all HUD overlays & optionally adds framing composition guides", badge: "PM", category: VoltModCategory::Camera, modrinth_slugs: &["fabrishot", "screenshot-viewer"], search_query: "Fabrishot" },
+    VoltModMeta { id: 82, key: "jei", title: "JEI (Just Enough Items)", summary: "Searchable item browser with live 3x3 crafting & furnace recipe viewer", badge: "JEI", category: VoltModCategory::Utility, modrinth_slugs: &["jei", "roughly-enough-items"], search_query: "Just Enough Items" },
+    VoltModMeta { id: 83, key: "cinematic_timelapse", title: "Cinematic Time Lapse", summary: "Configurable start countdown (5s/10s+), smooth camera path & HUD hide", badge: "TL", category: VoltModCategory::Camera, modrinth_slugs: &["replaymod", "flashback"], search_query: "Replay Mod" },
 ];
 
 pub fn volt_mod_enabled(v: &VoltExtras, idx: u8) -> bool {
@@ -1759,6 +2634,38 @@ pub fn volt_mod_enabled(v: &VoltExtras, idx: u8) -> bool {
         49 => v.scoreboard_tweaks.enabled,
         50 => v.sign_stand_helper.enabled,
         51 => v.dynamic_lights.enabled,
+        52 => v.low_shield.enabled,
+        53 => v.clean_view.enabled,
+        54 => v.name_tags_plus.enabled,
+        55 => v.hit_color.enabled,
+        56 => v.crit_ring.enabled,
+        57 => v.bow_charge.enabled,
+        58 => v.cooldown_hud.enabled,
+        59 => v.reach_box.enabled,
+        60 => v.minimap_radar.enabled,
+        61 => v.potion_hud.enabled,
+        62 => v.durability_warn.enabled,
+        63 => v.biome_title.enabled,
+        64 => v.xp_tracker.enabled,
+        65 => v.inventory_hud.enabled,
+        66 => v.tab_ping.enabled,
+        67 => v.moon_phase.enabled,
+        68 => v.session_stats.enabled,
+        69 => v.cameraoverhaul.enabled,
+        70 => v.weather_sound.enabled,
+        71 => v.custom_glint.enabled,
+        72 => v.clear_caves.enabled,
+        73 => v.player_highlight.enabled,
+        74 => v.litematica_grid.enabled,
+        75 => v.death_history.enabled,
+        76 => v.chunk_pillars.enabled,
+        77 => v.offhand_torch.enabled,
+        78 => v.chat_mention.enabled,
+        79 => v.drop_guard.enabled,
+        80 => v.hotbar_restock.enabled,
+        81 => v.photo_mode.enabled,
+        82 => v.jei.enabled,
+        83 => v.cinematic_timelapse.enabled,
         _ => false,
     }
 }
@@ -1817,6 +2724,38 @@ pub fn set_volt_mod_enabled(v: &mut VoltExtras, idx: u8, on: bool) {
         49 => v.scoreboard_tweaks.enabled = on,
         50 => v.sign_stand_helper.enabled = on,
         51 => v.dynamic_lights.enabled = on,
+        52 => v.low_shield.enabled = on,
+        53 => v.clean_view.enabled = on,
+        54 => v.name_tags_plus.enabled = on,
+        55 => v.hit_color.enabled = on,
+        56 => v.crit_ring.enabled = on,
+        57 => v.bow_charge.enabled = on,
+        58 => v.cooldown_hud.enabled = on,
+        59 => v.reach_box.enabled = on,
+        60 => v.minimap_radar.enabled = on,
+        61 => v.potion_hud.enabled = on,
+        62 => v.durability_warn.enabled = on,
+        63 => v.biome_title.enabled = on,
+        64 => v.xp_tracker.enabled = on,
+        65 => v.inventory_hud.enabled = on,
+        66 => v.tab_ping.enabled = on,
+        67 => v.moon_phase.enabled = on,
+        68 => v.session_stats.enabled = on,
+        69 => v.cameraoverhaul.enabled = on,
+        70 => v.weather_sound.enabled = on,
+        71 => v.custom_glint.enabled = on,
+        72 => v.clear_caves.enabled = on,
+        73 => v.player_highlight.enabled = on,
+        74 => v.litematica_grid.enabled = on,
+        75 => v.death_history.enabled = on,
+        76 => v.chunk_pillars.enabled = on,
+        77 => v.offhand_torch.enabled = on,
+        78 => v.chat_mention.enabled = on,
+        79 => v.drop_guard.enabled = on,
+        80 => v.hotbar_restock.enabled = on,
+        81 => { v.photo_mode.enabled = on; if !on { v.photo_mode.active = false; } }
+        82 => { v.jei.enabled = on; if !on { v.jei.overlay_open = false; } }
+        83 => v.cinematic_timelapse.enabled = on,
         _ => {}
     }
 }
@@ -1844,6 +2783,8 @@ impl VoltExtras {
             "appleskin.tooltip" => self.appleskin.show_food_tooltip = flag(value, self.appleskin.show_food_tooltip),
             "appleskin.tooltipAlways" => self.appleskin.always_show_tooltip = flag(value, self.appleskin.always_show_tooltip),
             "appleskin.debug" => self.appleskin.show_debug_stats = flag(value, self.appleskin.show_debug_stats),
+            "appleskin.fullBar" => self.appleskin.highlight_full_bar = flag(value, self.appleskin.highlight_full_bar),
+            "appleskin.pulse" => if let Ok(v) = value.parse::<u8>() { self.appleskin.pulse_speed_pct = v.clamp(25, 250); },
 
             "crystal.enabled" => self.crystal_optimizer.enabled = flag(value, self.crystal_optimizer.enabled),
             "crystal.instantBreak" => self.crystal_optimizer.instant_break = flag(value, self.crystal_optimizer.instant_break),
@@ -2150,6 +3091,10 @@ impl VoltExtras {
             "jade.mobs" => self.look_inspector.show_mob_health = flag(value, self.look_inspector.show_mob_health),
             "jade.chests" => self.look_inspector.show_container_info = flag(value, self.look_inspector.show_container_info),
             "jade.compact" => self.look_inspector.compact = flag(value, self.look_inspector.compact),
+            "jade.icon3d" => self.look_inspector.show_3d_icon = flag(value, self.look_inspector.show_3d_icon),
+            "jade.toolHint" => self.look_inspector.show_tool_hint = flag(value, self.look_inspector.show_tool_hint),
+            "jade.modSrc" => self.look_inspector.show_mod_source = flag(value, self.look_inspector.show_mod_source),
+            "jade.yOffset" => if let Ok(v) = value.parse::<u8>() { self.look_inspector.y_offset = v.clamp(8, 96); },
 
             "muffler.enabled" => self.sound_muffler.enabled = flag(value, self.sound_muffler.enabled),
             "muffler.portals" => self.sound_muffler.mute_portals = flag(value, self.sound_muffler.mute_portals),
@@ -2201,6 +3146,212 @@ impl VoltExtras {
             "dynlight.dropped" => self.dynamic_lights.dropped_items = flag(value, self.dynamic_lights.dropped_items),
             "dynlight.burn" => self.dynamic_lights.burning_entities = flag(value, self.dynamic_lights.burning_entities),
             "dynlight.minLvl" => if let Ok(v) = value.parse::<u8>() { self.dynamic_lights.min_level = v.clamp(1, 14); },
+            _ => self.parse_extra_mods(k, value),
+        }
+    }
+
+    fn parse_extra_mods(&mut self, k: &str, value: &str) {
+        if let Some(rest) = k.strip_prefix("bind.") {
+            let mut parts = rest.splitn(2, '.');
+            if let (Some(mod_key), Some(field)) = (parts.next(), parts.next())
+                && let Some(meta) = VOLT_MODS.iter().find(|m| m.key == mod_key)
+                && let Some(slot) = self.binds.0.get_mut(usize::from(meta.id))
+            {
+                match field {
+                    "toggle" => slot.toggle_key = value.trim().to_owned(),
+                    "use" => slot.use_key = value.trim().to_owned(),
+                    "mode" => slot.mode = VoltKeybindMode::parse(value, slot.mode),
+                    _ => {}
+                }
+            }
+            return;
+        }
+        match k {
+            "lowshield.enabled" => self.low_shield.enabled = flag(value, self.low_shield.enabled),
+            "lowshield.shieldDrop" => if let Ok(v) = value.parse::<u8>() { self.low_shield.shield_drop_pct = v.min(80); },
+            "lowshield.offDrop" => if let Ok(v) = value.parse::<u8>() { self.low_shield.offhand_drop_pct = v.min(80); },
+            "lowshield.mainDrop" => if let Ok(v) = value.parse::<u8>() { self.low_shield.mainhand_drop_pct = v.min(60); },
+            "lowshield.noTilt" => self.low_shield.hide_blocking_tilt = flag(value, self.low_shield.hide_blocking_tilt),
+
+            "cleanview.enabled" => self.clean_view.enabled = flag(value, self.clean_view.enabled),
+            "cleanview.selfPot" => self.clean_view.hide_self_potions = flag(value, self.clean_view.hide_self_potions),
+            "cleanview.beacons" => self.clean_view.hide_ambient_beacons = flag(value, self.clean_view.hide_ambient_beacons),
+            "cleanview.enemies" => self.clean_view.keep_enemy_particles = flag(value, self.clean_view.keep_enemy_particles),
+
+            "tagsplus.enabled" => self.name_tags_plus.enabled = flag(value, self.name_tags_plus.enabled),
+            "tagsplus.own" => self.name_tags_plus.show_own_nametag = flag(value, self.name_tags_plus.show_own_nametag),
+            "tagsplus.dist" => self.name_tags_plus.show_distance = flag(value, self.name_tags_plus.show_distance),
+            "tagsplus.hp" => self.name_tags_plus.show_hp_tag = flag(value, self.name_tags_plus.show_hp_tag),
+            "tagsplus.noFade" => self.name_tags_plus.no_sneak_fade = flag(value, self.name_tags_plus.no_sneak_fade),
+
+            "hitcol.enabled" => self.hit_color.enabled = flag(value, self.hit_color.enabled),
+            "hitcol.color" => self.hit_color.color = ShieldColorPreset::parse(value, self.hit_color.color),
+            "hitcol.pct" => if let Ok(v) = value.parse::<u8>() { self.hit_color.intensity_pct = v.min(100); },
+            "hitcol.armor" => self.hit_color.flash_armor = flag(value, self.hit_color.flash_armor),
+
+            "critring.enabled" => self.crit_ring.enabled = flag(value, self.crit_ring.enabled),
+            "critring.badge" => self.crit_ring.show_crit_badge = flag(value, self.crit_ring.show_crit_badge),
+            "critring.bar" => self.crit_ring.show_cooldown_bar = flag(value, self.crit_ring.show_cooldown_bar),
+            "critring.color" => self.crit_ring.crit_color = ShieldColorPreset::parse(value, self.crit_ring.crit_color),
+
+            "bowchg.enabled" => self.bow_charge.enabled = flag(value, self.bow_charge.enabled),
+            "bowchg.bar" => self.bow_charge.show_pct_bar = flag(value, self.bow_charge.show_pct_bar),
+            "bowchg.chime" => self.bow_charge.full_draw_chime = flag(value, self.bow_charge.full_draw_chime),
+            "bowchg.autoRel" => self.bow_charge.auto_release_full = flag(value, self.bow_charge.auto_release_full),
+            "bowchg.corner" => self.bow_charge.corner = Corner::parse(value, self.bow_charge.corner),
+
+            "cdhud.enabled" => self.cooldown_hud.enabled = flag(value, self.cooldown_hud.enabled),
+            "cdhud.pearls" => self.cooldown_hud.track_pearls = flag(value, self.cooldown_hud.track_pearls),
+            "cdhud.wind" => self.cooldown_hud.track_wind_charge = flag(value, self.cooldown_hud.track_wind_charge),
+            "cdhud.chorus" => self.cooldown_hud.track_chorus_gapple = flag(value, self.cooldown_hud.track_chorus_gapple),
+            "cdhud.corner" => self.cooldown_hud.corner = Corner::parse(value, self.cooldown_hud.corner),
+
+            "reachbox.enabled" => self.reach_box.enabled = flag(value, self.reach_box.enabled),
+            "reachbox.box" => self.reach_box.draw_target_box = flag(value, self.reach_box.draw_target_box),
+            "reachbox.ring" => self.reach_box.draw_reach_ring = flag(value, self.reach_box.draw_reach_ring),
+            "reachbox.crit" => self.reach_box.color_on_crit = flag(value, self.reach_box.color_on_crit),
+            "reachbox.color" => self.reach_box.color = ShieldColorPreset::parse(value, self.reach_box.color),
+
+            "minimap.enabled" => self.minimap_radar.enabled = flag(value, self.minimap_radar.enabled),
+            "minimap.size" => if let Ok(v) = value.parse::<u8>() { self.minimap_radar.size_px = v.clamp(56, 128); },
+            "minimap.zoom" => if let Ok(v) = value.parse::<u8>() { self.minimap_radar.zoom_blocks = v.clamp(16, 64); },
+            "minimap.mobs" => self.minimap_radar.show_mobs = flag(value, self.minimap_radar.show_mobs),
+            "minimap.players" => self.minimap_radar.show_players = flag(value, self.minimap_radar.show_players),
+            "minimap.wp" => self.minimap_radar.show_waypoints = flag(value, self.minimap_radar.show_waypoints),
+            "minimap.corner" => self.minimap_radar.corner = Corner::parse(value, self.minimap_radar.corner),
+
+            "pothud.enabled" => self.potion_hud.enabled = flag(value, self.potion_hud.enabled),
+            "pothud.timers" => self.potion_hud.show_timers = flag(value, self.potion_hud.show_timers),
+            "pothud.blink" => self.potion_hud.blink_under_10s = flag(value, self.potion_hud.blink_under_10s),
+            "pothud.compact" => self.potion_hud.compact_pills = flag(value, self.potion_hud.compact_pills),
+            "pothud.corner" => self.potion_hud.corner = Corner::parse(value, self.potion_hud.corner),
+
+            "durwarn.enabled" => self.durability_warn.enabled = flag(value, self.durability_warn.enabled),
+            "durwarn.pct" => if let Ok(v) = value.parse::<u8>() { self.durability_warn.warn_pct = v.clamp(5, 50); },
+            "durwarn.armor" => self.durability_warn.check_armor = flag(value, self.durability_warn.check_armor),
+            "durwarn.held" => self.durability_warn.check_held = flag(value, self.durability_warn.check_held),
+            "durwarn.chime" => self.durability_warn.play_chime = flag(value, self.durability_warn.play_chime),
+
+            "biometitle.enabled" => self.biome_title.enabled = flag(value, self.biome_title.enabled),
+            "biometitle.biome" => self.biome_title.show_biome_changes = flag(value, self.biome_title.show_biome_changes),
+            "biometitle.dim" => self.biome_title.show_dimension_changes = flag(value, self.biome_title.show_dimension_changes),
+            "biometitle.secs" => if let Ok(v) = value.parse::<u8>() { self.biome_title.display_secs = v.clamp(1, 8); },
+            "biometitle.coords" => self.biome_title.show_sub_coords = flag(value, self.biome_title.show_sub_coords),
+
+            "xptrack.enabled" => self.xp_tracker.enabled = flag(value, self.xp_tracker.enabled),
+            "xptrack.next" => self.xp_tracker.show_next_level_xp = flag(value, self.xp_tracker.show_next_level_xp),
+            "xptrack.mend" => self.xp_tracker.show_mending_summary = flag(value, self.xp_tracker.show_mending_summary),
+            "xptrack.corner" => self.xp_tracker.corner = Corner::parse(value, self.xp_tracker.corner),
+
+            "invhud.enabled" => self.inventory_hud.enabled = flag(value, self.inventory_hud.enabled),
+            "invhud.grid" => self.inventory_hud.show_3x9_grid = flag(value, self.inventory_hud.show_3x9_grid),
+            "invhud.free" => self.inventory_hud.show_free_slots = flag(value, self.inventory_hud.show_free_slots),
+            "invhud.opacity" => if let Ok(v) = value.parse::<u8>() { self.inventory_hud.bg_opacity_pct = v.clamp(20, 100); },
+            "invhud.corner" => self.inventory_hud.corner = Corner::parse(value, self.inventory_hud.corner),
+
+            "tabping.enabled" => self.tab_ping.enabled = flag(value, self.tab_ping.enabled),
+            "tabping.ms" => self.tab_ping.show_ping_ms = flag(value, self.tab_ping.show_ping_ms),
+            "tabping.cnt" => self.tab_ping.show_player_count = flag(value, self.tab_ping.show_player_count),
+            "tabping.dim" => self.tab_ping.show_dim_tag = flag(value, self.tab_ping.show_dim_tag),
+            "tabping.corner" => self.tab_ping.corner = Corner::parse(value, self.tab_ping.corner),
+
+            "moon.enabled" => self.moon_phase.enabled = flag(value, self.moon_phase.enabled),
+            "moon.phase" => self.moon_phase.show_moon_phase = flag(value, self.moon_phase.show_moon_phase),
+            "moon.slime" => self.moon_phase.show_slime_rating = flag(value, self.moon_phase.show_slime_rating),
+            "moon.insomnia" => self.moon_phase.show_insomnia_warn = flag(value, self.moon_phase.show_insomnia_warn),
+            "moon.corner" => self.moon_phase.corner = Corner::parse(value, self.moon_phase.corner),
+
+            "sstats.enabled" => self.session_stats.enabled = flag(value, self.session_stats.enabled),
+            "sstats.kills" => self.session_stats.show_kills = flag(value, self.session_stats.show_kills),
+            "sstats.blocks" => self.session_stats.show_blocks = flag(value, self.session_stats.show_blocks),
+            "sstats.dist" => self.session_stats.show_distance = flag(value, self.session_stats.show_distance),
+            "sstats.corner" => self.session_stats.corner = Corner::parse(value, self.session_stats.corner),
+
+            "camover.enabled" => self.cameraoverhaul.enabled = flag(value, self.cameraoverhaul.enabled),
+            "camover.strafe" => if let Ok(v) = value.parse::<u8>() { self.cameraoverhaul.strafe_roll_pct = v.min(100); },
+            "camover.turn" => if let Ok(v) = value.parse::<u8>() { self.cameraoverhaul.turn_roll_pct = v.min(100); },
+            "camover.elytra" => if let Ok(v) = value.parse::<u8>() { self.cameraoverhaul.elytra_bank_pct = v.min(100); },
+            "camover.fov" => self.cameraoverhaul.clamp_sprint_fov = flag(value, self.cameraoverhaul.clamp_sprint_fov),
+
+            "wsound.enabled" => self.weather_sound.enabled = flag(value, self.weather_sound.enabled),
+            "wsound.flash" => self.weather_sound.suppress_lightning_flash = flag(value, self.weather_sound.suppress_lightning_flash),
+            "wsound.rain" => self.weather_sound.limit_rain_splashes = flag(value, self.weather_sound.limit_rain_splashes),
+            "wsound.thunder" => self.weather_sound.mute_thunder_shake = flag(value, self.weather_sound.mute_thunder_shake),
+
+            "glint.enabled" => self.custom_glint.enabled = flag(value, self.custom_glint.enabled),
+            "glint.preset" => self.custom_glint.preset = GlintColorPreset::parse(value, self.custom_glint.preset),
+            "glint.speed" => if let Ok(v) = value.parse::<u8>() { self.custom_glint.speed_pct = v.clamp(25, 250); },
+            "glint.strength" => if let Ok(v) = value.parse::<u8>() { self.custom_glint.strength_pct = v.min(100); },
+            "glint.compact" => self.custom_glint.compact_item_scale = flag(value, self.custom_glint.compact_item_scale),
+
+            "caves.enabled" => self.clear_caves.enabled = flag(value, self.clear_caves.enabled),
+            "caves.void" => self.clear_caves.remove_void_fog = flag(value, self.clear_caves.remove_void_fog),
+            "caves.nv" => self.clear_caves.smooth_night_vision = flag(value, self.clear_caves.smooth_night_vision),
+            "caves.lava" => self.clear_caves.boost_lava_clarity = flag(value, self.clear_caves.boost_lava_clarity),
+
+            "phighlight.enabled" => self.player_highlight.enabled = flag(value, self.player_highlight.enabled),
+            "phighlight.players" => self.player_highlight.highlight_players = flag(value, self.player_highlight.highlight_players),
+            "phighlight.hostiles" => self.player_highlight.highlight_hostiles = flag(value, self.player_highlight.highlight_hostiles),
+            "phighlight.range" => if let Ok(v) = value.parse::<u8>() { self.player_highlight.range = v.clamp(8, 64); },
+            "phighlight.color" => self.player_highlight.color = ShieldColorPreset::parse(value, self.player_highlight.color),
+
+            "ruler.enabled" => self.litematica_grid.enabled = flag(value, self.litematica_grid.enabled),
+            "ruler.hud" => self.litematica_grid.show_volume_hud = flag(value, self.litematica_grid.show_volume_hud),
+            "ruler.box" => self.litematica_grid.show_3d_box = flag(value, self.litematica_grid.show_3d_box),
+            "ruler.grid" => self.litematica_grid.show_grid_lines = flag(value, self.litematica_grid.show_grid_lines),
+            "ruler.color" => self.litematica_grid.color = ShieldColorPreset::parse(value, self.litematica_grid.color),
+
+            "dhist.enabled" => self.death_history.enabled = flag(value, self.death_history.enabled),
+            "dhist.keep" => if let Ok(v) = value.parse::<u8>() { self.death_history.keep_count = v.clamp(1, 10); },
+            "dhist.home" => self.death_history.show_home_pill = flag(value, self.death_history.show_home_pill),
+            "dhist.chat" => self.death_history.auto_log_chat = flag(value, self.death_history.auto_log_chat),
+            "dhist.corner" => self.death_history.corner = Corner::parse(value, self.death_history.corner),
+
+            "cpillar.enabled" => self.chunk_pillars.enabled = flag(value, self.chunk_pillars.enabled),
+            "cpillar.pillars" => self.chunk_pillars.draw_corner_pillars = flag(value, self.chunk_pillars.draw_corner_pillars),
+            "cpillar.biomes" => self.chunk_pillars.draw_biome_borders = flag(value, self.chunk_pillars.draw_biome_borders),
+            "cpillar.height" => if let Ok(v) = value.parse::<u8>() { self.chunk_pillars.pillar_height = v.clamp(16, 128); },
+
+            "otorch.enabled" => self.offhand_torch.enabled = flag(value, self.offhand_torch.enabled),
+            "otorch.auto" => self.offhand_torch.auto_place_dark = flag(value, self.offhand_torch.auto_place_dark),
+            "otorch.light" => if let Ok(v) = value.parse::<u8>() { self.offhand_torch.light_threshold = v.clamp(1, 7); },
+            "otorch.warn" => self.offhand_torch.notify_low_torches = flag(value, self.offhand_torch.notify_low_torches),
+
+            "cmention.enabled" => self.chat_mention.enabled = flag(value, self.chat_mention.enabled),
+            "cmention.user" => self.chat_mention.alert_on_username = flag(value, self.chat_mention.alert_on_username),
+            "cmention.tpa" => self.chat_mention.alert_on_tpa_msg = flag(value, self.chat_mention.alert_on_tpa_msg),
+            "cmention.chime" => self.chat_mention.play_ping_chime = flag(value, self.chat_mention.play_ping_chime),
+            "cmention.popup" => self.chat_mention.show_popup_banner = flag(value, self.chat_mention.show_popup_banner),
+
+            "dropguard.enabled" => self.drop_guard.enabled = flag(value, self.drop_guard.enabled),
+            "dropguard.tools" => self.drop_guard.protect_tools_weapons = flag(value, self.drop_guard.protect_tools_weapons),
+            "dropguard.totems" => self.drop_guard.protect_totems = flag(value, self.drop_guard.protect_totems),
+            "dropguard.slots" => self.drop_guard.lock_slots_1_to_3 = flag(value, self.drop_guard.lock_slots_1_to_3),
+            "dropguard.dbl" => self.drop_guard.double_tap_bypass = flag(value, self.drop_guard.double_tap_bypass),
+
+            "restock.enabled" => self.hotbar_restock.enabled = flag(value, self.hotbar_restock.enabled),
+            "restock.blocks" => self.hotbar_restock.restock_blocks = flag(value, self.hotbar_restock.restock_blocks),
+            "restock.util" => self.hotbar_restock.restock_pearls_fireworks = flag(value, self.hotbar_restock.restock_pearls_fireworks),
+            "restock.food" => self.hotbar_restock.restock_food = flag(value, self.hotbar_restock.restock_food),
+            "restock.toast" => self.hotbar_restock.show_toast = flag(value, self.hotbar_restock.show_toast),
+
+            "photo.enabled" => self.photo_mode.enabled = flag(value, self.photo_mode.enabled),
+            "photo.hideHud" => self.photo_mode.hide_all_hud = flag(value, self.photo_mode.hide_all_hud),
+            "photo.lock" => self.photo_mode.lock_freecam_pose = flag(value, self.photo_mode.lock_freecam_pose),
+            "photo.guides" => self.photo_mode.show_frame_guides = flag(value, self.photo_mode.show_frame_guides),
+
+            "jei.enabled" => self.jei.enabled = flag(value, self.jei.enabled),
+            "jei.inInv" => self.jei.show_in_inventory = flag(value, self.jei.show_in_inventory),
+            "jei.ids" => self.jei.show_item_ids = flag(value, self.jei.show_item_ids),
+            "jei.cook" => self.jei.show_cooking_recipes = flag(value, self.jei.show_cooking_recipes),
+            "jei.compact" => self.jei.compact_grid = flag(value, self.jei.compact_grid),
+
+            "timelapse.enabled" => self.cinematic_timelapse.enabled = flag(value, self.cinematic_timelapse.enabled),
+            "timelapse.delay" => if let Ok(v) = value.parse::<u8>() { self.cinematic_timelapse.start_delay_secs = v.min(60); },
+            "timelapse.path" => self.cinematic_timelapse.path_mode = TimelapsePathMode::parse(value, self.cinematic_timelapse.path_mode),
+            "timelapse.speed" => if let Ok(v) = value.parse::<u8>() { self.cinematic_timelapse.orbit_speed_deg = v.min(30); },
+            "timelapse.hideHud" => self.cinematic_timelapse.hide_hud = flag(value, self.cinematic_timelapse.hide_hud),
+            "timelapse.countdown" => self.cinematic_timelapse.show_countdown = flag(value, self.cinematic_timelapse.show_countdown),
             _ => {}
         }
     }
@@ -2215,6 +3366,8 @@ impl VoltExtras {
         let _ = writeln!(s, "volt.appleskin.tooltip:{}", bool_s(a.show_food_tooltip));
         let _ = writeln!(s, "volt.appleskin.tooltipAlways:{}", bool_s(a.always_show_tooltip));
         let _ = writeln!(s, "volt.appleskin.debug:{}", bool_s(a.show_debug_stats));
+        let _ = writeln!(s, "volt.appleskin.fullBar:{}", bool_s(a.highlight_full_bar));
+        let _ = writeln!(s, "volt.appleskin.pulse:{}", a.pulse_speed_pct);
 
         let c = &self.crystal_optimizer;
         let _ = writeln!(s, "volt.crystal.enabled:{}", bool_s(c.enabled));
@@ -2404,7 +3557,7 @@ impl VoltExtras {
         }
         if self.look_inspector != LookInspectorConfig::default() {
             let x = &self.look_inspector;
-            let _ = writeln!(s, "volt.jade.enabled:{}\nvolt.jade.blocks:{}\nvolt.jade.crops:{}\nvolt.jade.mobs:{}\nvolt.jade.chests:{}\nvolt.jade.compact:{}", bool_s(x.enabled), bool_s(x.show_blocks), bool_s(x.show_crops_pct), bool_s(x.show_mob_health), bool_s(x.show_container_info), bool_s(x.compact));
+            let _ = writeln!(s, "volt.jade.enabled:{}\nvolt.jade.blocks:{}\nvolt.jade.crops:{}\nvolt.jade.mobs:{}\nvolt.jade.chests:{}\nvolt.jade.compact:{}\nvolt.jade.icon3d:{}\nvolt.jade.toolHint:{}\nvolt.jade.modSrc:{}\nvolt.jade.yOffset:{}", bool_s(x.enabled), bool_s(x.show_blocks), bool_s(x.show_crops_pct), bool_s(x.show_mob_health), bool_s(x.show_container_info), bool_s(x.compact), bool_s(x.show_3d_icon), bool_s(x.show_tool_hint), bool_s(x.show_mod_source), x.y_offset);
         }
         if self.sound_muffler != SoundMufflerConfig::default() {
             let x = &self.sound_muffler;
@@ -2438,6 +3591,146 @@ impl VoltExtras {
             let x = &self.dynamic_lights;
             let _ = writeln!(s, "volt.dynlight.enabled:{}\nvolt.dynlight.held:{}\nvolt.dynlight.dropped:{}\nvolt.dynlight.burn:{}\nvolt.dynlight.minLvl:{}", bool_s(x.enabled), bool_s(x.held_items), bool_s(x.dropped_items), bool_s(x.burning_entities), x.min_level);
         }
+        if self.low_shield != LowShieldConfig::default() {
+            let x = &self.low_shield;
+            let _ = writeln!(s, "volt.lowshield.enabled:{}\nvolt.lowshield.shieldDrop:{}\nvolt.lowshield.offDrop:{}\nvolt.lowshield.mainDrop:{}\nvolt.lowshield.noTilt:{}", bool_s(x.enabled), x.shield_drop_pct, x.offhand_drop_pct, x.mainhand_drop_pct, bool_s(x.hide_blocking_tilt));
+        }
+        if self.clean_view != CleanViewConfig::default() {
+            let x = &self.clean_view;
+            let _ = writeln!(s, "volt.cleanview.enabled:{}\nvolt.cleanview.selfPot:{}\nvolt.cleanview.beacons:{}\nvolt.cleanview.enemies:{}", bool_s(x.enabled), bool_s(x.hide_self_potions), bool_s(x.hide_ambient_beacons), bool_s(x.keep_enemy_particles));
+        }
+        if self.name_tags_plus != NameTagsPlusConfig::default() {
+            let x = &self.name_tags_plus;
+            let _ = writeln!(s, "volt.tagsplus.enabled:{}\nvolt.tagsplus.own:{}\nvolt.tagsplus.dist:{}\nvolt.tagsplus.hp:{}\nvolt.tagsplus.noFade:{}", bool_s(x.enabled), bool_s(x.show_own_nametag), bool_s(x.show_distance), bool_s(x.show_hp_tag), bool_s(x.no_sneak_fade));
+        }
+        if self.hit_color != HitColorConfig::default() {
+            let x = &self.hit_color;
+            let _ = writeln!(s, "volt.hitcol.enabled:{}\nvolt.hitcol.color:{}\nvolt.hitcol.pct:{}\nvolt.hitcol.armor:{}", bool_s(x.enabled), x.color.name(), x.intensity_pct, bool_s(x.flash_armor));
+        }
+        if self.crit_ring != CritRingConfig::default() {
+            let x = &self.crit_ring;
+            let _ = writeln!(s, "volt.critring.enabled:{}\nvolt.critring.badge:{}\nvolt.critring.bar:{}\nvolt.critring.color:{}", bool_s(x.enabled), bool_s(x.show_crit_badge), bool_s(x.show_cooldown_bar), x.crit_color.name());
+        }
+        if self.bow_charge != BowChargeConfig::default() {
+            let x = &self.bow_charge;
+            let _ = writeln!(s, "volt.bowchg.enabled:{}\nvolt.bowchg.bar:{}\nvolt.bowchg.chime:{}\nvolt.bowchg.autoRel:{}\nvolt.bowchg.corner:{}", bool_s(x.enabled), bool_s(x.show_pct_bar), bool_s(x.full_draw_chime), bool_s(x.auto_release_full), x.corner.name());
+        }
+        if self.cooldown_hud != CooldownHudConfig::default() {
+            let x = &self.cooldown_hud;
+            let _ = writeln!(s, "volt.cdhud.enabled:{}\nvolt.cdhud.pearls:{}\nvolt.cdhud.wind:{}\nvolt.cdhud.chorus:{}\nvolt.cdhud.corner:{}", bool_s(x.enabled), bool_s(x.track_pearls), bool_s(x.track_wind_charge), bool_s(x.track_chorus_gapple), x.corner.name());
+        }
+        if self.reach_box != ReachBoxConfig::default() {
+            let x = &self.reach_box;
+            let _ = writeln!(s, "volt.reachbox.enabled:{}\nvolt.reachbox.box:{}\nvolt.reachbox.ring:{}\nvolt.reachbox.crit:{}\nvolt.reachbox.color:{}", bool_s(x.enabled), bool_s(x.draw_target_box), bool_s(x.draw_reach_ring), bool_s(x.color_on_crit), x.color.name());
+        }
+        if self.minimap_radar != MinimapRadarConfig::default() {
+            let x = &self.minimap_radar;
+            let _ = writeln!(s, "volt.minimap.enabled:{}\nvolt.minimap.size:{}\nvolt.minimap.zoom:{}\nvolt.minimap.mobs:{}\nvolt.minimap.players:{}\nvolt.minimap.wp:{}\nvolt.minimap.corner:{}", bool_s(x.enabled), x.size_px, x.zoom_blocks, bool_s(x.show_mobs), bool_s(x.show_players), bool_s(x.show_waypoints), x.corner.name());
+        }
+        if self.potion_hud != PotionHudConfig::default() {
+            let x = &self.potion_hud;
+            let _ = writeln!(s, "volt.pothud.enabled:{}\nvolt.pothud.timers:{}\nvolt.pothud.blink:{}\nvolt.pothud.compact:{}\nvolt.pothud.corner:{}", bool_s(x.enabled), bool_s(x.show_timers), bool_s(x.blink_under_10s), bool_s(x.compact_pills), x.corner.name());
+        }
+        if self.durability_warn != DurabilityWarnConfig::default() {
+            let x = &self.durability_warn;
+            let _ = writeln!(s, "volt.durwarn.enabled:{}\nvolt.durwarn.pct:{}\nvolt.durwarn.armor:{}\nvolt.durwarn.held:{}\nvolt.durwarn.chime:{}", bool_s(x.enabled), x.warn_pct, bool_s(x.check_armor), bool_s(x.check_held), bool_s(x.play_chime));
+        }
+        if self.biome_title != BiomeTitleConfig::default() {
+            let x = &self.biome_title;
+            let _ = writeln!(s, "volt.biometitle.enabled:{}\nvolt.biometitle.biome:{}\nvolt.biometitle.dim:{}\nvolt.biometitle.secs:{}\nvolt.biometitle.coords:{}", bool_s(x.enabled), bool_s(x.show_biome_changes), bool_s(x.show_dimension_changes), x.display_secs, bool_s(x.show_sub_coords));
+        }
+        if self.xp_tracker != XpTrackerConfig::default() {
+            let x = &self.xp_tracker;
+            let _ = writeln!(s, "volt.xptrack.enabled:{}\nvolt.xptrack.next:{}\nvolt.xptrack.mend:{}\nvolt.xptrack.corner:{}", bool_s(x.enabled), bool_s(x.show_next_level_xp), bool_s(x.show_mending_summary), x.corner.name());
+        }
+        if self.inventory_hud != InventoryHudConfig::default() {
+            let x = &self.inventory_hud;
+            let _ = writeln!(s, "volt.invhud.enabled:{}\nvolt.invhud.grid:{}\nvolt.invhud.free:{}\nvolt.invhud.opacity:{}\nvolt.invhud.corner:{}", bool_s(x.enabled), bool_s(x.show_3x9_grid), bool_s(x.show_free_slots), x.bg_opacity_pct, x.corner.name());
+        }
+        if self.tab_ping != TabPingConfig::default() {
+            let x = &self.tab_ping;
+            let _ = writeln!(s, "volt.tabping.enabled:{}\nvolt.tabping.ms:{}\nvolt.tabping.cnt:{}\nvolt.tabping.dim:{}\nvolt.tabping.corner:{}", bool_s(x.enabled), bool_s(x.show_ping_ms), bool_s(x.show_player_count), bool_s(x.show_dim_tag), x.corner.name());
+        }
+        if self.moon_phase != MoonPhaseConfig::default() {
+            let x = &self.moon_phase;
+            let _ = writeln!(s, "volt.moon.enabled:{}\nvolt.moon.phase:{}\nvolt.moon.slime:{}\nvolt.moon.insomnia:{}\nvolt.moon.corner:{}", bool_s(x.enabled), bool_s(x.show_moon_phase), bool_s(x.show_slime_rating), bool_s(x.show_insomnia_warn), x.corner.name());
+        }
+        if self.session_stats != SessionStatsConfig::default() {
+            let x = &self.session_stats;
+            let _ = writeln!(s, "volt.sstats.enabled:{}\nvolt.sstats.kills:{}\nvolt.sstats.blocks:{}\nvolt.sstats.dist:{}\nvolt.sstats.corner:{}", bool_s(x.enabled), bool_s(x.show_kills), bool_s(x.show_blocks), bool_s(x.show_distance), x.corner.name());
+        }
+        if self.cameraoverhaul != CameraOverhaulConfig::default() {
+            let x = &self.cameraoverhaul;
+            let _ = writeln!(s, "volt.camover.enabled:{}\nvolt.camover.strafe:{}\nvolt.camover.turn:{}\nvolt.camover.elytra:{}\nvolt.camover.fov:{}", bool_s(x.enabled), x.strafe_roll_pct, x.turn_roll_pct, x.elytra_bank_pct, bool_s(x.clamp_sprint_fov));
+        }
+        if self.weather_sound != WeatherSoundConfig::default() {
+            let x = &self.weather_sound;
+            let _ = writeln!(s, "volt.wsound.enabled:{}\nvolt.wsound.flash:{}\nvolt.wsound.rain:{}\nvolt.wsound.thunder:{}", bool_s(x.enabled), bool_s(x.suppress_lightning_flash), bool_s(x.limit_rain_splashes), bool_s(x.mute_thunder_shake));
+        }
+        if self.custom_glint != CustomGlintConfig::default() {
+            let x = &self.custom_glint;
+            let _ = writeln!(s, "volt.glint.enabled:{}\nvolt.glint.preset:{}\nvolt.glint.speed:{}\nvolt.glint.strength:{}\nvolt.glint.compact:{}", bool_s(x.enabled), x.preset.name(), x.speed_pct, x.strength_pct, bool_s(x.compact_item_scale));
+        }
+        if self.clear_caves != ClearCavesConfig::default() {
+            let x = &self.clear_caves;
+            let _ = writeln!(s, "volt.caves.enabled:{}\nvolt.caves.void:{}\nvolt.caves.nv:{}\nvolt.caves.lava:{}", bool_s(x.enabled), bool_s(x.remove_void_fog), bool_s(x.smooth_night_vision), bool_s(x.boost_lava_clarity));
+        }
+        if self.player_highlight != PlayerHighlightConfig::default() {
+            let x = &self.player_highlight;
+            let _ = writeln!(s, "volt.phighlight.enabled:{}\nvolt.phighlight.players:{}\nvolt.phighlight.hostiles:{}\nvolt.phighlight.range:{}\nvolt.phighlight.color:{}", bool_s(x.enabled), bool_s(x.highlight_players), bool_s(x.highlight_hostiles), x.range, x.color.name());
+        }
+        if self.litematica_grid != LitematicaGridConfig::default() {
+            let x = &self.litematica_grid;
+            let _ = writeln!(s, "volt.ruler.enabled:{}\nvolt.ruler.hud:{}\nvolt.ruler.box:{}\nvolt.ruler.grid:{}\nvolt.ruler.color:{}", bool_s(x.enabled), bool_s(x.show_volume_hud), bool_s(x.show_3d_box), bool_s(x.show_grid_lines), x.color.name());
+        }
+        if self.death_history != DeathHistoryConfig::default() {
+            let x = &self.death_history;
+            let _ = writeln!(s, "volt.dhist.enabled:{}\nvolt.dhist.keep:{}\nvolt.dhist.home:{}\nvolt.dhist.chat:{}\nvolt.dhist.corner:{}", bool_s(x.enabled), x.keep_count, bool_s(x.show_home_pill), bool_s(x.auto_log_chat), x.corner.name());
+        }
+        if self.chunk_pillars != ChunkPillarsConfig::default() {
+            let x = &self.chunk_pillars;
+            let _ = writeln!(s, "volt.cpillar.enabled:{}\nvolt.cpillar.pillars:{}\nvolt.cpillar.biomes:{}\nvolt.cpillar.height:{}", bool_s(x.enabled), bool_s(x.draw_corner_pillars), bool_s(x.draw_biome_borders), x.pillar_height);
+        }
+        if self.offhand_torch != OffhandTorchConfig::default() {
+            let x = &self.offhand_torch;
+            let _ = writeln!(s, "volt.otorch.enabled:{}\nvolt.otorch.auto:{}\nvolt.otorch.light:{}\nvolt.otorch.warn:{}", bool_s(x.enabled), bool_s(x.auto_place_dark), x.light_threshold, bool_s(x.notify_low_torches));
+        }
+        if self.chat_mention != ChatMentionConfig::default() {
+            let x = &self.chat_mention;
+            let _ = writeln!(s, "volt.cmention.enabled:{}\nvolt.cmention.user:{}\nvolt.cmention.tpa:{}\nvolt.cmention.chime:{}\nvolt.cmention.popup:{}", bool_s(x.enabled), bool_s(x.alert_on_username), bool_s(x.alert_on_tpa_msg), bool_s(x.play_ping_chime), bool_s(x.show_popup_banner));
+        }
+        if self.drop_guard != DropGuardConfig::default() {
+            let x = &self.drop_guard;
+            let _ = writeln!(s, "volt.dropguard.enabled:{}\nvolt.dropguard.tools:{}\nvolt.dropguard.totems:{}\nvolt.dropguard.slots:{}\nvolt.dropguard.dbl:{}", bool_s(x.enabled), bool_s(x.protect_tools_weapons), bool_s(x.protect_totems), bool_s(x.lock_slots_1_to_3), bool_s(x.double_tap_bypass));
+        }
+        if self.hotbar_restock != HotbarRestockConfig::default() {
+            let x = &self.hotbar_restock;
+            let _ = writeln!(s, "volt.restock.enabled:{}\nvolt.restock.blocks:{}\nvolt.restock.util:{}\nvolt.restock.food:{}\nvolt.restock.toast:{}", bool_s(x.enabled), bool_s(x.restock_blocks), bool_s(x.restock_pearls_fireworks), bool_s(x.restock_food), bool_s(x.show_toast));
+        }
+        if self.photo_mode != PhotoModeConfig::default() {
+            let x = &self.photo_mode;
+            let _ = writeln!(s, "volt.photo.enabled:{}\nvolt.photo.hideHud:{}\nvolt.photo.lock:{}\nvolt.photo.guides:{}", bool_s(x.enabled), bool_s(x.hide_all_hud), bool_s(x.lock_freecam_pose), bool_s(x.show_frame_guides));
+        }
+        if self.jei != JeiConfig::default() {
+            let x = &self.jei;
+            let _ = writeln!(s, "volt.jei.enabled:{}\nvolt.jei.inInv:{}\nvolt.jei.ids:{}\nvolt.jei.cook:{}\nvolt.jei.compact:{}", bool_s(x.enabled), bool_s(x.show_in_inventory), bool_s(x.show_item_ids), bool_s(x.show_cooking_recipes), bool_s(x.compact_grid));
+        }
+        if self.cinematic_timelapse != CinematicTimelapseConfig::default() {
+            let x = &self.cinematic_timelapse;
+            let _ = writeln!(s, "volt.timelapse.enabled:{}\nvolt.timelapse.delay:{}\nvolt.timelapse.path:{}\nvolt.timelapse.speed:{}\nvolt.timelapse.hideHud:{}\nvolt.timelapse.countdown:{}", bool_s(x.enabled), x.start_delay_secs, x.path_mode.name(), x.orbit_speed_deg, bool_s(x.hide_hud), bool_s(x.show_countdown));
+        }
+        for (i, meta) in VOLT_MODS.iter().enumerate() {
+            let b = &self.binds.0[i];
+            if !b.toggle_key.is_empty() {
+                let _ = writeln!(s, "volt.bind.{}.toggle:{}", meta.key, b.toggle_key);
+            }
+            if !b.use_key.is_empty() {
+                let _ = writeln!(s, "volt.bind.{}.use:{}", meta.key, b.use_key);
+            }
+            if b.mode != default_keybind_mode_for_mod(meta.id) {
+                let _ = writeln!(s, "volt.bind.{}.mode:{}", meta.key, b.mode.name());
+            }
+        }
     }
 }
 
@@ -2456,5 +3749,19 @@ pub enum VoltQuickAction {
     CopyCoords,
     ToggleChunkBorders,
     ToggleHitboxes,
+    OpenModKeyPicker { mod_id: u8, is_use: bool },
+    OpenWaypointManager,
+    DeleteWaypoint(usize),
+    ClearAllWaypoints,
+    CycleWaypointColor(usize),
+    ShareWaypoint(usize),
+    SetRulerPointA,
+    SetRulerPointB,
+    ClearRuler,
+    ToggleJei,
+    StartStopTimelapse,
+    SetHomeWaypoint,
+    ResetSessionStats,
+    TogglePhotoMode,
 }
 

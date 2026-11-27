@@ -323,10 +323,20 @@ impl Game<'_> {
     /// The glint clock, options and sprite for this frame: read once per
     /// frame, not per item (`GameRenderer.extractOptions`).
     pub(super) fn capture_glint_frame(&self) -> item_render::GlintFrame {
+        let mut speed = self.settings.file.double("glintSpeed") as f32;
+        let mut alpha = self.settings.file.double("glintStrength") as f32;
+        let cg = &self.settings.extras.volt.custom_glint;
+        if cg.enabled {
+            speed *= f32::from(cg.speed_pct.clamp(10, 300)) / 100.0;
+            alpha = match cg.preset {
+                horizon_client::extras::GlintColorPreset::Off => 0.0,
+                _ => alpha * (f32::from(cg.alpha_pct.clamp(0, 200)) / 100.0),
+            };
+        }
         item_render::GlintFrame {
             millis: self.started.elapsed().as_secs_f32() * 1000.0,
-            speed: self.settings.file.double("glintSpeed") as f32,
-            alpha: self.settings.file.double("glintStrength") as f32,
+            speed,
+            alpha,
             sprite: self
                 .gui
                 .atlas

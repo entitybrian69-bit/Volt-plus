@@ -267,6 +267,9 @@ impl Game<'_> {
         if down && !self.pad_in_menu() && !self.captured && self.focused {
             self.capture(true);
         }
+        if self.screen == Screen::Playing {
+            let _ = self.volt_handle_key_token(name, down, false);
+        }
         if self.screen == Screen::Options && self.options_waiting_for_key() {
             if !down {
                 return;
@@ -808,9 +811,7 @@ impl Game<'_> {
         ) && !self.pad.touch_ui.owns_relative(t.id)
             && !self.pad.touch_ui.owns_gesture(t.id)
             && {
-                self.pad
-                    .touch_ui
-                    .sync_volt_extras(&self.settings.extras.volt);
+                self.sync_volt_touch_ui();
                 true
             }
             && let Some(menu_act) = self.pad.touch_ui.floating_menu_touch(
@@ -1369,6 +1370,7 @@ impl Game<'_> {
                     self.settings.extras.volt = volt;
                     self.settings.extras.save(std::path::Path::new("."));
                     self.apply_ui_settings();
+                    self.sync_volt_touch_ui();
                 }
                 InGameMenuAction::VoltQuickAction(act) => {
                     self.volt_extras_quick_action(act);
@@ -1645,6 +1647,27 @@ impl Game<'_> {
                     continue;
                 }
             }
+            if self.pad.touch_ui.volt_key_picker.is_some() {
+                let captured = match &out {
+                    Output::Text(t) => self.pad.touch_ui.capture_volt_key_picker_text(t),
+                    Output::Key(code) => self.pad.touch_ui.capture_volt_key_picker_key(*code),
+                    Output::Backspace => self
+                        .pad
+                        .touch_ui
+                        .capture_volt_key_picker_key(KeyCode::Backspace),
+                    Output::Enter => self.pad.touch_ui.capture_volt_key_picker_key(KeyCode::Enter),
+                    Output::Close => None,
+                };
+                if let Some(volt) = captured {
+                    crate::platform::hide();
+                    self.android_sync_pointer();
+                    self.settings.extras.volt = volt;
+                    self.settings.extras.save(std::path::Path::new("."));
+                    self.apply_ui_settings();
+                    self.sync_volt_touch_ui();
+                    continue;
+                }
+            }
             if self.pad.touch_ui.custom_input_picker != horizon_client::touch::PickerStep::None {
                 let captured = match &out {
                     Output::Text(t) => self.pad.touch_ui.capture_custom_input_text(t),
@@ -1759,6 +1782,7 @@ impl Game<'_> {
         if !self.pad_in_menu()
             && self.pad.touch.editor.is_none()
             && self.pad.touch_ui.custom_input_picker == horizon_client::touch::PickerStep::None
+            && self.pad.touch_ui.volt_key_picker.is_none()
             && !self.pad.touch_ui.music_editing_search
             && crate::platform::active()
         {
