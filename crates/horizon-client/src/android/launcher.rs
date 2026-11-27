@@ -883,10 +883,14 @@ impl Launcher {
             }
             self.session_ready = false;
             std::fs::create_dir_all(&game_home)?;
-            if crate::account::Accounts::load().selected().is_none() {
+            // Wait briefly for any in-flight skin upload/sync before launching so Mojang's
+            // servers and horizon-appearance.json always reflect the newly equipped skin/cape.
+            if self.wardrobe.is_busy() {
                 self.wardrobe
-                    .prepare_game(&self.catalog.config.name, &game_home)?;
+                    .wait_pending_sync(std::time::Duration::from_secs(5));
             }
+            self.wardrobe
+                .prepare_game(&self.catalog.config.name, &game_home)?;
             let extra_arguments = if crate::PUBLIC_BUILD {
                 Vec::new()
             } else {

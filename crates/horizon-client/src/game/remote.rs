@@ -3266,7 +3266,12 @@ impl Game<'_> {
                 if let Some(net) = horizon_client::skins::appearance::decode_net_payload(&p.data)
                     && let Some(r) = self.remote.as_mut()
                 {
-                    r.synced_appearances.insert(net.uuid, net);
+                    match r.synced_appearances.get_mut(&net.uuid) {
+                        Some(existing) => existing.merge(net),
+                        None => {
+                            r.synced_appearances.insert(net.uuid, net);
+                        }
+                    }
                 }
             }
             // PingDebugMonitor.onPongReceived.
@@ -3316,29 +3321,7 @@ impl Game<'_> {
                     r.sent_info = info.clone();
                 }
                 self.send(S::ClientInformation(info));
-                if let Some(appearance) = horizon_client::skins::appearance::current()
-                    && (appearance.skin_png.is_some()
-                        || appearance.cape_png.is_some()
-                        || appearance.hide_cape)
-                {
-                    let slim = appearance.skin.as_ref().is_some_and(|(_, s)| *s);
-                    if let Some(payload) = horizon_client::skins::appearance::encode_net_payload(
-                        0,
-                        slim,
-                        appearance.hide_cape,
-                        appearance.cape_fps,
-                        appearance.skin_png.as_deref(),
-                        appearance.cape_png.as_deref(),
-                    ) {
-                        self.send(S::CustomPayload(
-                            horizon_protocol::packets::configuration::CustomPayload {
-                                channel: horizon_client::skins::appearance::APPEARANCE_CHANNEL
-                                    .into(),
-                                data: payload,
-                            },
-                        ));
-                    }
-                }
+                self.send_own_appearance();
                 self.remote_chat_login();
             }
             C::Respawn(p) => {
@@ -3383,6 +3366,7 @@ impl Game<'_> {
                     r.camera = None;
                 }
                 self.capture(true);
+                self.send_own_appearance();
             }
             C::PlayerPosition(p) => self.remote_teleport(&p)?,
             C::PlayerRotation(p) => {
@@ -5610,6 +5594,42 @@ impl Game<'_> {
                 mob.slim = slim && skin.is_some();
                 mob.skin = skin;
             }
+        }
+    }
+    fn send_own_appearance(&self) {
+        let Some(appearance) = horizon_client::skins::appearance::current() else {
+            return;
+        };
+        if appearance.skin_png.is_none()
+            && appearance.cape_png.is_none()
+            && !appearance.hide_cape
+        {
+            return;
+        }
+        let mut reg = Vec::with_capacity(horizon_client::skins::appearance::APPEARANCE_CHANNEL.len() + 1);
+        reg.extend_from_slice(horizon_client::skins::appearance::APPEARANCE_CHANNEL.as_bytes());
+        reg.push(0);
+        self.send(S::CustomPayload(
+            horizon_protocol::packets::configuration::CustomPayload {
+                channel: "minecraft:register".into(),
+                data: reg,
+            },
+        ));
+        let slim = appearance.skin.as_ref().is_some_and(|(_, s)| *s);
+        for payload in horizon_client::skins::appearance::encode_net_payloads(
+            0,
+            slim,
+            appearance.hide_cape,
+            appearance.cape_fps,
+            appearance.skin_png.as_deref(),
+            appearance.cape_png.as_deref(),
+        ) {
+            self.send(S::CustomPayload(
+                horizon_protocol::packets::configuration::CustomPayload {
+                    channel: horizon_client::skins::appearance::APPEARANCE_CHANNEL.into(),
+                    data: payload,
+                },
+            ));
         }
     }
     /// Puts a downloaded skin in an atlas skin slot (`SkinSlots::place`),

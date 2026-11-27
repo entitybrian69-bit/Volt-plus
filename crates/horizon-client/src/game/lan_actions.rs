@@ -2100,11 +2100,17 @@ impl Game<'_> {
                 if p.channel == horizon_client::skins::appearance::APPEARANCE_CHANNEL =>
             {
                 let uuid = host.hub.guests[gi].uuid;
-                if horizon_client::skins::appearance::decode_net_payload(&p.data).is_some()
+                if let Some(net) = horizon_client::skins::appearance::decode_net_payload(&p.data)
                     && let Some(stamped) =
                         horizon_client::skins::appearance::restamp_net_uuid(&p.data, uuid)
                 {
-                    host.hub.synced_appearances.insert(uuid, stamped.clone());
+                    let slot = host.hub.synced_appearances.entry(uuid).or_default();
+                    if net.has_skin {
+                        slot.0 = Some(stamped.clone());
+                    }
+                    if net.has_cape || net.hide_cape {
+                        slot.1 = Some(stamped.clone());
+                    }
                     host.hub.broadcast(&C::CustomPayload(
                         horizon_protocol::packets::configuration::CustomPayload {
                             channel: horizon_client::skins::appearance::APPEARANCE_CHANNEL.into(),

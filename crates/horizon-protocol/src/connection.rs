@@ -6,13 +6,343 @@
 use crate::{Error, Result, buf::Reader, crypto::Cfb8, frame};
 use std::{
     io::{Read, Write},
-    net::{Shutdown, SocketAddr, TcpStream, ToSocketAddrs},
+    net::{IpAddr, Shutdown, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket},
     sync::{
-        Arc, Condvar, Mutex,
+        Arc, Condvar, Mutex, RwLock,
         atomic::{AtomicI64, Ordering},
     },
     time::{Duration, Instant},
 };
+
+/// Active in-game VPN / tunnel route for Minecraft server connections and pings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VpnEndpoint {
+    /// Low-latency direct connection with custom fast UDP DNS routing (bypasses ISP DNS throttling).
+    FastDns { label: String, dns_ip: String },
+    /// RFC 1928 SOCKS5 proxy tunnel (performs remote DNS resolution on the VPN exit node).
+    Socks5 {
+        label: String,
+        host: String,
+        port: u16,
+    },
+    /// HTTP CONNECT proxy tunnel.
+    HttpConnect {
+        label: String,
+        host: String,
+        port: u16,
+    },
+}
+
+impl VpnEndpoint {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::FastDns { label, .. }
+            | Self::Socks5 { label, .. }
+            | Self::HttpConnect { label, .. } => label,
+        }
+    }
+}
+
+static ACTIVE_VPN: RwLock<Option<VpnEndpoint>> = RwLock::new(None);
+
+pub fn set_active_vpn(endpoint: Option<VpnEndpoint>) {
+    if let Ok(mut guard) = ACTIVE_VPN.write() {
+        *guard = endpoint;
+    }
+}
+
+pub fn active_vpn() -> Option<VpnEndpoint> {
+    ACTIVE_VPN.read().ok().and_then(|g| g.clone())
+}
+
+fn is_local_host(host: &str) -> bool {
+    let trimmed = host.trim().trim_matches(|c| c == '[' || c == ']');
+    if trimmed.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    if let Ok(ip) = trimmed.parse::<IpAddr>() {
+        return is_local_ip(ip);
+    }
+    false
+}
+
+fn is_local_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
+        }
+        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+    }
+}
+
+fn connect_tcp_addrs(host: &str, addrs: Vec<SocketAddr>, timeout: Duration) -> Result<TcpStream> {
+    let mut addrs = ipv4_first(addrs);
+    if addrs.is_empty() {
+        return Err(Error::new(format!("Unknown host {host}")));
+    }
+    addrs.truncate(8);
+    let (send, recv) = std::sync::mpsc::channel();
+    let mut errors: Vec<Option<std::io::Error>> = addrs.iter().map(|_| None).collect();
+    let (mut started, mut pending) = (0, 0);
+    loop {
+        if let Some(&addr) = addrs.get(started) {
+            let (send, index) = (send.clone(), started);
+            let spawned = std::thread::Builder::new()
+                .name("horizon-vpn-connect".into())
+                .spawn(move || {
+                    let _ = send.send((index, TcpStream::connect_timeout(&addr, timeout)));
+                });
+            match spawned {
+                Ok(_) => pending += 1,
+                Err(e) => errors[index] = Some(e),
+            }
+            started += 1;
+        }
+        if pending == 0 {
+            if started < addrs.len() {
+                continue;
+            }
+            break;
+        }
+        let reply = if started < addrs.len() {
+            match recv.recv_timeout(ATTEMPT_DELAY) {
+                Ok(reply) => reply,
+                Err(_) => continue,
+            }
+        } else {
+            recv.recv().expect("a sender is held here")
+        };
+        pending -= 1;
+        match reply {
+            (_, Ok(stream)) => return Ok(stream),
+            (index, Err(e)) => errors[index] = Some(e),
+        }
+    }
+    match errors.into_iter().flatten().next() {
+        Some(e) => Err(Error::new(format!("Connection refused: {e}"))),
+        None => Err(Error::new(format!("Unknown host {host}"))),
+    }
+}
+
+fn connect_via_socks5(
+    proxy_host: &str,
+    proxy_port: u16,
+    target_host: &str,
+    target_port: u16,
+    timeout: Duration,
+) -> Result<TcpStream> {
+    let addrs: Vec<_> = (proxy_host, proxy_port)
+        .to_socket_addrs()
+        .map_err(|e| Error::new(format!("VPN proxy {proxy_host}: {e}")))?
+        .collect();
+    let mut stream = connect_tcp_addrs(proxy_host, addrs, timeout)?;
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+    let _ = stream.set_nodelay(true);
+    // Greeting: SOCKS5, 1 method, NO AUTH (0x00)
+    stream
+        .write_all(&[0x05, 0x01, 0x00])
+        .map_err(|e| Error::new(format!("SOCKS5 greeting failed: {e}")))?;
+    let mut greet = [0u8; 2];
+    stream
+        .read_exact(&mut greet)
+        .map_err(|e| Error::new(format!("SOCKS5 handshake failed: {e}")))?;
+    if greet != [0x05, 0x00] {
+        return Err(Error::new("SOCKS5 proxy rejected no-auth mode"));
+    }
+    let host_bytes = target_host.as_bytes();
+    if host_bytes.len() > 255 {
+        return Err(Error::new("Target hostname too long for SOCKS5"));
+    }
+    let mut req = Vec::with_capacity(7 + host_bytes.len());
+    req.extend_from_slice(&[0x05, 0x01, 0x00, 0x03, host_bytes.len() as u8]);
+    req.extend_from_slice(host_bytes);
+    req.extend_from_slice(&target_port.to_be_bytes());
+    stream
+        .write_all(&req)
+        .map_err(|e| Error::new(format!("SOCKS5 connect send failed: {e}")))?;
+    let mut head = [0u8; 4];
+    stream
+        .read_exact(&mut head)
+        .map_err(|e| Error::new(format!("SOCKS5 connect reply failed: {e}")))?;
+    if head[0] != 0x05 || head[1] != 0x00 {
+        return Err(Error::new(format!("SOCKS5 tunnel refused (code {})", head[1])));
+    }
+    let tail_len = match head[3] {
+        0x01 => 4 + 2,
+        0x03 => {
+            let mut len = [0u8; 1];
+            stream
+                .read_exact(&mut len)
+                .map_err(|e| Error::new(format!("SOCKS5 reply addr failed: {e}")))?;
+            usize::from(len[0]) + 2
+        }
+        0x04 => 16 + 2,
+        _ => return Err(Error::new("SOCKS5 invalid reply address type")),
+    };
+    let mut discard = vec![0u8; tail_len];
+    stream
+        .read_exact(&mut discard)
+        .map_err(|e| Error::new(format!("SOCKS5 reply tail failed: {e}")))?;
+    Ok(stream)
+}
+
+fn connect_via_http(
+    proxy_host: &str,
+    proxy_port: u16,
+    target_host: &str,
+    target_port: u16,
+    timeout: Duration,
+) -> Result<TcpStream> {
+    let addrs: Vec<_> = (proxy_host, proxy_port)
+        .to_socket_addrs()
+        .map_err(|e| Error::new(format!("VPN proxy {proxy_host}: {e}")))?
+        .collect();
+    let mut stream = connect_tcp_addrs(proxy_host, addrs, timeout)?;
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+    let _ = stream.set_nodelay(true);
+    let req = format!(
+        "CONNECT {target_host}:{target_port} HTTP/1.1\r\nHost: {target_host}:{target_port}\r\nProxy-Connection: keep-alive\r\n\r\n"
+    );
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|e| Error::new(format!("HTTP tunnel write failed: {e}")))?;
+    let mut buf = [0u8; 2048];
+    let mut total = 0usize;
+    let status_ok = loop {
+        let n = stream
+            .read(&mut buf[total..])
+            .map_err(|e| Error::new(format!("HTTP tunnel reply failed: {e}")))?;
+        if n == 0 {
+            return Err(Error::new("HTTP proxy closed tunnel unexpectedly"));
+        }
+        total += n;
+        if let Some(end) = buf[..total].windows(4).position(|w| w == b"\r\n\r\n") {
+            let header = String::from_utf8_lossy(&buf[..end]);
+            let first_line = header.lines().next().unwrap_or("");
+            break first_line.contains(" 200");
+        }
+        if total >= buf.len() {
+            return Err(Error::new("HTTP proxy header too large"));
+        }
+    };
+    if !status_ok {
+        return Err(Error::new("HTTP proxy rejected CONNECT tunnel"));
+    }
+    Ok(stream)
+}
+
+/// Minimal single-packet UDP DNS A-record lookup (fast direct resolver without ISP DNS throttling).
+fn resolve_a_via_udp_dns(dns_ip: &str, host: &str, port: u16, timeout: Duration) -> Option<Vec<SocketAddr>> {
+    if let Ok(ip) = host.trim_matches(|c| c == '[' || c == ']').parse::<IpAddr>() {
+        return Some(vec![SocketAddr::new(ip, port)]);
+    }
+    let dns_addr: SocketAddr = format!("{dns_ip}:53").parse().ok()?;
+    let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.set_read_timeout(Some(timeout)).ok()?;
+    let mut pkt = Vec::with_capacity(64);
+    let txid: u16 = 0x564E;
+    pkt.extend_from_slice(&txid.to_be_bytes());
+    pkt.extend_from_slice(&[0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    for label in host.trim_end_matches('.').split('.') {
+        if label.is_empty() || label.len() > 63 {
+            return None;
+        }
+        pkt.push(label.len() as u8);
+        pkt.extend_from_slice(label.as_bytes());
+    }
+    pkt.push(0);
+    pkt.extend_from_slice(&1u16.to_be_bytes()); // QTYPE A
+    pkt.extend_from_slice(&1u16.to_be_bytes()); // QCLASS IN
+    sock.send_to(&pkt, dns_addr).ok()?;
+    let mut resp = [0u8; 512];
+    let n = sock.recv(&mut resp).ok()?;
+    if n < 12 || u16::from_be_bytes([resp[0], resp[1]]) != txid {
+        return None;
+    }
+    let qdcount = u16::from_be_bytes([resp[4], resp[5]]) as usize;
+    let ancount = u16::from_be_bytes([resp[6], resp[7]]) as usize;
+    let mut pos = 12usize;
+    let skip_name = |buf: &[u8], mut p: usize| -> Option<usize> {
+        loop {
+            let len = *buf.get(p)?;
+            if len == 0 {
+                return Some(p + 1);
+            }
+            if len & 0xC0 == 0xC0 {
+                return buf.get(p + 1).map(|_| p + 2);
+            }
+            p += 1 + usize::from(len);
+        }
+    };
+    for _ in 0..qdcount {
+        pos = skip_name(&resp[..n], pos)?;
+        pos += 4;
+    }
+    let mut out = Vec::new();
+    for _ in 0..ancount {
+        pos = skip_name(&resp[..n], pos)?;
+        if pos + 10 > n {
+            break;
+        }
+        let rtype = u16::from_be_bytes([resp[pos], resp[pos + 1]]);
+        let rdlen = u16::from_be_bytes([resp[pos + 8], resp[pos + 9]]) as usize;
+        pos += 10;
+        if pos + rdlen > n {
+            break;
+        }
+        if rtype == 1 && rdlen == 4 {
+            let ip = std::net::Ipv4Addr::new(resp[pos], resp[pos + 1], resp[pos + 2], resp[pos + 3]);
+            out.push(SocketAddr::new(IpAddr::V4(ip), port));
+        }
+        pos += rdlen;
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// Real protocol-level probe for a VPN endpoint; returns measured RTT in ms if working.
+pub fn test_vpn_endpoint(
+    endpoint: &VpnEndpoint,
+    timeout: Duration,
+) -> std::result::Result<u128, String> {
+    let start = Instant::now();
+    match endpoint {
+        VpnEndpoint::FastDns { dns_ip, .. } => {
+            if resolve_a_via_udp_dns(dns_ip, "minecraft.net", 25565, timeout).is_some() {
+                Ok(start.elapsed().as_millis().max(1))
+            } else {
+                Err("DNS probe timed out".into())
+            }
+        }
+        VpnEndpoint::Socks5 { host, port, .. } => {
+            let addr: SocketAddr = format!("{host}:{port}")
+                .to_socket_addrs()
+                .map_err(|e| e.to_string())?
+                .next()
+                .ok_or_else(|| "Unresolved proxy".to_owned())?;
+            let mut stream = TcpStream::connect_timeout(&addr, timeout).map_err(|e| e.to_string())?;
+            let _ = stream.set_read_timeout(Some(timeout));
+            let _ = stream.set_write_timeout(Some(timeout));
+            stream
+                .write_all(&[0x05, 0x01, 0x00])
+                .map_err(|e| e.to_string())?;
+            let mut reply = [0u8; 2];
+            stream.read_exact(&mut reply).map_err(|e| e.to_string())?;
+            if reply == [0x05, 0x00] {
+                Ok(start.elapsed().as_millis().max(1))
+            } else {
+                Err("SOCKS5 auth required or invalid".into())
+            }
+        }
+        VpnEndpoint::HttpConnect { host, port, .. } => {
+            let stream = connect_via_http(host, *port, "1.1.1.1", 443, timeout)
+                .map_err(|e| e.to_string())?;
+            let _ = stream.shutdown(Shutdown::Both);
+            Ok(start.elapsed().as_millis().max(1))
+        }
+    }
+}
 
 /// One direction of a [`Pipe`]: the bytes written and not read yet, and
 /// whether either end closed it.
@@ -205,6 +535,33 @@ pub struct Connection {
 }
 impl Connection {
     pub fn connect(host: &str, port: u16, timeout: Duration) -> Result<Self> {
+        if !is_local_host(host)
+            && let Some(vpn) = active_vpn()
+        {
+            match vpn {
+                VpnEndpoint::Socks5 {
+                    host: ph,
+                    port: pp,
+                    ..
+                } => {
+                    return connect_via_socks5(&ph, pp, host, port, timeout)
+                        .and_then(Self::from_stream);
+                }
+                VpnEndpoint::HttpConnect {
+                    host: ph,
+                    port: pp,
+                    ..
+                } => {
+                    return connect_via_http(&ph, pp, host, port, timeout)
+                        .and_then(Self::from_stream);
+                }
+                VpnEndpoint::FastDns { dns_ip, .. } => {
+                    if let Some(addrs) = resolve_a_via_udp_dns(&dns_ip, host, port, Duration::from_secs(2)) {
+                        return Self::connect_addresses(host, addrs, timeout);
+                    }
+                }
+            }
+        }
         let addrs: Vec<_> = (host, port)
             .to_socket_addrs()
             .map_err(|e| Error::new(format!("Unknown host {host}: {e}")))?
@@ -223,6 +580,76 @@ impl Connection {
         port: u16,
         timeout: Duration,
     ) -> Result<(Self, String, u16)> {
+        if !is_local_host(host)
+            && let Some(vpn) = active_vpn()
+        {
+            match vpn {
+                VpnEndpoint::Socks5 {
+                    host: ph,
+                    port: pp,
+                    ..
+                } => {
+                    let resolved = crate::resolver::resolve(host, port).ok();
+                    let (target_host, target_port) = resolved
+                        .as_ref()
+                        .map(|r| (r.host.clone(), r.port))
+                        .unwrap_or_else(|| (host.to_owned(), port));
+                    if !is_local_host(&target_host) {
+                        let stream = connect_via_socks5(
+                            &ph,
+                            pp,
+                            &target_host,
+                            target_port,
+                            timeout,
+                        )?;
+                        return Ok((Self::from_stream(stream)?, target_host, target_port));
+                    }
+                }
+                VpnEndpoint::HttpConnect {
+                    host: ph,
+                    port: pp,
+                    ..
+                } => {
+                    let resolved = crate::resolver::resolve(host, port).ok();
+                    let (target_host, target_port) = resolved
+                        .as_ref()
+                        .map(|r| (r.host.clone(), r.port))
+                        .unwrap_or_else(|| (host.to_owned(), port));
+                    if !is_local_host(&target_host) {
+                        let stream = connect_via_http(
+                            &ph,
+                            pp,
+                            &target_host,
+                            target_port,
+                            timeout,
+                        )?;
+                        return Ok((Self::from_stream(stream)?, target_host, target_port));
+                    }
+                }
+                VpnEndpoint::FastDns { dns_ip, .. } => {
+                    if let Ok(resolved) = crate::resolver::resolve(host, port) {
+                        if !resolved.addresses.iter().any(|a| is_local_ip(a.ip()))
+                            && let Some(fast_addrs) = resolve_a_via_udp_dns(
+                                &dns_ip,
+                                &resolved.host,
+                                resolved.port,
+                                Duration::from_secs(2),
+                            )
+                        {
+                            let connection = Self::connect_addresses(host, fast_addrs, timeout)?;
+                            return Ok((connection, resolved.host, resolved.port));
+                        }
+                        let connection = Self::connect_addresses(host, resolved.addresses, timeout)?;
+                        return Ok((connection, resolved.host, resolved.port));
+                    } else if let Some(fast_addrs) =
+                        resolve_a_via_udp_dns(&dns_ip, host, port, Duration::from_secs(2))
+                    {
+                        let connection = Self::connect_addresses(host, fast_addrs, timeout)?;
+                        return Ok((connection, host.to_owned(), port));
+                    }
+                }
+            }
+        }
         let resolved = crate::resolver::resolve(host, port)?;
         let connection = Self::connect_addresses(host, resolved.addresses, timeout)?;
         Ok((connection, resolved.host, resolved.port))

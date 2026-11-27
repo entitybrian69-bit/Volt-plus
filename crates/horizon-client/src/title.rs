@@ -22,6 +22,7 @@ mod flat;
 mod onboarding;
 #[cfg(test)]
 mod tests;
+mod vpn;
 pub mod world_management;
 pub use create_world::{DIFFICULTIES, WorldOptions};
 pub use flat::{FlatLayer, FlatSettings, State as FlatEditor};
@@ -327,6 +328,7 @@ pub enum Mode {
         alert: Option<Alert>,
     },
     Multiplayer(crate::multiplayer::Screen),
+    Vpn(vpn::Screen),
     /// SafetyScreen: the warning before the first Multiplayer click, with its
     /// "Do not show this screen again" box.
     MultiplayerWarning {
@@ -656,6 +658,7 @@ impl Title {
         self
     }
     pub fn new(saves: PathBuf, resources: &Path) -> Self {
+        vpn::restore_saved_vpn();
         use chrono::Datelike;
         let today = chrono::Local::now();
         let splashes =
@@ -992,6 +995,9 @@ impl Title {
         if let Mode::Multiplayer(screen) = &mut self.mode {
             return screen.drag(cursor.1, size);
         }
+        if let Mode::Vpn(screen) = &mut self.mode {
+            return screen.drag(cursor.1, size);
+        }
         if let Mode::CreateFlat { flat, .. } = &mut self.mode {
             flat::drag(flat, cursor, size);
             return;
@@ -1011,6 +1017,9 @@ impl Title {
         if let Mode::Multiplayer(screen) = &mut self.mode {
             screen.release();
         }
+        if let Mode::Vpn(screen) = &mut self.mode {
+            screen.release();
+        }
         if let Mode::CreateFlat { flat, .. } = &mut self.mode {
             flat::release(flat);
         }
@@ -1023,6 +1032,10 @@ impl Title {
             return false;
         }
         if let Mode::Multiplayer(screen) = &mut self.mode {
+            screen.wheel(delta, cursor, size);
+            return false;
+        }
+        if let Mode::Vpn(screen) = &mut self.mode {
             screen.wheel(delta, cursor, size);
             return false;
         }
@@ -1641,6 +1654,12 @@ impl Title {
                     button.icon = Some((icon, 15.0));
                     buttons.push(button);
                 }
+                let vpn_label = if horizon_protocol::connection::active_vpn().is_some() {
+                    "VPN: ON"
+                } else {
+                    "VPN"
+                };
+                buttons.push(b(cx + 38.0, y + 72.0, 62.0, vpn_label, true, 8));
                 buttons
             }
             Mode::Select { worlds, selected } => {
@@ -2023,6 +2042,7 @@ impl Title {
                 .into_iter()
                 .map(|(x, y, bw, label, enabled, id)| b(x, y, bw, &label, enabled, id))
                 .collect(),
+            Mode::Vpn(screen) => screen.buttons(w, h),
         }
     }
     /// The screen this mode is, as the narrator reads it: its id and
@@ -2202,6 +2222,7 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
                 ),
             ),
             Mode::Multiplayer(_) => return None,
+            Mode::Vpn(_) => ScreenInfo::new("vpn", "VPN Networks".into()),
         };
         Some(info)
     }
@@ -2960,6 +2981,13 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
                 self.started,
                 cursor,
             ),
+            Mode::Vpn(screen) => screen.draw(
+                atlas,
+                batch,
+                &mut self.caret.borrow_mut(),
+                self.started,
+                cursor,
+            ),
         }
         for b in self.buttons(w, h) {
             crate::widgets::record(&b.label, [b.x, b.y, b.w, 20.0], b.enabled);
@@ -3173,6 +3201,12 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
             self.flat_click(x, y, (w, h), hit);
             return (Action::None, hit.is_some());
         }
+        if hit.is_none()
+            && let Mode::Vpn(screen) = &mut self.mode
+            && screen.press((x, y), (w, h))
+        {
+            return (Action::None, false);
+        }
         let action = self.click_action(x, y, (w, h), hit);
         // World list selection is silent; launching its selected entry sounds.
         let sound = hit.is_some() || matches!(action, Action::Play { .. });
@@ -3232,6 +3266,16 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
             },
             (Mode::Main, Some(5)) => {
                 self.mode = Mode::Multiplayer(crate::multiplayer::Screen::friend());
+                Action::None
+            }
+            (Mode::Main, Some(8)) => {
+                self.mode = Mode::Vpn(vpn::Screen::new());
+                Action::None
+            }
+            (Mode::Vpn(screen), hit) => {
+                if screen.click(hit, x, y, (w, h)) {
+                    self.mode = Mode::Main;
+                }
                 Action::None
             }
             (Mode::Onboarding(_), Some(onboarding::SOUNDS)) => Action::Sounds,
@@ -3546,6 +3590,7 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
         }
         match &mut self.mode {
             Mode::Multiplayer(screen) => screen.focused_text(),
+            Mode::Vpn(screen) => screen.focused_text(),
             mode => caret_field(mode, self.search_focused, &mut self.search),
         }
     }
@@ -3615,6 +3660,7 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
                 .filter(|(id, _)| id == focus)
                 .map(|(_, rect)| rect),
             Mode::Multiplayer(screen) => screen.focused_box((w, h)),
+            Mode::Vpn(screen) => screen.focused_box((w, h)),
             _ => None,
         }
     }
@@ -4226,6 +4272,12 @@ Would you like to enable the Narrator or visit the Accessibility Settings?",
         {
             return;
         }
+        if let Mode::Vpn(screen) = &mut self.mode
+            && screen.adding_custom
+        {
+            screen.adding_custom = false;
+            return;
+        }
         match &self.mode {
             // OptimizeWorldScreen: `shouldCloseOnEsc` is false; the Backup wait takes no input.
             Mode::Backup { .. } | Mode::Optimize { .. } => {}
@@ -4321,6 +4373,7 @@ fn caret_field<'a>(
             _ => None,
         },
         Mode::Multiplayer(screen) => screen.focused_text(),
+        Mode::Vpn(screen) => screen.focused_text(),
         Mode::CreateFlat { flat, .. } if flat.page == flat::Page::Presets && flat.share_focused => {
             Some((FLAT_SHARE, &mut flat.share, 1230))
         }

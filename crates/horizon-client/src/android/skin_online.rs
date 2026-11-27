@@ -11,39 +11,55 @@ use horizon_client::{
 };
 use regex::Regex;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     io::Read,
-    sync::mpsc,
+    sync::{Arc, Mutex, OnceLock, mpsc},
     time::{Duration, Instant},
 };
 
 const MAX_REMOTE_PNG: usize = 2 * 1024 * 1024;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum Tab {
     Skins,
     Capes,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum SkinCategory {
     Trending,
     Popular,
     Latest,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum CapeKindFilter {
     All,
     Animated,
     Plain,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) enum CapeSourceFilter {
     All,
     KLauncher,
     SkinMc,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct PageCacheKey {
+    tab: Tab,
+    skin_cat: SkinCategory,
+    cape_filter: CapeKindFilter,
+    cape_source: CapeSourceFilter,
+    page: usize,
+    query: String,
+}
+
+#[derive(Clone)]
+enum CachedPage {
+    Skins { items: Vec<SkinItem>, status: String },
+    Capes { items: Vec<CapeItem>, status: String },
 }
 
 #[derive(Clone)]
@@ -169,7 +185,6 @@ impl SkinOnlineState {
         self.generation = self.generation.wrapping_add(1);
         let generation = self.generation;
         self.active_query = query.trim().to_owned();
-        self.loading = true;
         let tab = self.tab;
         let skin_cat = self.skin_cat;
         let cape_filter = self.cape_filter;
@@ -177,6 +192,34 @@ impl SkinOnlineState {
         let page = self.page;
         let q = self.active_query.clone();
 
+        let key = PageCacheKey {
+            tab,
+            skin_cat,
+            cape_filter,
+            cape_source,
+            page,
+            query: q.clone(),
+        };
+        if let Some(cached) = self.page_cache.get(&key).cloned() {
+            self.worker = None;
+            self.loading = false;
+            match cached {
+                CachedPage::Skins { items, status } => {
+                    self.fetched_skins_once = true;
+                    self.skins = items;
+                    self.status = status;
+                }
+                CachedPage::Capes { items, status } => {
+                    self.fetched_capes_once = true;
+                    self.capes = items;
+                    self.status = status;
+                }
+            }
+            self.start_prefetch(key);
+            return;
+        }
+
+        self.loading = true;
         self.status = match tab {
             Tab::Skins => {
                 if q.is_empty() {
@@ -208,7 +251,55 @@ impl SkinOnlineState {
         });
     }
 
+    fn start_prefetch(&mut self, current: PageCacheKey) {
+        if current.page >= 50 || self.prefetch_worker.is_some() {
+            return;
+        }
+        let next = PageCacheKey {
+            page: current.page + 1,
+            ..current
+        };
+        if self.page_cache.contains_key(&next) {
+            return;
+        }
+        let key_clone = next.clone();
+        let (tx, rx) = mpsc::channel();
+        self.prefetch_worker = Some((next, rx));
+        std::thread::spawn(move || {
+            let page = match key_clone.tab {
+                Tab::Skins => {
+                    let (items, status) =
+                        fetch_skins_blocking(key_clone.skin_cat, key_clone.page, &key_clone.query);
+                    CachedPage::Skins { items, status }
+                }
+                Tab::Capes => {
+                    let (items, status) = fetch_capes_blocking(
+                        key_clone.cape_filter,
+                        key_clone.cape_source,
+                        key_clone.page,
+                        &key_clone.query,
+                    );
+                    CachedPage::Capes { items, status }
+                }
+            };
+            let _ = tx.send(page);
+        });
+    }
+
     pub fn poll(&mut self) {
+        if let Some((key, rx)) = &self.prefetch_worker {
+            match rx.try_recv() {
+                Ok(page) => {
+                    let key = key.clone();
+                    self.prefetch_worker = None;
+                    self.page_cache.insert(key, page);
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.prefetch_worker = None;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
         let Some(rx) = &self.worker else {
             return;
         };
@@ -218,8 +309,24 @@ impl SkinOnlineState {
                 if generation == self.generation {
                     self.loading = false;
                     self.fetched_skins_once = true;
+                    let key = PageCacheKey {
+                        tab: Tab::Skins,
+                        skin_cat: self.skin_cat,
+                        cape_filter: self.cape_filter,
+                        cape_source: self.cape_source,
+                        page: self.page,
+                        query: self.active_query.clone(),
+                    };
+                    self.page_cache.insert(
+                        key.clone(),
+                        CachedPage::Skins {
+                            items: items.clone(),
+                            status: status.clone(),
+                        },
+                    );
                     self.skins = items;
                     self.status = status;
+                    self.start_prefetch(key);
                 }
             }
             Ok(FetchUpdate::CapesPage { generation, items, status }) => {
@@ -227,8 +334,24 @@ impl SkinOnlineState {
                 if generation == self.generation {
                     self.loading = false;
                     self.fetched_capes_once = true;
+                    let key = PageCacheKey {
+                        tab: Tab::Capes,
+                        skin_cat: self.skin_cat,
+                        cape_filter: self.cape_filter,
+                        cape_source: self.cape_source,
+                        page: self.page,
+                        query: self.active_query.clone(),
+                    };
+                    self.page_cache.insert(
+                        key.clone(),
+                        CachedPage::Capes {
+                            items: items.clone(),
+                            status: status.clone(),
+                        },
+                    );
                     self.capes = items;
                     self.status = status;
+                    self.start_prefetch(key);
                 }
             }
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -284,9 +407,11 @@ impl SkinOnlineState {
                 match wardrobe.equip_online_skin(&item.title, &item.png_bytes, item.slim, client_id) {
                     Ok(()) => {
                         self.last_equip_title = Some(item.title.clone());
+                        self.syncing_equip = wardrobe.is_busy();
                         self.status = wardrobe.status_note().to_owned();
                     }
                     Err(e) => {
+                        self.syncing_equip = false;
                         self.status = e;
                     }
                 }
@@ -303,9 +428,11 @@ impl SkinOnlineState {
                 match wardrobe.equip_online_cape(&item.title, &item.png_bytes) {
                     Ok(()) => {
                         self.last_equip_title = Some(item.title.clone());
+                        self.syncing_equip = wardrobe.is_busy();
                         self.status = wardrobe.status_note().to_owned();
                     }
                     Err(e) => {
+                        self.syncing_equip = false;
                         self.status = e;
                     }
                 }
@@ -326,6 +453,12 @@ impl SkinOnlineState {
         ime_top_dp: Option<f32>,
     ) {
         self.poll();
+        if self.syncing_equip {
+            self.status = wardrobe.status_note().to_owned();
+            if !wardrobe.is_busy() {
+                self.syncing_equip = false;
+            }
+        }
         let theme = active_theme();
         let pad = 16.0;
         let inner_w = (w - pad * 2.0).max(260.0);
@@ -659,20 +792,42 @@ impl SkinOnlineState {
                 msg,
             );
         } else {
-            match self.tab {
+            let skins_snapshot = &self.skins;
+            let last_equip = self.last_equip_title.as_deref();
+            let anim_elapsed = self.anim_origin.elapsed().as_secs_f32();
+            let cape_fps = f32::from(wardrobe.cape_fps().max(1));
+            let visible_capes = if self.tab == Tab::Capes {
+                self.visible_capes()
+            } else {
+                Vec::new()
+            };
+            let push_clipped_button =
+                |ui: &mut Ui,
+                 targets: &mut Vec<([f32; 4], Action)>,
+                 btn_rect: [f32; 4],
+                 label: &str,
+                 action: Action| {
+                    let before = targets.len();
+                    button(ui, targets, btn_rect, label, action, true);
+                    for (r, _) in &mut targets[before..] {
+                        let y0 = r[1].max(grid_top);
+                        let y1 = (r[1] + r[3]).min(grid_bottom);
+                        r[1] = y0;
+                        r[3] = (y1 - y0).max(0.0);
+                    }
+                    targets.retain(|(r, _)| r[3] > 2.0);
+                };
+            ui.clipped([right_x, grid_top, right_w, grid_h], |ui| match self.tab {
                 Tab::Skins => {
-                    for (i, item) in self.skins.iter().enumerate() {
+                    for (i, item) in skins_snapshot.iter().enumerate() {
                         let col = i % cols;
                         let r = i / cols;
                         let cx = right_x + col as f32 * (card_w + col_gap);
                         let cy = grid_top + r as f32 * (card_h + row_gap) - self.scroll;
-                        if cy + card_h < grid_top - 4.0 || cy > grid_bottom + 4.0 {
+                        if cy + card_h <= grid_top || cy >= grid_bottom {
                             continue;
                         }
-                        let is_equipped = self
-                            .last_equip_title
-                            .as_deref()
-                            .is_some_and(|t| t == item.title);
+                        let is_equipped = last_equip.is_some_and(|t| t == item.title);
                         ui.rounded(
                             cx,
                             cy,
@@ -737,32 +892,25 @@ impl SkinOnlineState {
                         ui.text(Face::Regular, 9.0, tx, cy + 48.0, theme.accent, &note_fit);
 
                         let btn_rect = [tx, cy + card_h - 38.0, tw, 28.0];
-                        button(
+                        push_clipped_button(
                             ui,
                             targets,
                             btn_rect,
                             if is_equipped { "Equipped" } else { "Equip" },
                             Action::SkinOnlineEquip(i),
-                            true,
                         );
                     }
                 }
                 Tab::Capes => {
-                    let fps = f32::from(wardrobe.cape_fps().max(1));
-                    let elapsed = self.anim_origin.elapsed().as_secs_f32();
-                    let visible = self.visible_capes();
-                    for (slot_i, (real_idx, item)) in visible.iter().enumerate() {
+                    for (slot_i, (real_idx, item)) in visible_capes.iter().enumerate() {
                         let col = slot_i % cols;
                         let r = slot_i / cols;
                         let cx = right_x + col as f32 * (card_w + col_gap);
                         let cy = grid_top + r as f32 * (card_h + row_gap) - self.scroll;
-                        if cy + card_h < grid_top - 4.0 || cy > grid_bottom + 4.0 {
+                        if cy + card_h <= grid_top || cy >= grid_bottom {
                             continue;
                         }
-                        let is_equipped = self
-                            .last_equip_title
-                            .as_deref()
-                            .is_some_and(|t| t == item.title);
+                        let is_equipped = last_equip.is_some_and(|t| t == item.title);
                         ui.rounded(
                             cx,
                             cy,
@@ -803,7 +951,7 @@ impl SkinOnlineState {
                             theme.surface,
                         );
                         if !item.frame_runs.is_empty() {
-                            let f_idx = ((elapsed * fps) as usize) % item.frame_runs.len();
+                            let f_idx = ((anim_elapsed * cape_fps) as usize) % item.frame_runs.len();
                             draw_runs(
                                 ui,
                                 &item.frame_runs[f_idx],
@@ -854,17 +1002,16 @@ impl SkinOnlineState {
                         );
 
                         let btn_rect = [tx, cy + card_h - 38.0, tw, 28.0];
-                        button(
+                        push_clipped_button(
                             ui,
                             targets,
                             btn_rect,
                             if is_equipped { "Equipped" } else { "Equip" },
                             Action::SkinOnlineEquip(*real_idx),
-                            true,
                         );
                     }
                 }
-            }
+            });
         }
 
         // Pagination footer
@@ -988,14 +1135,31 @@ fn make_cape_item(
     })
 }
 
+fn shared_http_agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        crate::proxy::agent(
+            ureq::AgentBuilder::new()
+                .timeout_connect(Duration::from_secs(4))
+                .timeout_read(Duration::from_secs(7)),
+            "https://skinmc.net",
+        )
+        .build()
+    })
+}
+
 fn http_agent(url: &str) -> ureq::Agent {
-    crate::proxy::agent(
-        ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(10))
-            .timeout_read(Duration::from_secs(15)),
-        url,
-    )
-    .build()
+    if crate::proxy::spec_for(url).is_some() {
+        crate::proxy::agent(
+            ureq::AgentBuilder::new()
+                .timeout_connect(Duration::from_secs(4))
+                .timeout_read(Duration::from_secs(7)),
+            url,
+        )
+        .build()
+    } else {
+        shared_http_agent().clone()
+    }
 }
 
 fn fetch_text(url: &str) -> Result<String, String> {
@@ -1177,96 +1341,132 @@ fn fetch_capes_blocking(
     let mut seen_urls = HashSet::new();
     let mut items = Vec::new();
 
-    // Optional player cape lookup via api.capes.dev when user searches a single word
-    if !query.is_empty() && !query.contains(' ') && query.len() <= 16 {
-        let api_url = format!("https://api.capes.dev/load/{}", url_encode_query(query));
-        if let Ok(text) = fetch_text(&api_url)
-            && let Ok(val) = serde_json::from_str::<serde_json::Value>(&text)
-            && let Some(obj) = val.as_object()
-        {
-            for (provider, entry) in obj {
-                if let Some(img_url) = entry["imageUrl"].as_str()
-                    && entry["exists"].as_bool().unwrap_or(false)
-                    && seen_urls.insert(img_url.to_owned())
-                {
-                    candidates.push((
-                        format!("{query} ({provider})"),
-                        img_url.to_owned(),
-                        "Player",
-                    ));
+    let need_player = !query.is_empty() && !query.contains(' ') && query.len() <= 16;
+    let need_kl_anim = filter != CapeKindFilter::Plain && source != CapeSourceFilter::SkinMc;
+    let need_kl_plain = filter != CapeKindFilter::Animated && source != CapeSourceFilter::SkinMc;
+    let need_smc = source != CapeSourceFilter::KLauncher && page == 1;
+
+    let (player_res, kl_anim_html, kl_plain_html, smc_html) = std::thread::scope(|s| {
+        let h_player = s.spawn(move || {
+            if !need_player {
+                return Vec::new();
+            }
+            let api_url = format!("https://api.capes.dev/load/{}", url_encode_query(query));
+            let mut found = Vec::new();
+            if let Ok(text) = fetch_text(&api_url)
+                && let Ok(val) = serde_json::from_str::<serde_json::Value>(&text)
+                && let Some(obj) = val.as_object()
+            {
+                for (provider, entry) in obj {
+                    if let Some(img_url) = entry["imageUrl"].as_str()
+                        && entry["exists"].as_bool().unwrap_or(false)
+                    {
+                        found.push((
+                            format!("{query} ({provider})"),
+                            img_url.to_owned(),
+                            "Player",
+                        ));
+                    }
                 }
             }
+            found
+        });
+        let h_kl_anim = s.spawn(move || {
+            if !need_kl_anim {
+                return None;
+            }
+            fetch_text(&format!("https://klauncher.gg/en/capes?category=4&page={page}")).ok()
+        });
+        let h_kl_plain = s.spawn(move || {
+            if !need_kl_plain {
+                return None;
+            }
+            fetch_text(&format!("https://klauncher.gg/en/capes?page={page}")).ok()
+        });
+        let h_smc = s.spawn(move || {
+            if !need_smc {
+                return None;
+            }
+            fetch_text("https://skinmc.net/capes").ok()
+        });
+        (
+            h_player.join().unwrap_or_default(),
+            h_kl_anim.join().ok().flatten(),
+            h_kl_plain.join().ok().flatten(),
+            h_smc.join().ok().flatten(),
+        )
+    });
+
+    for (title, url, src) in player_res {
+        if seen_urls.insert(url.clone()) {
+            candidates.push((title, url, src));
         }
     }
 
     // 1. KLauncher Animated Capes (category=4)
-    if filter != CapeKindFilter::Plain && source != CapeSourceFilter::SkinMc {
-        let kl_anim_url = format!("https://klauncher.gg/en/capes?category=4&page={page}");
-        if let Ok(html) = fetch_text(&kl_anim_url) {
-            let re_anim = Regex::new(
-                r#"https://skin\.klaun\.ch/storage/capes/(?:anim_flat/)?([a-f0-9]{16,64})\.png"#,
-            )
-            .unwrap();
-            let mut count = 0usize;
-            for cap in re_anim.captures_iter(&html) {
-                let hash = &cap[1];
-                let full_url = format!("https://skin.klaun.ch/storage/capes/{hash}.png");
-                if seen_urls.insert(full_url.clone()) {
-                    let title = extract_nearby_title(&html, cap.get(0).unwrap().start())
-                        .unwrap_or_else(|| format!("KL Animated #{}", count + 1));
-                    candidates.push((title, full_url, "KLauncher"));
-                    count += 1;
-                    if count >= 8 {
-                        break;
-                    }
+    if let Some(html) = kl_anim_html {
+        let re_anim = Regex::new(
+            r#"https://skin\.klaun\.ch/storage/capes/(?:anim_flat/)?([a-f0-9]{16,64})\.png"#,
+        )
+        .unwrap();
+        let mut count = 0usize;
+        for cap in re_anim.captures_iter(&html) {
+            let hash = &cap[1];
+            let full_url = format!("https://skin.klaun.ch/storage/capes/{hash}.png");
+            if seen_urls.insert(full_url.clone()) {
+                let title = extract_nearby_title(&html, cap.get(0).unwrap().start())
+                    .unwrap_or_else(|| format!("KL Animated #{}", count + 1));
+                candidates.push((title, full_url, "KLauncher"));
+                count += 1;
+                if count >= 8 {
+                    break;
                 }
             }
         }
     }
 
     // 2. KLauncher Plain Capes
-    if filter != CapeKindFilter::Animated && source != CapeSourceFilter::SkinMc {
-        let kl_plain_url = format!("https://klauncher.gg/en/capes?page={page}");
-        if let Ok(html) = fetch_text(&kl_plain_url) {
-            let re_plain = Regex::new(
-                r#"https://skin\.klaun\.ch/storage/capes/([a-f0-9]{16,64})\.png"#,
-            )
-            .unwrap();
-            let mut count = 0usize;
-            for cap in re_plain.captures_iter(&html) {
-                let hash = &cap[1];
-                let full_url = format!("https://skin.klaun.ch/storage/capes/{hash}.png");
-                if seen_urls.insert(full_url.clone()) {
-                    let title = extract_nearby_title(&html, cap.get(0).unwrap().start())
-                        .unwrap_or_else(|| format!("KL Cape #{}", count + 1));
-                    candidates.push((title, full_url, "KLauncher"));
-                    count += 1;
-                    if count >= 6 {
+    if let Some(html) = kl_plain_html {
+        let re_plain = Regex::new(
+            r#"https://skin\.klaun\.ch/storage/capes/([a-f0-9]{16,64})\.png"#,
+        )
+        .unwrap();
+        let mut count = 0usize;
+        for cap in re_plain.captures_iter(&html) {
+            let hash = &cap[1];
+            let full_url = format!("https://skin.klaun.ch/storage/capes/{hash}.png");
+            if seen_urls.insert(full_url.clone()) {
+                let title = extract_nearby_title(&html, cap.get(0).unwrap().start())
+                    .unwrap_or_else(|| format!("KL Cape #{}", count + 1));
+                candidates.push((title, full_url, "KLauncher"));
+                count += 1;
+                if count >= 6 {
+                    break;
+                }
+            }
+        }
+        if count == 0 {
+            let re_detail = Regex::new(r#"/en/capes/(\d+)"#).unwrap();
+            let mut detail_ids = HashSet::new();
+            let mut detail_jobs = Vec::new();
+            for cap in re_detail.captures_iter(&html) {
+                let id = cap[1].to_owned();
+                if detail_ids.insert(id.clone()) {
+                    detail_jobs.push(id);
+                    if detail_jobs.len() >= 2 {
                         break;
                     }
                 }
             }
-            if count == 0 {
-                let re_detail = Regex::new(r#"/en/capes/(\d+)"#).unwrap();
-                let mut detail_ids = HashSet::new();
-                for cap in re_detail.captures_iter(&html) {
-                    let id = cap[1].to_owned();
-                    if detail_ids.insert(id.clone()) {
-                        if let Ok(detail_html) =
-                            fetch_text(&format!("https://klauncher.gg/en/capes/{id}"))
-                            && let Some(m) = re_plain.captures(&detail_html)
-                        {
-                            let full_url = m[0].to_owned();
-                            if seen_urls.insert(full_url.clone()) {
-                                let title = extract_nearby_title(&detail_html, 0)
-                                    .unwrap_or_else(|| format!("KL Cape #{id}"));
-                                candidates.push((title, full_url, "KLauncher"));
-                                count += 1;
-                            }
-                        }
-                        if count >= 4 {
-                            break;
-                        }
+            for id in detail_jobs {
+                if let Ok(detail_html) = fetch_text(&format!("https://klauncher.gg/en/capes/{id}"))
+                    && let Some(m) = re_plain.captures(&detail_html)
+                {
+                    let full_url = m[0].to_owned();
+                    if seen_urls.insert(full_url.clone()) {
+                        let title = extract_nearby_title(&detail_html, 0)
+                            .unwrap_or_else(|| format!("KL Cape #{id}"));
+                        candidates.push((title, full_url, "KLauncher"));
                     }
                 }
             }
@@ -1274,22 +1474,20 @@ fn fetch_capes_blocking(
     }
 
     // 3. SkinMC Official / Community Capes
-    if source != CapeSourceFilter::KLauncher && page == 1 {
-        if let Ok(html) = fetch_text("https://skinmc.net/capes") {
-            let re_smc = Regex::new(r#"/capes/(\d+)"#).unwrap();
-            let mut smc_ids = HashSet::new();
-            for cap in re_smc.captures_iter(&html) {
-                let id = cap[1].to_owned();
-                if smc_ids.insert(id.clone()) {
-                    let dl_url = format!("https://skinmc.net/capes/{id}/download");
-                    if seen_urls.insert(dl_url.clone()) {
-                        let title = extract_nearby_title(&html, cap.get(0).unwrap().start())
-                            .unwrap_or_else(|| format!("SkinMC Cape #{id}"));
-                        candidates.push((title, dl_url, "SkinMC"));
-                    }
-                    if smc_ids.len() >= 8 {
-                        break;
-                    }
+    if let Some(html) = smc_html {
+        let re_smc = Regex::new(r#"/capes/(\d+)"#).unwrap();
+        let mut smc_ids = HashSet::new();
+        for cap in re_smc.captures_iter(&html) {
+            let id = cap[1].to_owned();
+            if smc_ids.insert(id.clone()) {
+                let dl_url = format!("https://skinmc.net/capes/{id}/download");
+                if seen_urls.insert(dl_url.clone()) {
+                    let title = extract_nearby_title(&html, cap.get(0).unwrap().start())
+                        .unwrap_or_else(|| format!("SkinMC Cape #{id}"));
+                    candidates.push((title, dl_url, "SkinMC"));
+                }
+                if smc_ids.len() >= 8 {
+                    break;
                 }
             }
         }
@@ -1324,10 +1522,10 @@ fn download_parallel<T: Send + 'static>(
     if jobs.is_empty() {
         return Vec::new();
     }
-    let worker = std::sync::Arc::new(worker);
-    let queue = std::sync::Arc::new(std::sync::Mutex::new(jobs.into_iter().enumerate()));
-    let results = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-    let threads = 4usize;
+    let worker = Arc::new(worker);
+    let queue = Arc::new(Mutex::new(jobs.into_iter().enumerate()));
+    let results = Arc::new(Mutex::new(Vec::new()));
+    let threads = 10usize.min(queue.lock().map(|q| q.len()).unwrap_or(10)).max(1);
     let mut handles = Vec::with_capacity(threads);
     for _ in 0..threads {
         let q = queue.clone();
@@ -1353,23 +1551,103 @@ fn download_parallel<T: Send + 'static>(
     vec.into_iter().map(|(_, item)| item).collect()
 }
 
+fn is_ui_noise_title(s: &str) -> bool {
+    let lower = s.trim().to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "cape"
+            | "skin"
+            | "pin to stage"
+            | "pin"
+            | "unpin"
+            | "download"
+            | "equip"
+            | "apply"
+            | "preview"
+            | "share"
+            | "like"
+            | "favorite"
+            | "favourite"
+            | "copy"
+            | "close"
+            | "open"
+            | "toggle"
+            | "3d"
+            | "2d"
+            | "view"
+            | "next"
+            | "previous"
+            | "search"
+            | "loading"
+            | "klauncher"
+            | "skinmc"
+            | "stage"
+    ) || lower.starts_with("pin to ")
+        || lower.starts_with("download ")
+        || lower.starts_with("click to ")
+}
+
+fn clean_html_text(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut in_tag = false;
+    for ch in raw.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out.replace("&amp;", "&")
+        .replace("&#039;", "'")
+        .replace("&#39;", "'")
+        .replace("&quot;", "\"")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn extract_nearby_title(html: &str, offset: usize) -> Option<String> {
-    let start = offset.saturating_sub(240);
-    let end = (offset + 320).min(html.len());
+    let start = offset.saturating_sub(320);
+    let end = (offset + 420).min(html.len());
     let slice = html.get(start..end)?;
-    for pat in ["alt=\"", "title=\"", "aria-label=\""] {
-        if let Some(pos) = slice.find(pat) {
-            let rest = &slice[pos + pat.len()..];
+    // 1. Prefer visible card heading / name / title element near the asset.
+    for (open, close) in [
+        ("<h3", "</h3>"),
+        ("<h4", "</h4>"),
+        ("<h2", "</h2>"),
+        ("<h1", "</h1>"),
+    ] {
+        if let Some(p) = slice.find(open)
+            && let Some(gt) = slice[p..].find('>')
+            && let Some(e) = slice[p + gt + 1..].find(close)
+        {
+            let text = clean_html_text(&slice[p + gt + 1..p + gt + 1 + e]);
+            if (2..=40).contains(&text.len()) && !is_ui_noise_title(&text) {
+                return Some(text);
+            }
+        }
+    }
+    // 2. Scan attribute occurrences (alt / title / aria-label), skipping UI action tooltips like "Pin to stage".
+    for pat in ["alt=\"", "data-name=\"", "title=\"", "aria-label=\""] {
+        let mut cursor = 0;
+        while let Some(pos) = slice[cursor..].find(pat) {
+            let rest = &slice[cursor + pos + pat.len()..];
             if let Some(q) = rest.find('"') {
-                let candidate = rest[..q].trim();
-                if candidate.len() >= 2
-                    && candidate.len() <= 40
+                let candidate = rest[..q]
+                    .trim()
+                    .replace("&amp;", "&")
+                    .replace("&#039;", "'")
+                    .replace("&#39;", "'");
+                if (2..=40).contains(&candidate.len())
                     && !candidate.starts_with("http")
-                    && !candidate.eq_ignore_ascii_case("cape")
-                    && !candidate.eq_ignore_ascii_case("skin")
+                    && !is_ui_noise_title(&candidate)
                 {
-                    return Some(candidate.replace("&amp;", "&").replace("&#039;", "'"));
+                    return Some(candidate);
                 }
+                cursor += pos + pat.len() + q + 1;
+            } else {
+                break;
             }
         }
     }

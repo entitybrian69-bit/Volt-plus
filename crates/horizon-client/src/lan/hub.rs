@@ -238,8 +238,9 @@ pub struct Hub {
     /// (`native_set_nickname`), by UUID. Their real name stays everywhere
     /// else: the log, commands, the hover of the shown name.
     pub nicknames: std::collections::HashMap<u128, String>,
-    /// Synced custom skins/capes (`horizon:appearance`), keyed by player UUID.
-    pub synced_appearances: std::collections::HashMap<u128, Vec<u8>>,
+    /// Synced custom skins/capes (`horizon:appearance`), keyed by player UUID:
+    /// `(skin_payload, cape_or_hide_payload)` so split skin & cape packets never overwrite each other.
+    pub synced_appearances: std::collections::HashMap<u128, (Option<Vec<u8>>, Option<Vec<u8>>)>,
     last_clock: i64,
     last_rate: f32,
     ticking: (f32, bool),
@@ -986,13 +987,15 @@ impl Hub {
             entries: vec![self.player_info(uuid, &name, mode, 0)],
         };
         self.broadcast(&C::PlayerInfoUpdate(newcomer));
-        for payload in self.synced_appearances.values() {
-            self.guests[i].send(&C::CustomPayload(
-                horizon_protocol::packets::configuration::CustomPayload {
-                    channel: crate::skins::appearance::APPEARANCE_CHANNEL.into(),
-                    data: payload.clone(),
-                },
-            ));
+        for (skin_payload, cape_payload) in self.synced_appearances.values() {
+            for payload in skin_payload.iter().chain(cape_payload.iter()) {
+                self.guests[i].send(&C::CustomPayload(
+                    horizon_protocol::packets::configuration::CustomPayload {
+                        channel: crate::skins::appearance::APPEARANCE_CHANNEL.into(),
+                        data: payload.clone(),
+                    },
+                ));
+            }
         }
         self.send_level_info(i, ctx, true);
         // ServerLevel.addNewPlayer: the chunk tracking starts at the player.

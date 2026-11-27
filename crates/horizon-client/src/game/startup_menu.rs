@@ -2049,6 +2049,7 @@ impl Loading {
                         if changed {
                             let _ = self.menu.controls.settings.save();
                             self.save_menu_settings();
+                            super::android_input::sync_launcher_render_scale(clamped);
                         }
                     }
                     InGameMenuAction::ToggleGameAnimations => {

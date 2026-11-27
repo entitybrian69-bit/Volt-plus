@@ -18,8 +18,98 @@ use horizon_client::{
 };
 use std::{
     path::{Path, PathBuf},
-    sync::mpsc,
+    sync::{Arc, Condvar, Mutex, mpsc},
 };
+
+struct RenderJob {
+    skin: Arc<image::RgbaImage>,
+    cape: Option<Arc<image::RgbaImage>>,
+    model: Model,
+    camera: preview::Camera,
+    size: [u32; 2],
+    generation: u64,
+    wavey: bool,
+    anim_t: f32,
+}
+
+struct PersistentRenderWorker {
+    latest: Arc<(Mutex<Option<RenderJob>>, Condvar)>,
+    results: mpsc::Receiver<(u64, image::RgbaImage)>,
+    in_flight: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl PersistentRenderWorker {
+    fn spawn() -> Self {
+        let latest = Arc::new((Mutex::new(None::<RenderJob>), Condvar::new()));
+        let in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (tx, rx) = mpsc::channel();
+        let latest_bg = latest.clone();
+        let in_flight_bg = in_flight.clone();
+        std::thread::Builder::new()
+            .name("wardrobe-preview".into())
+            .spawn(move || {
+                let (lock, cvar) = &*latest_bg;
+                loop {
+                    let job = {
+                        let mut guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+                        while guard.is_none() {
+                            guard = cvar.wait(guard).unwrap_or_else(|e| e.into_inner());
+                        }
+                        guard.take()
+                    };
+                    let Some(job) = job else {
+                        continue;
+                    };
+                    in_flight_bg.store(true, std::sync::atomic::Ordering::Release);
+                    let image = preview::render_prepared(
+                        &job.skin,
+                        job.cape.as_deref(),
+                        job.model,
+                        job.camera,
+                        job.size,
+                        job.wavey,
+                        job.anim_t,
+                    );
+                    in_flight_bg.store(false, std::sync::atomic::Ordering::Release);
+                    if tx.send((job.generation, image)).is_err() {
+                        break;
+                    }
+                }
+            })
+            .ok();
+        Self {
+            latest,
+            results: rx,
+            in_flight,
+        }
+    }
+
+    fn submit(&self, job: RenderJob) {
+        let (lock, cvar) = &*self.latest;
+        if let Ok(mut guard) = lock.lock() {
+            *guard = Some(job);
+            cvar.notify_one();
+        }
+    }
+
+    fn try_recv_latest(&self) -> Option<(u64, image::RgbaImage)> {
+        let mut latest = None;
+        while let Ok(item) = self.results.try_recv() {
+            latest = Some(item);
+        }
+        latest
+    }
+
+    fn busy(&self) -> bool {
+        self.in_flight.load(std::sync::atomic::Ordering::Acquire)
+            || self
+                .latest
+                .0
+                .try_lock()
+                .map(|g| g.is_some())
+                .unwrap_or(true)
+    }
+}
 
 pub(super) enum CloudAction {
     Upload,
@@ -39,11 +129,11 @@ pub(super) struct Wardrobe {
     worker: Option<mpsc::Receiver<(String, Result<(cloud::Cache, bool), String>)>>,
     bitmap: image::RgbaImage,
     bitmap_revision: u64,
-    preview_skin: Option<std::sync::Arc<image::RgbaImage>>,
-    preview_cape: Option<std::sync::Arc<image::RgbaImage>>,
+    preview_skin: Option<Arc<image::RgbaImage>>,
+    preview_cape_frames: Vec<Arc<image::RgbaImage>>,
     preview_model: Model,
     appearance_generation: u64,
-    render_worker: Option<mpsc::Receiver<(u64, image::RgbaImage)>>,
+    render_worker: PersistentRenderWorker,
     render_pending: bool,
     head_bitmap: Vec<([f32; 4], u32)>,
     rect: [f32; 4],
@@ -85,10 +175,10 @@ impl Wardrobe {
             bitmap: image::RgbaImage::new(384, 480),
             bitmap_revision: 0,
             preview_skin: None,
-            preview_cape: None,
+            preview_cape_frames: Vec::new(),
             preview_model: Model::Classic,
             appearance_generation: 0,
-            render_worker: None,
+            render_worker: PersistentRenderWorker::spawn(),
             render_pending: false,
             head_bitmap: vec![],
             rect: [0.0; 4],
@@ -185,6 +275,27 @@ impl Wardrobe {
     }
     pub fn status_note(&self) -> &str {
         &self.note
+    }
+    pub fn is_busy(&self) -> bool {
+        self.worker.is_some()
+    }
+    pub fn wait_pending_sync(&mut self, timeout: std::time::Duration) {
+        if let Some(rx) = &self.worker {
+            if let Ok((key, result)) = rx.recv_timeout(timeout) {
+                self.worker = None;
+                if key == self.key {
+                    match result {
+                        Ok((cache, _)) => {
+                            self.cache = cache;
+                            self.preview();
+                        }
+                        Err(err) => {
+                            self.note = err;
+                        }
+                    }
+                }
+            }
+        }
     }
     pub fn is_slim(&self) -> bool {
         self.library
@@ -597,97 +708,111 @@ impl Wardrobe {
         }
         // Rasterize at more than twice the former dimensions. The skin's own
         // Minecraft texels remain sharp; model edges no longer use large quads.
-        // Invalidate any in-flight render from the previous appearance.
+        // Pre-normalize skin and cape frames once per appearance change so dragging/animation
+        // does zero per-frame image conversion or pixel copying.
         self.appearance_generation = self.appearance_generation.wrapping_add(1);
         self.render_pending = false;
-        self.preview_skin = Some(std::sync::Arc::new(skin));
-        self.preview_cape = cape.map(std::sync::Arc::new);
+        let normalized_skin = horizon_core::player_texture::process_legacy_skin(
+            skin.width(),
+            skin.height(),
+            skin.as_raw(),
+        )
+        .and_then(|bytes| image::RgbaImage::from_raw(64, 64, bytes))
+        .unwrap_or(skin);
+        self.preview_skin = Some(Arc::new(normalized_skin));
+
+        self.preview_cape_frames = cape
+            .map(|c| {
+                let count = skins::cape_frame_count(c).max(1);
+                (0..count)
+                    .filter_map(|i| {
+                        let frame = skins::cape_frame_64x32(c, i);
+                        horizon_core::player_texture::process_cape(
+                            frame.width(),
+                            frame.height(),
+                            frame.as_raw(),
+                        )
+                        .and_then(|bytes| image::RgbaImage::from_raw(64, 64, bytes))
+                        .map(Arc::new)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
         self.preview_model = model;
         let anim_t = self.anim_origin.elapsed().as_secs_f32();
         let frame_idx = self.current_cape_frame(anim_t);
         self.last_anim_frame = frame_idx;
-        self.bitmap = preview::render_styled(
+        let cape_frame = self.preview_cape_frames.get(frame_idx).map(|f| &**f);
+        self.bitmap = preview::render_prepared(
             self.preview_skin.as_ref().unwrap(),
-            self.preview_cape.as_deref(),
+            cape_frame,
             model,
             self.camera,
             [384, 480],
             self.library.wavey_capes,
             anim_t,
-            frame_idx,
         );
         self.bitmap_revision = self.bitmap_revision.wrapping_add(1);
     }
     fn current_cape_frame(&self, anim_t: f32) -> usize {
-        let Some(cape) = &self.preview_cape else {
-            return 0;
-        };
-        let frames = skins::cape_frame_count(cape);
+        let frames = self.preview_cape_frames.len();
         if frames <= 1 {
             return 0;
         }
         let fps = f32::from(self.cape_fps().max(1));
         ((anim_t * fps) as usize) % frames
     }
-    // One worker at a time; movements are coalesced to the most recent camera.
-    // No filesystem reads, skin decode or head reconstruction on pointer events.
+    // Single persistent worker; movements coalesce into the latest job slot with
+    // zero thread creation, zero skin/cape normalization, and fast interactive sizing.
     fn queue_camera_render(&mut self) {
         self.render_pending = true;
         self.start_camera_render();
     }
     fn start_camera_render(&mut self) {
-        if self.render_worker.is_some() || !self.render_pending { return; }
-        let Some(skin) = self.preview_skin.clone() else { return; };
-        let cape = self.preview_cape.clone();
-        let model = self.preview_model;
-        let camera = self.camera;
-        let generation = self.appearance_generation;
-        let wavey = self.library.wavey_capes;
+        if !self.render_pending {
+            return;
+        }
+        let Some(skin) = self.preview_skin.clone() else {
+            return;
+        };
         let anim_t = self.anim_origin.elapsed().as_secs_f32();
         let frame_idx = self.current_cape_frame(anim_t);
+        let cape = self.preview_cape_frames.get(frame_idx).cloned();
+        let size = if self.fingers.is_empty() {
+            [384, 480]
+        } else {
+            [240, 300]
+        };
         self.render_pending = false;
-        let (tx, rx) = mpsc::channel();
-        self.render_worker = Some(rx);
-        std::thread::spawn(move || {
-            let image = preview::render_styled(
-                &skin,
-                cape.as_deref(),
-                model,
-                camera,
-                [384, 480],
-                wavey,
-                anim_t,
-                frame_idx,
-            );
-            let _ = tx.send((generation, image));
+        self.render_worker.submit(RenderJob {
+            skin,
+            cape,
+            model: self.preview_model,
+            camera: self.camera,
+            size,
+            generation: self.appearance_generation,
+            wavey: self.library.wavey_capes,
+            anim_t,
         });
     }
     fn poll_camera_render(&mut self) {
-        let result = self.render_worker.as_ref().and_then(|worker| match worker.try_recv() {
-            Ok(result) => Some(Some(result)),
-            Err(mpsc::TryRecvError::Disconnected) => Some(None),
-            Err(mpsc::TryRecvError::Empty) => None,
-        });
-        if let Some(result) = result {
-            self.render_worker = None;
-            if let Some((generation, image)) = result {
-                if generation == self.appearance_generation {
-                    self.bitmap = image;
-                    self.bitmap_revision = self.bitmap_revision.wrapping_add(1);
-                }
+        if let Some((generation, image)) = self.render_worker.try_recv_latest() {
+            if generation == self.appearance_generation {
+                self.bitmap = image;
+                self.bitmap_revision = self.bitmap_revision.wrapping_add(1);
             }
-            self.start_camera_render();
         }
+        self.start_camera_render();
     }
     pub fn is_animating(&self) -> bool {
         let now = std::time::Instant::now();
-        let has_animated_cape = self
-            .preview_cape
-            .as_deref()
-            .is_some_and(|c| skins::cape_frame_count(c) > 1);
-        let has_wavey_cape = self.preview_cape.is_some() && self.library.wavey_capes;
+        let has_animated_cape = self.preview_cape_frames.len() > 1;
+        let has_wavey_cape = !self.preview_cape_frames.is_empty() && self.library.wavey_capes;
         self.worker.is_some()
-            || self.render_worker.is_some() || self.render_pending
+            || !self.fingers.is_empty()
+            || self.render_worker.busy()
+            || self.render_pending
             || has_animated_cape
             || has_wavey_cape
             || crate::documents::busy()
@@ -727,12 +852,12 @@ impl Wardrobe {
     /// Keeping the hit rectangle here makes drag/pinch orbit work on the dashboard too.
     pub fn draw_scene(&mut self, ui: &mut Ui, rect: [f32; 4]) {
         self.poll_camera_render();
-        if let Some(cape) = &self.preview_cape {
+        if !self.preview_cape_frames.is_empty() && self.fingers.is_empty() {
             let anim_t = self.anim_origin.elapsed().as_secs_f32();
             let frame_idx = self.current_cape_frame(anim_t);
-            let animated = skins::cape_frame_count(cape) > 1;
+            let animated = self.preview_cape_frames.len() > 1;
             let wavey_step = self.library.wavey_capes
-                && self.last_wavey_step.elapsed().as_millis() >= 65;
+                && self.last_wavey_step.elapsed().as_millis() >= 95;
             if (animated && frame_idx != self.last_anim_frame) || wavey_step {
                 self.last_anim_frame = frame_idx;
                 self.last_wavey_step = std::time::Instant::now();
@@ -749,10 +874,11 @@ impl Wardrobe {
         if !ui.scene_avatar(self.bitmap.width(), self.bitmap.height(), self.bitmap.as_raw(), self.bitmap_revision,
             ox, oy, 160.0 * scale, 200.0 * scale) {
             // Small boot atlases have no room for the reserved slot.
-            for y in (0..self.bitmap.height()).step_by(3) {
-                for x in (0..self.bitmap.width()).step_by(3) {
-                    let [r, g, b, a] = self.bitmap.get_pixel(x, y).0;
-                    if a > 0 { ui.rounded(ox + x as f32 / 2.4 * scale, oy + y as f32 / 2.4 * scale,
+            let ratio = self.bitmap.width().max(1) as f32 / 160.0;
+            for py in (0..self.bitmap.height()).step_by(3) {
+                for px in (0..self.bitmap.width()).step_by(3) {
+                    let [r, g, b, a] = self.bitmap.get_pixel(px, py).0;
+                    if a > 0 { ui.rounded(ox + px as f32 / ratio * scale, oy + py as f32 / ratio * scale,
                         1.25 * scale, 1.25 * scale, 0.0, rgba(r, g, b, a)); }
                 }
             }
@@ -778,6 +904,10 @@ impl Wardrobe {
         };
         if matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled) {
             self.fingers.remove(&touch.id);
+            if self.fingers.is_empty() {
+                // Upgrade interactive drag resolution back to crisp full resolution on release.
+                self.queue_camera_render();
+            }
             return true;
         }
         if let Some(other) = self

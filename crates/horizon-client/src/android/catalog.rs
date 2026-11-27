@@ -241,6 +241,13 @@ impl Config {
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
             .unwrap_or_default();
         config.device.migrate_missing(&value, &legacy);
+        if let Some(pct) = legacy
+            .get("resolution_scale_percent")
+            .and_then(|v| v.as_u64())
+            .filter(|&p| (25..=100).contains(&p))
+        {
+            config.render_scale = crate::display::RenderScale::new(pct as u32);
+        }
         if !config.max_fps_unlocked_v3 {
             config.max_fps_unlocked_v2 = true;
             config.max_fps_unlocked_v3 = true;
@@ -2360,13 +2367,12 @@ impl Catalog {
                 }
             }
         }
-        // Prioritize visible slice of self.results [self.offset .. self.offset + CATALOG_PAGE_SIZE] first
+        // Prioritize visible slice [self.offset .. self.offset + CATALOG_PAGE_SIZE] and pre-fetch
+        // only the next 1 page so visible icons appear quickly instead of stalling behind 250+ icons.
         let start = self.offset.min(self.results.len());
-        let end = (start + CATALOG_PAGE_SIZE).min(self.results.len());
+        let end = (start + CATALOG_PAGE_SIZE * 2).min(self.results.len());
         for p in self.results[start..end]
             .iter()
-            .chain(self.results[..start].iter())
-            .chain(self.results[end..].iter())
             .chain(self.world_discover_results.iter())
         {
             if self.icons.contains_key(&p.id) {
@@ -2963,39 +2969,44 @@ impl Catalog {
                             |(id, title, _)| [normalize_mod_key(id), normalize_mod_key(title)],
                         ))
                         .collect();
-                    let target_modrinth = if text.trim().is_empty() { 230 } else { 100 };
-                    let mut mr_offset = 0usize;
-                    while mr_offset < target_modrinth {
-                        let mut mr_query = Query::new(&text, Kind::Mod);
-                        mr_query.everything = true;
-                        mr_query.offset = mr_offset;
-                        mr_query.limit = 100.min(target_modrinth - mr_offset);
-                        match browser::modrinth::Modrinth.search(&mr_query) {
-                            Ok(hits) if !hits.is_empty() => {
-                                let batch_len = hits.len();
-                                for hit in hits {
-                                    let keys = [
-                                        normalize_mod_key(&hit.id),
-                                        normalize_mod_key(&hit.slug),
-                                        normalize_mod_key(&hit.title),
-                                    ];
-                                    if keys.iter().any(|k| !k.is_empty() && seen_keys.contains(k))
-                                    {
-                                        continue;
-                                    }
-                                    for k in keys {
-                                        if !k.is_empty() {
-                                            seen_keys.insert(k);
-                                        }
-                                    }
-                                    combined.push(hit);
-                                }
-                                if batch_len < mr_query.limit {
-                                    break;
-                                }
-                                mr_offset += batch_len;
+                    let offsets: &[usize] = if text.trim().is_empty() { &[0, 100] } else { &[0] };
+                    let batches: Vec<Vec<Project>> = std::thread::scope(|s| {
+                        let handles: Vec<_> = offsets
+                            .iter()
+                            .map(|&mr_offset| {
+                                let text = &text;
+                                s.spawn(move || {
+                                    let mut mr_query = Query::new(text, Kind::Mod);
+                                    mr_query.everything = true;
+                                    mr_query.offset = mr_offset;
+                                    mr_query.limit = 100;
+                                    browser::modrinth::Modrinth
+                                        .search(&mr_query)
+                                        .unwrap_or_default()
+                                })
+                            })
+                            .collect();
+                        handles
+                            .into_iter()
+                            .filter_map(|h| h.join().ok())
+                            .collect()
+                    });
+                    for hits in batches {
+                        for hit in hits {
+                            let keys = [
+                                normalize_mod_key(&hit.id),
+                                normalize_mod_key(&hit.slug),
+                                normalize_mod_key(&hit.title),
+                            ];
+                            if keys.iter().any(|k| !k.is_empty() && seen_keys.contains(k)) {
+                                continue;
                             }
-                            _ => break,
+                            for k in keys {
+                                if !k.is_empty() {
+                                    seen_keys.insert(k);
+                                }
+                            }
+                            combined.push(hit);
                         }
                     }
                 }

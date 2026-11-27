@@ -88,6 +88,26 @@ pub fn index() -> Result<Arc<Index>, String> {
         }
     }
     let cache = crate::backend::game_home().join(CACHE);
+    // Stale-while-revalidate for remote indexes: if a valid cached index is on disk,
+    // return it immediately and refresh in the background so Mods never blocks on startup.
+    if !local()
+        && let Ok(kept) = fs::read_to_string(&cache)
+        && let Ok(parsed) = Index::parse(&kept)
+    {
+        let index = Arc::new(parsed);
+        *LOADED.lock().unwrap() = Some((Instant::now(), index.clone()));
+        let cache_bg = cache.clone();
+        std::thread::spawn(move || {
+            if let Ok((fresh, text)) = fetch_index() {
+                if let Some(dir) = cache_bg.parent() {
+                    let _ = fs::create_dir_all(dir);
+                }
+                let _ = fs::write(&cache_bg, text);
+                *LOADED.lock().unwrap() = Some((Instant::now(), Arc::new(fresh)));
+            }
+        });
+        return Ok(index);
+    }
     let index = match fetch_index() {
         Ok((index, text)) => {
             if let Some(dir) = cache.parent() {
@@ -168,6 +188,28 @@ pub fn rate_url(id: &str) -> String {
 /// Fetches the ratings again when the last try is ten minutes old: from `HORIZON_MOD_RATINGS`
 /// (a file or an `https://` address, for a test registry), else [`RATINGS_URL`]; a local test
 /// registry has none unless given. After a failure the browser shows downloads only.
+fn refresh_ratings_async() {
+    if RATINGS
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|(at, _)| at.elapsed() < FRESH)
+    {
+        return;
+    }
+    let given = std::env::var("HORIZON_MOD_RATINGS")
+        .ok()
+        .filter(|v| !v.is_empty());
+    if given.is_none() && local() {
+        return;
+    }
+    if given.as_deref().is_some_and(|p| !p.starts_with("https://")) {
+        refresh_ratings();
+        return;
+    }
+    std::thread::spawn(refresh_ratings);
+}
+
 fn refresh_ratings() {
     if RATINGS
         .lock()
@@ -615,7 +657,7 @@ impl Source for Registry {
         };
         #[cfg(target_os = "android")]
         let found = search(&index, query);
-        refresh_ratings();
+        refresh_ratings_async();
         Ok(found)
     }
 

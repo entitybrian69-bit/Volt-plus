@@ -133,6 +133,9 @@ impl Raster {
         if area.abs() < 0.0001 {
             return;
         }
+        let inv_area = 1.0 / area;
+        let width = self.image.width();
+        let height = self.image.height();
         let minx = points
             .iter()
             .map(|p| p[0])
@@ -144,7 +147,7 @@ impl Raster {
             .map(|p| p[0])
             .fold(f32::NEG_INFINITY, f32::max)
             .ceil()
-            .clamp(0.0, self.image.width() as f32) as u32;
+            .clamp(0.0, width as f32) as u32;
         let miny = points
             .iter()
             .map(|p| p[1])
@@ -156,44 +159,66 @@ impl Raster {
             .map(|p| p[1])
             .fold(f32::NEG_INFINITY, f32::max)
             .ceil()
-            .clamp(0.0, self.image.height() as f32) as u32;
+            .clamp(0.0, height as f32) as u32;
+        if minx >= maxx || miny >= maxy {
+            return;
+        }
+        let tex_w = texture.width();
+        let tex_h = texture.height();
+        let tex_max_u = tex_w as f32 - 1.0;
+        let tex_max_v = tex_h as f32 - 1.0;
+        let tex_raw = texture.as_raw();
+        let out_raw = self.image.as_mut();
+
+        // Incremental barycentric edge stepping across scanlines (eliminates 3 divs/pixel).
+        let dw0_dx = (points[2][1] - points[1][1]) * inv_area;
+        let dw0_dy = -(points[2][0] - points[1][0]) * inv_area;
+        let dw1_dx = (points[0][1] - points[2][1]) * inv_area;
+        let dw1_dy = -(points[0][0] - points[2][0]) * inv_area;
+        let dw2_dx = (points[1][1] - points[0][1]) * inv_area;
+        let dw2_dy = -(points[1][0] - points[0][0]) * inv_area;
+
+        let start_x = minx as f32 + 0.5;
+        let start_y = miny as f32 + 0.5;
+        let mut row_w0 = edge(points[1], points[2], start_x, start_y) * inv_area;
+        let mut row_w1 = edge(points[2], points[0], start_x, start_y) * inv_area;
+        let mut row_w2 = edge(points[0], points[1], start_x, start_y) * inv_area;
+
         for y in miny..maxy {
+            let mut w0 = row_w0;
+            let mut w1 = row_w1;
+            let mut w2 = row_w2;
+            let row_base = (y * width) as usize;
             for x in minx..maxx {
-                let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-                let weights = [
-                    edge(points[1], points[2], px, py) / area,
-                    edge(points[2], points[0], px, py) / area,
-                    edge(points[0], points[1], px, py) / area,
-                ];
-                if weights.iter().any(|w| *w < -0.00001) {
-                    continue;
+                if w0 >= -0.00001 && w1 >= -0.00001 && w2 >= -0.00001 {
+                    let depth = points[0][2] * w0 + points[1][2] * w1 + points[2][2] * w2;
+                    let index = row_base + x as usize;
+                    if depth < self.depth[index] {
+                        let u = (uv[0][0] * w0 + uv[1][0] * w1 + uv[2][0] * w2)
+                            .floor()
+                            .clamp(0.0, tex_max_u) as u32;
+                        let v = (uv[0][1] * w0 + uv[1][1] * w1 + uv[2][1] * w2)
+                            .floor()
+                            .clamp(0.0, tex_max_v) as u32;
+                        let ti = ((v * tex_w + u) * 4) as usize;
+                        let a = tex_raw[ti + 3];
+                        if a >= 128 {
+                            let oi = index * 4;
+                            out_raw[oi] = (tex_raw[ti] as f32 * light) as u8;
+                            out_raw[oi + 1] = (tex_raw[ti + 1] as f32 * light) as u8;
+                            out_raw[oi + 2] = (tex_raw[ti + 2] as f32 * light) as u8;
+                            out_raw[oi + 3] = 255;
+                            self.depth[index] = depth;
+                        }
+                    }
                 }
-                let depth = (0..3).map(|i| points[i][2] * weights[i]).sum::<f32>();
-                let index = (y * self.image.width() + x) as usize;
-                if depth >= self.depth[index] {
-                    continue;
-                }
-                let u = (0..3)
-                    .map(|i| uv[i][0] * weights[i])
-                    .sum::<f32>()
-                    .floor()
-                    .clamp(0.0, texture.width() as f32 - 1.0) as u32;
-                let v = (0..3)
-                    .map(|i| uv[i][1] * weights[i])
-                    .sum::<f32>()
-                    .floor()
-                    .clamp(0.0, texture.height() as f32 - 1.0) as u32;
-                let mut color = *texture.get_pixel(u, v);
-                if color[3] < 128 {
-                    continue;
-                }
-                for channel in 0..3 {
-                    color[channel] = (color[channel] as f32 * light) as u8;
-                }
-                color[3] = 255;
-                self.image.put_pixel(x, y, color);
-                self.depth[index] = depth;
+                w0 += dw0_dx;
+                w1 += dw1_dx;
+                w2 += dw2_dx;
             }
+            row_w0 += dw0_dy;
+            row_w1 += dw1_dy;
+            row_w2 += dw2_dy;
         }
     }
     fn cuboid(
@@ -266,8 +291,8 @@ impl Raster {
     }
 
     fn wavey_cape(&mut self, texture: &RgbaImage, time_sec: f32) {
-        // Matches the 16-slice curved cloth profile used in-game (cape spans y: 24..8 at z: 2.5..3.5).
-        const SLICES: usize = 16;
+        // 8-slice curved cloth profile for fast smooth interactive previewing.
+        const SLICES: usize = 8;
         let (x0, x1) = (-5.0_f32, 5.0_f32);
         let z_front = 2.5_f32;
         let z_back = 3.5_f32;
@@ -359,12 +384,6 @@ pub fn render_styled(
     time_sec: f32,
     cape_frame_index: usize,
 ) -> RgbaImage {
-    let [width, height] = size.map(|v| v.clamp(16, 1024));
-    let mut raster = Raster {
-        image: RgbaImage::new(width, height),
-        depth: vec![f32::INFINITY; (width * height) as usize],
-        camera,
-    };
     let normalized = horizon_core::player_texture::process_legacy_skin(
         skin.width(),
         skin.height(),
@@ -378,7 +397,33 @@ pub fn render_styled(
             horizon_core::player_texture::process_cape(norm.width(), norm.height(), norm.as_raw())
         })
         .and_then(|bytes| RgbaImage::from_raw(64, 64, bytes));
-    let cape = cape_image.as_ref();
+    render_prepared(
+        skin,
+        cape_image.as_ref(),
+        model,
+        camera,
+        size,
+        wavey,
+        time_sec,
+    )
+}
+
+/// Fast interactive preview taking already-normalized 64x64 `skin` and 64x64 `cape` frame textures.
+pub fn render_prepared(
+    skin: &RgbaImage,
+    cape: Option<&RgbaImage>,
+    model: Model,
+    camera: Camera,
+    size: [u32; 2],
+    wavey: bool,
+    time_sec: f32,
+) -> RgbaImage {
+    let [width, height] = size.map(|v| v.clamp(16, 1024));
+    let mut raster = Raster {
+        image: RgbaImage::new(width, height),
+        depth: vec![f32::INFINITY; (width * height) as usize],
+        camera,
+    };
     let arm = if model == Model::Slim { 3.0 } else { 4.0 };
     let modern = skin.height() == 64;
     for (center, dimensions, uv, outer) in [

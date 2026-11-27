@@ -1353,6 +1353,7 @@ impl Game<'_> {
                     if changed {
                         let _ = self.pad.touch.settings.save();
                         self.settings.save(&Self::options_path());
+                        sync_launcher_render_scale(clamped);
                     }
                 }
                 InGameMenuAction::ToggleGameAnimations => {
@@ -2569,3 +2570,35 @@ impl Game<'_> {
         true
     }
 }
+
+pub(super) fn sync_launcher_render_scale(pct: u32) {
+    let clamped = pct.clamp(25, 100);
+    let Ok(mut dir) = std::env::current_dir() else {
+        return;
+    };
+    for _ in 0..4 {
+        let launcher_cfg = dir.join("android-launcher.json");
+        if launcher_cfg.is_file() {
+            if let Ok(bytes) = std::fs::read(&launcher_cfg)
+                && let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                && let Some(obj) = json.as_object_mut()
+            {
+                obj.insert(
+                    "render_scale".to_owned(),
+                    serde_json::Value::Number(serde_json::Number::from(clamped)),
+                );
+                if let Ok(pretty) = serde_json::to_vec_pretty(&json) {
+                    let partial = dir.join("android-launcher.partial");
+                    if std::fs::write(&partial, &pretty).is_ok() {
+                        let _ = std::fs::rename(&partial, &launcher_cfg);
+                    }
+                }
+            }
+            return;
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+}
+

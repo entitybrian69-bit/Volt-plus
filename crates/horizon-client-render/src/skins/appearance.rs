@@ -40,9 +40,35 @@ pub struct NetAppearance {
     pub uuid: u128,
     pub slim: bool,
     pub hide_cape: bool,
+    pub has_skin: bool,
+    pub has_cape: bool,
     pub cape_fps: u8,
     pub skin: Option<(Vec<u8>, bool)>,
     pub cape_frames: Vec<Vec<u8>>,
+}
+
+impl NetAppearance {
+    pub fn merge(&mut self, incoming: Self) {
+        if incoming.has_skin {
+            self.slim = incoming.slim;
+            if incoming.skin.is_some() {
+                self.skin = incoming.skin;
+                self.has_skin = true;
+            }
+        }
+        if incoming.hide_cape {
+            self.hide_cape = true;
+            self.has_cape = false;
+            self.cape_frames.clear();
+        } else if incoming.has_cape {
+            self.hide_cape = false;
+            self.cape_fps = incoming.cape_fps;
+            if !incoming.cape_frames.is_empty() {
+                self.cape_frames = incoming.cape_frames;
+                self.has_cape = true;
+            }
+        }
+    }
 }
 
 static CURRENT: RwLock<Option<Arc<Appearance>>> = RwLock::new(None);
@@ -55,6 +81,7 @@ fn encode_rgba_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
     let mut encoder = png::Encoder::new(&mut bytes, width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(png::Compression::Best);
     encoder.write_header().ok()?.write_image_data(rgba).ok()?;
     Some(bytes)
 }
@@ -83,6 +110,46 @@ fn encode_cape_frames_png(frames: &[Vec<u8>]) -> Option<Vec<u8>> {
     }
 }
 
+/// Encodes `horizon:appearance` into one combined payload or splits skin & cape across
+/// two payloads when combined bytes would exceed `MAX_NET_PAYLOAD_BYTES`, so neither skin
+/// nor cape is ever dropped.
+pub fn encode_net_payloads(
+    uuid: u128,
+    slim: bool,
+    hide_cape: bool,
+    cape_fps: u8,
+    skin_png: Option<&[u8]>,
+    cape_png: Option<&[u8]>,
+) -> Vec<Vec<u8>> {
+    let skin_slice = skin_png.filter(|s| !s.is_empty() && s.len() <= MAX_NET_PAYLOAD_BYTES - 34);
+    let cape_slice = if hide_cape {
+        None
+    } else {
+        cape_png.filter(|c| !c.is_empty() && c.len() <= MAX_NET_PAYLOAD_BYTES - 34)
+    };
+    let skin_len = skin_slice.map_or(0, |s| s.len());
+    let cape_len = cape_slice.map_or(0, |c| c.len());
+    if 31 + skin_len + cape_len <= MAX_NET_PAYLOAD_BYTES {
+        if let Some(one) =
+            encode_net_payload(uuid, slim, hide_cape, cape_fps, skin_slice, cape_slice)
+        {
+            return vec![one];
+        }
+    }
+    let mut packets = Vec::with_capacity(2);
+    if let Some(s) = skin_slice
+        && let Some(pkt) = encode_net_payload(uuid, slim, false, cape_fps, Some(s), None)
+    {
+        packets.push(pkt);
+    }
+    if (hide_cape || cape_slice.is_some())
+        && let Some(pkt) = encode_net_payload(uuid, slim, hide_cape, cape_fps, None, cape_slice)
+    {
+        packets.push(pkt);
+    }
+    packets
+}
+
 /// Encodes a compact `horizon:appearance` payload bounded below `ServerboundCustomPayloadPacket::MAX_PAYLOAD_SIZE`.
 pub fn encode_net_payload(
     uuid: u128,
@@ -92,15 +159,15 @@ pub fn encode_net_payload(
     skin_png: Option<&[u8]>,
     cape_png: Option<&[u8]>,
 ) -> Option<Vec<u8>> {
-    let skin_slice = skin_png.filter(|s| !s.is_empty() && s.len() <= 24_000);
+    let skin_slice = skin_png.filter(|s| !s.is_empty() && s.len() <= MAX_NET_PAYLOAD_BYTES - 34);
     let mut cape_slice = if hide_cape {
         None
     } else {
-        cape_png.filter(|c| !c.is_empty() && c.len() <= 24_000)
+        cape_png.filter(|c| !c.is_empty() && c.len() <= MAX_NET_PAYLOAD_BYTES - 34)
     };
     let skin_len = skin_slice.map_or(0, |s| s.len());
     if let Some(c) = cape_slice
-        && 30 + skin_len + c.len() > MAX_NET_PAYLOAD_BYTES
+        && 31 + skin_len + c.len() > MAX_NET_PAYLOAD_BYTES
     {
         cape_slice = None;
     }
@@ -202,6 +269,8 @@ pub fn decode_net_payload(payload: &[u8]) -> Option<NetAppearance> {
         uuid,
         slim,
         hide_cape,
+        has_skin,
+        has_cape,
         cape_fps,
         skin,
         cape_frames,

@@ -207,14 +207,43 @@ fn upload_skin_at(
     if account.provider != Provider::Microsoft {
         return Err("Ely.by cloud skins are managed on ely.by; its public API does not expose skin uploads.".into());
     }
-    let image = read_skin(bytes)?;
-    let mut png = std::io::Cursor::new(vec![]);
-    image
-        .write_to(&mut png, image::ImageFormat::Png)
-        .map_err(|_| "Could not encode skin.")?;
+    let raw_image = read_skin(bytes)?;
+    // Mojang's /minecraft/profile/skins endpoint accepts 64x64 (or 64x32), rejecting HD 128x128+.
+    // Normalize every skin to canonical 64x64 RGBA PNG with Best compression so uploads always succeed.
+    let image = if raw_image.width() == 64 && raw_image.height() == 32 {
+        horizon_core::player_texture::process_legacy_skin(64, 32, raw_image.as_raw())
+            .and_then(|rgba| image::RgbaImage::from_raw(64, 64, rgba))
+            .unwrap_or(raw_image)
+    } else if raw_image.width() != 64 || raw_image.height() != 64 {
+        image::imageops::resize(
+            &raw_image,
+            64,
+            64,
+            image::imageops::FilterType::Nearest,
+        )
+    } else {
+        raw_image
+    };
+    let mut png = Vec::new();
+    {
+        use image::ImageEncoder;
+        let encoder = image::codecs::png::PngEncoder::new_with_quality(
+            &mut png,
+            image::codecs::png::CompressionType::Best,
+            image::codecs::png::FilterType::Adaptive,
+        );
+        encoder
+            .write_image(
+                image.as_raw(),
+                image.width(),
+                image.height(),
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(|_| "Could not encode skin.")?;
+    }
     let boundary = "horizon-skin-upload-v1";
     let mut body=format!("--{boundary}\r\nContent-Disposition: form-data; name=\"variant\"\r\n\r\n{}\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"skin.png\"\r\nContent-Type: image/png\r\n\r\n",model.name()).into_bytes();
-    body.extend_from_slice(png.get_ref());
+    body.extend_from_slice(&png);
     body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
     response(
         crate::account::request_to("POST", &format!("{profile}/skins"))

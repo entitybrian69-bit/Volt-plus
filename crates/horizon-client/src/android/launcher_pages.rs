@@ -10898,10 +10898,17 @@ impl Launcher {
             Some(Action::Renderer) => self.open_chooser(chooser::Kind::Renderer),
             Some(Action::RenderScale) => self.open_chooser(chooser::Kind::RenderScale),
             Some(Action::ChooseRenderScale(scale)) => {
+                let pct = scale.percent();
                 self.catalog.config.render_scale = scale;
                 self.catalog.config.save(&self.home)?;
                 self.chooser = None;
                 crate::display::set_scale(scale);
+                self.modify_game_settings(|s| {
+                    s.horizon.resolution_scale = pct;
+                });
+                self.modify_touch_settings(|ts| {
+                    ts.resolution_scale_percent = pct;
+                });
             }
             Some(Action::Orientation) => self.open_chooser(chooser::Kind::Orientation),
             Some(Action::InputHost) => self.open_chooser(chooser::Kind::InputHost),
