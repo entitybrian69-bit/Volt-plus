@@ -298,7 +298,7 @@ impl Game<'_> {
             Self::draw_saturation_outlines(batch, atlas, x_right, y_food, inputs.saturation, 255);
         }
 
-        if cfg.show_appleskin_hud_numbers && inputs.saturation > 0.05 {
+        if cfg.show_debug_stats && inputs.saturation > 0.05 {
             let txt = format!("S:{:.1}", inputs.saturation);
             let tw = HudBatch::text_width(atlas, &txt);
             batch.text(
@@ -1066,11 +1066,11 @@ impl Game<'_> {
                 .volt
                 .death_history
                 .push_front((label.clone(), [x, y, z], self.dim));
-            let max_d = usize::from(dh.max_saved.clamp(3, 12));
+            let max_d = usize::from(dh.keep_count.clamp(3, 12));
             while self.extras.volt.death_history.len() > max_d {
                 self.extras.volt.death_history.pop_back();
             }
-            if ar.enabled && ar.log_death_coords {
+            if (ar.enabled && ar.log_death_coords) || (dh.enabled && dh.auto_log_chat) {
                 self.ui.chat.add(
                     &self.gui.atlas,
                     Text::literal(format!("You died at {x}, {y}, {z} ({:?})", self.dim)),
@@ -1082,7 +1082,7 @@ impl Game<'_> {
             }
             if (ar.enabled && ar.save_death_waypoint)
                 || (wp.enabled && wp.auto_death_waypoint)
-                || (dh.enabled && dh.auto_add_waypoint)
+                || dh.enabled
             {
                 self.volt_add_waypoint(&label, true);
             }
@@ -1548,10 +1548,10 @@ impl Game<'_> {
                 .extra
                 .as_ref()
                 .is_some_and(|e| !e.enchantments.is_empty());
-        if !cfg.require_double_tap_all && !is_rare {
+        if !cfg.double_tap_bypass && !is_rare {
             return true;
         }
-        let win = Duration::from_millis(u64::from(cfg.confirm_window_ms.clamp(400, 3000)));
+        let win = Duration::from_millis(1200);
         if let Some((ref prev_item, at)) = self.extras.volt.drop_confirm_pending
             && prev_item == s
             && at.elapsed() <= win
@@ -1575,7 +1575,7 @@ impl Game<'_> {
             .volt
             .timelapse_started
             .map_or(0.0, |s| s.elapsed().as_secs_f64());
-        let spd = f64::from(cfg.speed_pct.clamp(10, 400)) / 100.0;
+        let spd = f64::from(cfg.orbit_speed_deg.max(5)) / 45.0;
         let a = self.extras.volt.timelapse_anchor;
         match cfg.path_mode {
             TimelapsePathMode::Orbit => {
@@ -1632,13 +1632,13 @@ impl Game<'_> {
         // Hit Color sync
         let hc = &self.settings.extras.volt.hit_color;
         if hc.enabled {
-            crate::mobs::render::set_volt_hit_color(
+            horizon_client::mobs::render::set_volt_hit_color(
                 Some(hc.color.rgb()),
-                hc.alpha_pct,
-                hc.include_armor,
+                hc.intensity_pct,
+                hc.flash_armor,
             );
         } else {
-            crate::mobs::render::set_volt_hit_color(None, 0, false);
+            horizon_client::mobs::render::set_volt_hit_color(None, 0, false);
         }
 
         // Chat Mention Ping chime
@@ -2364,7 +2364,7 @@ impl Game<'_> {
             }
             if v.player_highlight.highlight_hostiles {
                 for m in &self.mobs {
-                    if m.kind.category != horizon_client::mobs::Category::Monster || m.invisible {
+                    if m.kind.category != "monster" || m.invisible {
                         continue;
                     }
                     let d2 = (m.position.x - px).powi(2) + (m.position.z - pz).powi(2);
@@ -2927,14 +2927,14 @@ impl Game<'_> {
         if cr_cfg.enabled && self.ticks <= self.extras.volt.crit_ring_until_tick {
             let rem = self.extras.volt.crit_ring_until_tick.saturating_sub(self.ticks) as f32;
             let rad = 7.0 + (12.0 - rem) * 0.65;
-            let [r, g, b] = cr_cfg.color.rgb();
+            let [r, g, b] = cr_cfg.crit_color.rgb();
             let alpha = ((rem / 12.0) * 240.0).round() as u8;
             let col = rgba(r, g, b, alpha);
             batch.fill(atlas, cx - rad, cy - rad, rad * 2.0, 1.5, col);
             batch.fill(atlas, cx - rad, cy + rad - 1.5, rad * 2.0, 1.5, col);
             batch.fill(atlas, cx - rad, cy - rad, 1.5, rad * 2.0, col);
             batch.fill(atlas, cx + rad - 1.5, cy - rad, 1.5, rad * 2.0, col);
-            if cr_cfg.show_label {
+            if cr_cfg.show_crit_badge {
                 let msg = "CRIT!";
                 let tw = HudBatch::text_width(atlas, msg);
                 batch.text(atlas, msg, cx - tw * 0.5, cy - rad - 10.0, col, true);
@@ -2979,7 +2979,7 @@ impl Game<'_> {
                     };
                     batch.fill(atlas, bx, by, bw, 3.0, rgba(16, 18, 24, 195));
                     batch.fill(atlas, bx, by, bw * frac, 3.0, col);
-                    if bc_cfg.show_percent {
+                    if bc_cfg.show_pct_bar {
                         let txt = if frac >= 0.99 {
                             "MAX".to_owned()
                         } else {
@@ -3407,13 +3407,16 @@ impl Game<'_> {
                         pos,
                         mining_pct,
                     } => {
-                        let sub = if !lcfg.compact && lcfg.show_coords {
-                            format!("[{}, {}, {}]", pos[0], pos[1], pos[2])
-                        } else if !lcfg.compact && lcfg.show_tool_tier {
-                            raw_id
-                                .strip_prefix("minecraft:")
-                                .unwrap_or(&raw_id)
-                                .to_owned()
+                        let sub = if !lcfg.compact && lcfg.show_tool_hint {
+                            format!(
+                                "[{}, {}, {}] • {}",
+                                pos[0],
+                                pos[1],
+                                pos[2],
+                                raw_id.strip_prefix("minecraft:").unwrap_or(&raw_id)
+                            )
+                        } else if !lcfg.compact && lcfg.show_mod_source {
+                            "Minecraft".to_owned()
                         } else {
                             String::new()
                         };
@@ -3424,7 +3427,7 @@ impl Game<'_> {
                             HudBatch::text_width(atlas, &sub)
                         };
                         let has_icon = self.items().get(raw_id.as_str()).is_some();
-                        let icon_space = if lcfg.show_block_icon { 26.0 } else { 8.0 };
+                        let icon_space = if lcfg.show_3d_icon { 26.0 } else { 8.0 };
                         let cw = (icon_space + title_w.max(sub_w) + 12.0).clamp(112.0, 240.0);
                         let ch = if sub.is_empty() && mining_pct.is_none() {
                             26.0
@@ -3437,7 +3440,7 @@ impl Game<'_> {
                         batch.fill(atlas, cx, y, cw, ch, rgba(16, 18, 24, 205));
                         batch.fill(atlas, cx, y, cw, 1.5, rgba(96, 185, 255, 220));
                         batch.fill(atlas, cx, y + ch - 1.0, cw, 1.0, rgba(70, 82, 105, 190));
-                        if lcfg.show_block_icon {
+                        if lcfg.show_3d_icon {
                             let ix = cx + 5.0;
                             let iy = y + (ch - 18.0) * 0.5;
                             batch.fill(atlas, ix - 1.0, iy - 1.0, 18.0, 18.0, rgba(255, 255, 255, 24));
@@ -3459,9 +3462,7 @@ impl Game<'_> {
                         if !sub.is_empty() {
                             batch.text(atlas, &sub, tx, ty + 11.0, rgba(168, 182, 208, 255), true);
                         }
-                        if let Some(pct) = mining_pct
-                            && lcfg.show_break_progress
-                        {
+                        if let Some(pct) = mining_pct {
                             batch.fill(atlas, cx + 4.0, y + ch - 5.0, cw - 8.0, 3.0, rgba(35, 38, 48, 220));
                             batch.fill(
                                 atlas,
@@ -3610,14 +3611,14 @@ impl Game<'_> {
             } else {
                 format!("{:02}:{:02}", secs / 60, secs % 60)
             };
-            let txt = if cfg.compact {
+            let txt = if cfg.compact_pills {
                 format!("{short} {tstr}")
             } else {
                 format!("{short} {} • {tstr}", eff.amplifier + 1)
             };
             let tw = HudBatch::text_width(atlas, &txt);
             let (x, y) = Self::corner_xy(cfg.corner, wi, hi, tw + 10.0, 13.0, 44.0 + i as f32 * 14.0);
-            let flash = cfg.blink_low && eff.duration >= 0 && eff.duration < 200 && (self.ticks / 6).is_multiple_of(2);
+            let flash = cfg.blink_under_10s && eff.duration >= 0 && eff.duration < 200 && (self.ticks / 6).is_multiple_of(2);
             let fg = if flash {
                 rgba(255, 108, 108, 255)
             } else {
@@ -3635,21 +3636,23 @@ impl Game<'_> {
         let cd_cfg = &self.settings.extras.volt.cooldown_hud;
         if cd_cfg.enabled {
             let mut pills: Vec<(&str, f32)> = Vec::new();
-            if cd_cfg.show_pearl {
+            if cd_cfg.track_pearls {
                 let p = self.cooldowns.percent("minecraft:ender_pearl", 0.0);
                 if p > 0.0 {
                     pills.push(("Pearl", p));
                 }
             }
-            if cd_cfg.show_wind_charge {
+            if cd_cfg.track_wind_charge {
                 let p = self.cooldowns.percent("minecraft:wind_charge", 0.0);
                 if p > 0.0 {
                     pills.push(("Wind", p));
                 }
             }
-            let chorus = self.cooldowns.percent("minecraft:chorus_fruit", 0.0);
-            if chorus > 0.0 {
-                pills.push(("Chorus", chorus));
+            if cd_cfg.track_chorus_gapple {
+                let chorus = self.cooldowns.percent("minecraft:chorus_fruit", 0.0);
+                if chorus > 0.0 {
+                    pills.push(("Chorus", chorus));
+                }
             }
             if self.shield_cooldown > 0 {
                 pills.push(("Shield", (self.shield_cooldown as f32 / 100.0).clamp(0.0, 1.0)));
@@ -3670,7 +3673,7 @@ impl Game<'_> {
         if rd_cfg.enabled
             && let Some(p) = self.player.as_ref()
         {
-            let sz = 74.0;
+            let sz = f32::from(rd_cfg.size_px.clamp(48, 120));
             let (rx, ry) = Self::corner_xy(rd_cfg.corner, wi, hi, sz, sz, 18.0);
             let rcx = rx + sz * 0.5;
             let rcy = ry + sz * 0.5;
@@ -3679,7 +3682,7 @@ impl Game<'_> {
             batch.fill(atlas, rx, ry + sz - 1.0, sz, 1.0, rgba(110, 180, 240, 180));
             batch.fill(atlas, rx, ry, 1.0, sz, rgba(110, 180, 240, 180));
             batch.fill(atlas, rx + sz - 1.0, ry, 1.0, sz, rgba(110, 180, 240, 180));
-            let range = f64::from(rd_cfg.range.clamp(16, 128));
+            let range = f64::from(rd_cfg.zoom_blocks.clamp(16, 128));
             let yr = f64::from(self.yaw.to_radians());
             let (sy, cy) = (yr.sin(), yr.cos());
             let plot = |batch: &mut HudBatch, wx: f64, wz: f64, col: u32| {
@@ -3693,12 +3696,22 @@ impl Game<'_> {
                     batch.fill(atlas, px - 1.5, py - 1.5, 3.0, 3.0, col);
                 }
             };
-            for m in &self.mobs {
-                let is_hostile = m.kind.category == "monster";
-                if is_hostile && rd_cfg.show_hostiles {
-                    plot(batch, m.position.x, m.position.z, rgba(255, 86, 86, 255));
-                } else if !is_hostile && rd_cfg.show_passives {
-                    plot(batch, m.position.x, m.position.z, rgba(102, 235, 132, 255));
+            if rd_cfg.show_mobs {
+                for m in &self.mobs {
+                    let is_hostile = m.kind.category == "monster";
+                    let col = if is_hostile {
+                        rgba(255, 86, 86, 255)
+                    } else {
+                        rgba(102, 235, 132, 255)
+                    };
+                    plot(batch, m.position.x, m.position.z, col);
+                }
+            }
+            if rd_cfg.show_waypoints {
+                for wp in &self.extras.volt.waypoints {
+                    if wp.dim == self.dim {
+                        plot(batch, wp.pos[0], wp.pos[2], wp.color);
+                    }
                 }
             }
             if rd_cfg.show_players {
@@ -3722,7 +3735,7 @@ impl Game<'_> {
                 }
                 let rem = max_d.saturating_sub(s.damage);
                 let pct = ((rem as f32 / max_d as f32) * 100.0).round() as u8;
-                if pct <= dw_cfg.threshold_pct && worst.is_none_or(|(_, wp)| pct < wp) {
+                if pct <= dw_cfg.warn_pct && worst.is_none_or(|(_, wp)| pct < wp) {
                     let short = s.item.strip_prefix("minecraft:").unwrap_or(&s.item);
                     worst = Some((short, pct));
                 }
@@ -3747,7 +3760,7 @@ impl Game<'_> {
                 .map_or(1.0, |s| s.elapsed().as_secs_f32().max(1.0));
             let rate = (self.extras.volt.xp_gained_session as f32 / secs) * 60.0;
             let mut txt = format!("Lvl {}", self.experience.level);
-            if xp_cfg.show_rate {
+            if xp_cfg.show_next_level_xp {
                 txt.push_str(&format!(" • +{:.0} XP/m", rate));
             }
             let tw = HudBatch::text_width(atlas, &txt);
@@ -3762,7 +3775,7 @@ impl Game<'_> {
             let pw = 9.0 * 18.0 + 4.0;
             let ph = 3.0 * 18.0 + 4.0;
             let (x0, y0) = Self::corner_xy(inv_cfg.corner, wi, hi, pw, ph, 16.0);
-            let bg_a = ((f32::from(inv_cfg.opacity_pct.clamp(15, 100)) / 100.0) * 215.0) as u8;
+            let bg_a = ((f32::from(inv_cfg.bg_opacity_pct.clamp(15, 100)) / 100.0) * 215.0) as u8;
             batch.fill(atlas, x0, y0, pw, ph, rgba(16, 18, 24, bg_a));
             for slot in 9..36usize {
                 let col = (slot - 9) % 9;
@@ -3800,7 +3813,7 @@ impl Game<'_> {
                 6 => ("First Quarter", 50),
                 _ => ("Waxing Gibbous", 75),
             };
-            let txt = if mp_cfg.show_slime_chance {
+            let txt = if mp_cfg.show_slime_rating {
                 format!("{name} • Slime {slime_pct}%")
             } else {
                 name.to_owned()
