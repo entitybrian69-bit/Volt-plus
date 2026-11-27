@@ -3905,16 +3905,16 @@ impl Game<'_> {
     fn jei_top_offset(&self) -> f32 {
         let mut top = match self.settings.horizon.overlay {
             horizon_client::graphics::Overlay::Graph => 82.0,
-            horizon_client::graphics::Overlay::Compact => 40.0,
+            horizon_client::graphics::Overlay::Fps => 40.0,
             horizon_client::graphics::Overlay::Off => 6.0,
         };
-        if self.settings.extras.volt.fps_display.enabled
-            && self.settings.extras.volt.fps_display.corner == Corner::TopRight
+        if self.settings.extras.volt.telemetry_hud.enabled
+            && self.settings.extras.volt.telemetry_hud.corner == Corner::TopRight
         {
             top = top.max(24.0);
         }
-        if self.settings.extras.volt.ping_display.enabled
-            && self.settings.extras.volt.ping_display.corner == Corner::TopRight
+        if self.settings.extras.volt.tab_ping.enabled
+            && self.settings.extras.volt.tab_ping.corner == Corner::TopRight
         {
             top = top.max(38.0);
         }
