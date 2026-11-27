@@ -646,12 +646,15 @@ impl Game<'_> {
             }
             return Ok(());
         }
-        if self.volt_jei_visible() && matches!(button, MouseButton::Left | MouseButton::Right) {
+        if self.volt_jei_visible()
+            && matches!(button, MouseButton::Left | MouseButton::Right)
+            && let Some(b) = self.gui_scale()
+        {
             if down {
-                if self.volt_jei_click(button == MouseButton::Right) {
+                if self.volt_jei_click(b.width, b.height, button == MouseButton::Right) {
                     return Ok(());
                 }
-            } else if self.volt_jei_contains() {
+            } else if self.volt_jei_contains(b.width, b.height) {
                 return Ok(());
             }
         }
