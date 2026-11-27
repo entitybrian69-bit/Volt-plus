@@ -157,9 +157,9 @@ impl Game<'_> {
         let cc = &self.settings.extras.volt.clear_caves;
         if cc.enabled && cc.remove_void_fog && fog_type == FogType::Atmospheric {
             let sky_light = self.world.light(
-                eye[0].floor() as i32,
-                eye[1].floor() as i32,
-                eye[2].floor() as i32,
+                at[0].floor() as i32,
+                at[1].floor() as i32,
+                at[2].floor() as i32,
             ) >> 4;
             if sky_light <= 2 {
                 horizon_client::fog::clear_distance_fog(&mut fog, &input);

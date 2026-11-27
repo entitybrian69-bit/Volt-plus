@@ -1817,15 +1817,15 @@ impl Launcher {
                 let bx = content_x + 72.0;
                 let bw = (content_w - 72.0).max(120.0);
                 let by = header_y - 4.0;
-                ui.rounded(bx, by, bw, 32.0, 9.0, rgba(28, 22, 14, 195));
-                ui.border(bx, by, bw, 32.0, 9.0, rgba(242, 184, 75, 130));
+                ui.rounded(bx, by, bw, 32.0, 9.0, horizon_client::hud::rgba(28, 22, 14, 195));
+                ui.border(bx, by, bw, 32.0, 9.0, horizon_client::hud::rgba(242, 184, 75, 130));
                 ui.text_clipped(
                     Face::SemiBold,
                     10.2,
                     bx + 10.0,
                     by + 3.0,
                     bw - 20.0,
-                    rgba(255, 220, 140, 255),
+                    horizon_client::hud::rgba(255, 220, 140, 255),
                     "Not all mods are working and supported",
                 );
                 ui.text_clipped(
@@ -1834,7 +1834,7 @@ impl Launcher {
                     bx + 10.0,
                     by + 16.5,
                     bw - 20.0,
-                    rgba(224, 214, 196, 235),
+                    horizon_client::hud::rgba(224, 214, 196, 235),
                     "These are community mods and need heavy work on",
                 );
             } else if page == Page::Shaders {
