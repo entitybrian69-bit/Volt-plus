@@ -154,16 +154,6 @@ pub enum Icon {
     Mouse,
     Music,
     Download,
-    Home,
-    Globe,
-    Camera,
-    Store,
-    Power,
-    Flame,
-    Fan,
-    Shield,
-    Bolt,
-    Gauge,
 }
 
 struct Fonts {
@@ -780,77 +770,6 @@ fn icon_hit(icon: Icon, u: f32, v: f32) -> bool {
             let head_l = seg_dist(u, v, 0.32, 0.48, 0.50, 0.66) <= 0.048;
             let head_r = seg_dist(u, v, 0.68, 0.48, 0.50, 0.66) <= 0.048;
             tray_l || tray_r || tray_b || stem || head_l || head_r
-        }
-        Icon::Home => {
-            let roof_l = seg_dist(u, v, 0.16, 0.48, 0.50, 0.18) <= 0.052;
-            let roof_r = seg_dist(u, v, 0.50, 0.18, 0.84, 0.48) <= 0.052;
-            let body = (0.24..=0.76).contains(&u) && (0.46..=0.82).contains(&v);
-            let door = (0.42..=0.58).contains(&u) && (0.58..=0.82).contains(&v);
-            roof_l || roof_r || (body && !door)
-        }
-        Icon::Globe => {
-            let d = ((u - 0.50).powi(2) + (v - 0.50).powi(2)).sqrt();
-            let ring = (0.29..=0.36).contains(&d);
-            let eq = (v - 0.50).abs() <= 0.04 && d <= 0.34;
-            let merid = (u - 0.50).abs() <= 0.04 && d <= 0.34;
-            let lat_top = (v - 0.34).abs() <= 0.032 && d <= 0.33;
-            let lat_bot = (v - 0.66).abs() <= 0.032 && d <= 0.33;
-            ring || eq || merid || lat_top || lat_bot
-        }
-        Icon::Camera => {
-            let body = (0.14..=0.86).contains(&u) && (0.28..=0.80).contains(&v);
-            let bump = (0.34..=0.66).contains(&u) && (0.18..=0.30).contains(&v);
-            let d = ((u - 0.50).powi(2) + (v - 0.54).powi(2)).sqrt();
-            let lens_hole = (0.09..=0.17).contains(&d);
-            (body || bump) && !lens_hole
-        }
-        Icon::Store => {
-            let bag = (0.20..=0.80).contains(&u) && (0.34..=0.84).contains(&v);
-            let inner = (0.28..=0.72).contains(&u) && (0.42..=0.76).contains(&v);
-            let handle_d = ((u - 0.50).powi(2) + (v - 0.34).powi(2)).sqrt();
-            let handle = (0.13..=0.20).contains(&handle_d) && v <= 0.35;
-            (bag && !inner) || handle
-        }
-        Icon::Power => {
-            let d = ((u - 0.50).powi(2) + (v - 0.54).powi(2)).sqrt();
-            let arc = (0.24..=0.32).contains(&d) && !(v < 0.42 && (u - 0.50).abs() < 0.12);
-            let stem = seg_dist(u, v, 0.50, 0.16, 0.50, 0.48) <= 0.052;
-            arc || stem
-        }
-        Icon::Flame => {
-            let drop = ((u - 0.50) * 1.25).powi(2) + ((v - 0.58) * 0.92).powi(2) <= 0.088;
-            let tip = seg_dist(u, v, 0.50, 0.16, 0.38, 0.48) <= 0.08
-                || seg_dist(u, v, 0.50, 0.16, 0.62, 0.48) <= 0.08;
-            let core = ((u - 0.50) * 1.4).powi(2) + ((v - 0.66) * 1.1).powi(2) <= 0.018;
-            (drop || tip) && !core
-        }
-        Icon::Fan => {
-            let hub = ((u - 0.50).powi(2) + (v - 0.50).powi(2)).sqrt() <= 0.10;
-            let b1 = seg_dist(u, v, 0.50, 0.50, 0.50, 0.16) <= 0.085;
-            let b2 = seg_dist(u, v, 0.50, 0.50, 0.21, 0.67) <= 0.085;
-            let b3 = seg_dist(u, v, 0.50, 0.50, 0.79, 0.67) <= 0.085;
-            let hole = ((u - 0.50).powi(2) + (v - 0.50).powi(2)).sqrt() <= 0.045;
-            (hub || b1 || b2 || b3) && !hole
-        }
-        Icon::Shield => {
-            let top = (0.22..=0.78).contains(&u) && (0.18..=0.46).contains(&v);
-            let bot = v >= 0.46 && v <= 0.84 && (u - 0.50).abs() <= (0.84 - v) * 0.74;
-            let inner_top = (0.30..=0.70).contains(&u) && (0.26..=0.46).contains(&v);
-            let inner_bot = v >= 0.46 && v <= 0.74 && (u - 0.50).abs() <= (0.74 - v) * 0.66;
-            (top || bot) && !(inner_top || inner_bot)
-        }
-        Icon::Bolt => {
-            let top = seg_dist(u, v, 0.56, 0.16, 0.30, 0.52) <= 0.068;
-            let mid = seg_dist(u, v, 0.30, 0.52, 0.68, 0.48) <= 0.055;
-            let bot = seg_dist(u, v, 0.68, 0.48, 0.42, 0.84) <= 0.068;
-            top || mid || bot
-        }
-        Icon::Gauge => {
-            let d = ((u - 0.50).powi(2) + (v - 0.56).powi(2)).sqrt();
-            let arc = (0.27..=0.35).contains(&d) && v <= 0.68;
-            let needle = seg_dist(u, v, 0.50, 0.56, 0.68, 0.34) <= 0.048;
-            let hub = ((u - 0.50).powi(2) + (v - 0.56).powi(2)).sqrt() <= 0.075;
-            arc || needle || hub
         }
     }
 }
@@ -2399,23 +2318,6 @@ impl<'a> Ui<'a> {
         dw: f32,
         dh: f32,
     ) -> bool {
-        self.image_tinted(key, w, h, rgba, x, y, dw, dh, u32::MAX)
-    }
-
-    /// Draw a cached RGBA image (`w x h`) into `(x, y, dw, dh)` dp with vertex `tint` color.
-    #[allow(clippy::too_many_arguments)]
-    pub fn image_tinted(
-        &mut self,
-        key: &str,
-        w: u32,
-        h: u32,
-        rgba: &[u8],
-        x: f32,
-        y: f32,
-        dw: f32,
-        dh: f32,
-        tint: u32,
-    ) -> bool {
         let atlas = self.atlas;
         let Some(rect) = with_cache(atlas, |c| c.image(atlas, key, w, h, rgba)) else {
             return false;
@@ -2426,7 +2328,7 @@ impl<'a> Ui<'a> {
             self.px_x(x + dw),
             self.px_y(y + dh),
         );
-        self.emit_clipped_uv(x0, y0, x1, y1, rect.u0, rect.v0, rect.u1, rect.v1, tint);
+        self.emit_clipped_uv(x0, y0, x1, y1, rect.u0, rect.v0, rect.u1, rect.v1, u32::MAX);
         true
     }
 
@@ -2825,18 +2727,6 @@ impl<'a> Ui<'a> {
             color,
             &fitted,
         );
-    }
-
-    /// Draws a convex polygon in dp coordinates with optional perimeter stroke.
-    pub fn polygon(
-        &mut self,
-        pts: &[[f32; 2]],
-        center: [f32; 2],
-        fill_color: u32,
-        stroke_size: f32,
-        stroke_color: u32,
-    ) {
-        self.draw_convex_polygon_dp(pts, center, fill_color, stroke_size, 0.0, stroke_color);
     }
 
     /// Emits a convex polygon in dp coordinates with a glassmorphic top specular edge and crisp vector perimeter border.
@@ -3705,8 +3595,8 @@ impl<'a> Ui<'a> {
         self.draw_horizon_logo_art(cx - logo * 0.5, cy - logo * 0.5, logo, a, reveal);
     }
 
-    /// Renders the Nexora Demonic loading screen centered on "SOMETHING DEMONIC IS LOADING",
-    /// crimson energy progress bar, and "NEXORA CLIENT" subtitle with smooth cross-dissolve.
+    /// Renders a clean, modern, minimal animated Horizon intro screen centered on the
+    /// procedural Horizon `H` logo with real initialization progress and smooth cross-dissolve.
     pub fn draw_horizon_intro(&mut self, elapsed: f32, loading_progress: f32, status_text: &str) {
         let real_prog = loading_progress.clamp(0.0, 1.0);
         let dissolve = if real_prog >= 0.999 && elapsed > 1.15 {
@@ -3717,15 +3607,86 @@ impl<'a> Ui<'a> {
         if dissolve <= 0.01 {
             return;
         }
-        crate::nexora_art::draw_demonic_loading(
-            self,
-            elapsed,
-            real_prog,
-            status_text,
-            &[],
-            false,
-            dissolve,
+        let theme = active_theme();
+        let (w, h) = (self.w, self.h);
+        self.fill(
+            0.0,
+            0.0,
+            w,
+            h,
+            color::with_alpha(theme.bg_solid, 0.97 * dissolve),
         );
+
+        let cx = w * 0.5;
+        let cy = (h * 0.37).clamp(110.0, h - 150.0);
+        let mark_size = (h * 0.19).clamp(64.0, 88.0);
+        self.draw_animated_horizon_mark(cx, cy, mark_size, elapsed, dissolve);
+
+        let title_t =
+            motion::ease_out_cubic(((elapsed - 0.18).max(0.0) / 0.42).clamp(0.0, 1.0)) * dissolve;
+        if title_t > 0.02 {
+            let slide = (1.0 - title_t) * 8.0;
+            let title_y = cy + mark_size * 0.68 + slide;
+            self.text_centered(
+                Face::SemiBold,
+                24.0,
+                cx,
+                title_y,
+                color::with_alpha(theme.text_primary, title_t),
+                "HORIZON",
+            );
+            let sub_y = title_y + 32.0;
+            self.text_centered(
+                Face::Medium,
+                11.5,
+                cx,
+                sub_y,
+                color::with_alpha(theme.text_muted, title_t * 0.9),
+                "VOLT+ EDITION  •  ANDROID LAUNCHER",
+            );
+
+            // Real initialization progress indicator
+            let bar_w = (w * 0.34).clamp(180.0, 260.0);
+            let bar_h = 6.0;
+            let bar_x = cx - bar_w * 0.5;
+            let bar_y = sub_y + 28.0;
+            self.rounded(
+                bar_x,
+                bar_y,
+                bar_w,
+                bar_h,
+                3.0,
+                color::with_alpha(theme.surface_bright, title_t),
+            );
+            let fill_w = (bar_w * real_prog.max(0.05)).clamp(bar_h, bar_w);
+            self.rounded(
+                bar_x,
+                bar_y,
+                fill_w,
+                bar_h,
+                3.0,
+                color::with_alpha(theme.accent, title_t),
+            );
+
+            let msg = if status_text.trim().is_empty() {
+                if real_prog >= 0.999 {
+                    "Ready • Tap anywhere to continue".to_owned()
+                } else {
+                    format!("Initializing workspace... {:.0}%", real_prog * 100.0)
+                }
+            } else {
+                format!("{status_text} ({:.0}%)", real_prog * 100.0)
+            };
+            let fitted_msg = self.fit_text(Face::Regular, 11.0, &msg, (w - 48.0).max(120.0));
+            self.text_centered(
+                Face::Regular,
+                11.0,
+                cx,
+                bar_y + 12.0,
+                color::with_alpha(theme.text_muted, title_t * 0.88),
+                &fitted_msg,
+            );
+        }
     }
 }
 
@@ -3736,8 +3697,9 @@ impl<'a> Ui<'a> {
 const BOOT_TEXT: u32 = color::hex(0xFFFFFF, 255);
 const BOOT_LOG: u32 = color::hex(0x9BA1A6, 255);
 
-/// The boot screen while the menu is not ready yet: the demonic wordmark centred on
-/// pure obsidian-black and the console's last lines at the bottom left.
+/// The boot screen while the menu is not ready yet: the wordmark centred on
+/// pure black and the console's last lines at the bottom right, as the
+/// terminal prints them.
 pub fn draw_boot(atlas: &HudAtlas, batch: &mut HudBatch, logs: &[String]) {
     // Pure black under everything: the frame's panorama (the title artwork
     // once the bundle is in) must not leak through.
@@ -3753,19 +3715,73 @@ pub fn draw_boot(atlas: &HudAtlas, batch: &mut HudBatch, logs: &[String]) {
     draw_boot_log(atlas, batch, logs);
 }
 
-/// The Nexora demonic loading centerpiece, centred.
+/// The wordmark with its tagline, crisp vector H mark, and progress bar, centred.
 fn wordmark(atlas: &HudAtlas, batch: &mut HudBatch) {
     let mut ui = Ui::new(atlas, batch, (0.0, 0.0));
-    let t = motion::ambient_time();
-    crate::nexora_art::draw_demonic_loading(
-        &mut ui,
-        t + 0.6,
-        0.64,
-        "Preparing Nexora Client...",
-        &[],
-        false,
-        1.0,
+    let size = (ui.w / 16.0).clamp(DISPLAY, 96.0);
+    let small = (size * 0.25).clamp(MICRO, 18.0);
+    let block = size * 1.45 + small * 0.6 + small * 1.5;
+    let top = (ui.h - block) / 2.0;
+    let cx = ui.w / 2.0;
+
+    // Crisp Volt+ V+ emblem badge centered symmetrically above the wordmark
+    let mark_s = (size * 0.78).clamp(34.0, 62.0);
+    let mark_cy = (top - mark_s * 0.74).max(mark_s * 0.62);
+    let badge_w = mark_s * 1.32;
+    let badge_h = mark_s * 0.86;
+    let badge_x = cx - badge_w * 0.5;
+    let badge_y = mark_cy - badge_h * 0.5;
+    let accent = active_theme().accent;
+    ui.rounded(
+        badge_x,
+        badge_y,
+        badge_w,
+        badge_h,
+        badge_h * 0.32,
+        color::with_alpha(accent, 0.16),
     );
+    ui.stroke_rounded(
+        badge_x,
+        badge_y,
+        badge_w,
+        badge_h,
+        badge_h * 0.32,
+        1.6,
+        accent,
+    );
+    let mark_font = (badge_h * 0.64).clamp(16.0, 40.0);
+    let v_w = ui.measure(Face::SemiBold, mark_font, "V");
+    let p_w = ui.measure(Face::SemiBold, mark_font, "+");
+    let total_mark_w = v_w + p_w;
+    let mark_tx = cx - total_mark_w * 0.5;
+    let mark_ty = badge_y + (badge_h - mark_font * 1.15) * 0.5;
+    ui.text(Face::SemiBold, mark_font, mark_tx, mark_ty, BOOT_TEXT, "V");
+    ui.text(Face::SemiBold, mark_font, mark_tx + v_w, mark_ty, accent, "+");
+
+    ui.text_centered(Face::SemiBold, size, cx, top, BOOT_TEXT, "Volt+");
+    let sub_y = top + size * 1.45 + small * 0.6;
+    ui.text_centered(
+        Face::Mono,
+        small,
+        cx,
+        sub_y,
+        BOOT_LOG,
+        "Volt Launcher Plus",
+    );
+
+    // Symmetrical centered startup progress bar below the tagline
+    let prog_w = (size * 1.8).clamp(80.0, 140.0);
+    let prog_y = sub_y + small * 1.7;
+    ui.rounded(
+        cx - prog_w * 0.5,
+        prog_y,
+        prog_w,
+        4.0,
+        2.0,
+        color::with_alpha(BOOT_LOG, 0.28),
+    );
+    let pulse_w = prog_w * 0.56;
+    ui.rounded(cx - pulse_w * 0.5, prog_y, pulse_w, 4.0, 2.0, accent);
     ui.finish();
 }
 
@@ -3839,10 +3855,9 @@ fn wrapping_lines(ui: &Ui, face: Face, size: f32, text: &str, max_w: f32) -> Vec
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ThemePreset {
-    #[default]
-    NexoraCrimson,
     ObsidianViolet,
     CyberCyan,
+    #[default]
     EmeraldForest,
     CrimsonEmber,
     SolarGold,
@@ -3852,8 +3867,7 @@ pub enum ThemePreset {
 }
 
 impl ThemePreset {
-    pub const ALL: [Self; 9] = [
-        Self::NexoraCrimson,
+    pub const ALL: [Self; 8] = [
         Self::ObsidianViolet,
         Self::CyberCyan,
         Self::EmeraldForest,
@@ -3866,7 +3880,6 @@ impl ThemePreset {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::NexoraCrimson => "Nexora Crimson",
             Self::ObsidianViolet => "Obsidian Violet",
             Self::CyberCyan => "Cyber Cyan",
             Self::EmeraldForest => "Emerald Forest",
@@ -3880,8 +3893,7 @@ impl ThemePreset {
 
     pub fn subtitle(self) -> &'static str {
         match self {
-            Self::NexoraCrimson => "Obsidian dark crimson glass (Default)",
-            Self::ObsidianViolet => "Signature dark violet",
+            Self::ObsidianViolet => "Signature Horizon dark violet",
             Self::CyberCyan => "Deep slate with electric cyan",
             Self::EmeraldForest => "Woodland moss with emerald mint",
             Self::CrimsonEmber => "Obsidian ruby with warm coral",
@@ -3895,9 +3907,6 @@ impl ThemePreset {
     /// Returns `(bg_rgb, surface_rgb, accent_rgb, grad_start_rgb, grad_mid_rgb, grad_end_rgb, is_light)`
     pub fn palette_rgb(self) -> (u32, u32, u32, u32, u32, u32, bool) {
         match self {
-            Self::NexoraCrimson => (
-                0x0D0406, 0x1A080C, 0xE11D2E, 0x1C0509, 0x2B0910, 0x070203, false,
-            ),
             Self::ObsidianViolet | Self::Custom => (
                 0x13111C, 0x1D192B, 0x9A7BFF, 0x161129, 0x1E1638, 0x0E0C16, false,
             ),
@@ -4005,21 +4014,21 @@ impl GradientDirection {
 
 /// Curated palette swatches for quick one-tap selection in Launcher Settings -> Theme.
 pub const THEME_ACCENT_SWATCHES: [(u32, &str, &str); 8] = [
-    (0xDC143C, "#DC143C", "Crimson"),
-    (0xEF4444, "#EF4444", "Scarlet"),
     (0x9A7BFF, "#9A7BFF", "Violet"),
     (0x38BDF8, "#38BDF8", "Cyan"),
     (0x34D399, "#34D399", "Emerald"),
+    (0xF87171, "#F87171", "Crimson"),
     (0xFBBF24, "#FBBF24", "Amber"),
     (0xF472B6, "#F472B6", "Sakura"),
     (0x60A5FA, "#60A5FA", "Cobalt"),
+    (0xA78BFA, "#A78BFA", "Iris"),
 ];
 
 pub const THEME_BG_SWATCHES_DARK: [(u32, &str, &str); 6] = [
-    (0x100507, "#100507", "Nexora Obsidian"),
-    (0x191013, "#191013", "Dark Ruby"),
     (0x13111C, "#13111C", "Obsidian"),
     (0x0C131F, "#0C131F", "Abyss Blue"),
+    (0x0D1714, "#0D1714", "Deep Pine"),
+    (0x191013, "#191013", "Dark Ruby"),
     (0x141418, "#141418", "Carbon"),
     (0x0A0A0E, "#0A0A0E", "OLED Pitch"),
 ];
@@ -4059,16 +4068,16 @@ pub struct LauncherThemeConfig {
 impl Default for LauncherThemeConfig {
     fn default() -> Self {
         Self {
-            preset: ThemePreset::NexoraCrimson,
+            preset: ThemePreset::EmeraldForest,
             appearance: ThemeAppearance::Dark,
             background_mode: BackgroundMode::Solid,
-            custom_bg_hex: "#0D0406".into(),
-            custom_surface_hex: "#1A080C".into(),
-            custom_accent_hex: "#E11D2E".into(),
+            custom_bg_hex: "#0D1714".into(),
+            custom_surface_hex: "#152620".into(),
+            custom_accent_hex: "#34D399".into(),
             gradient_direction: GradientDirection::DiagonalDown,
-            gradient_start_hex: "#1C0509".into(),
-            gradient_mid_hex: "#2B0910".into(),
-            gradient_end_hex: "#070203".into(),
+            gradient_start_hex: "#0F231C".into(),
+            gradient_mid_hex: "#163329".into(),
+            gradient_end_hex: "#0A120F".into(),
             gradient_mid_pos: 0.50,
             use_three_stops: true,
             ui_opacity: 1.0,

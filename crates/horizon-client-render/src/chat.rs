@@ -398,7 +398,7 @@ impl Chat {
             self.last_plain = plain.clone();
             self.last_repeat = 1;
         }
-        if self.volt_mention.enabled && !plain.is_empty() && !plain.starts_with("[Nexora]") && !plain.starts_with("[Volt+]") {
+        if self.volt_mention.enabled && !plain.is_empty() && !plain.starts_with("[Volt+]") {
             let lower = plain.to_ascii_lowercase();
             let hit_name = self.volt_mention.alert_on_username
                 && !self.volt_player_name.is_empty()

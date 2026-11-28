@@ -1,9 +1,9 @@
-//! "NEXORA EDITION" under the classic title screen's logo.
+//! "VOLT+ EDITION" under the classic title screen's logo.
 //!
 //! Vanilla's `textures/gui/title/edition.png` reads "JAVA EDITION". Horizon
 //! never ships Mojang's art, so the banner is rebuilt at load time from the
-//! player's own texture: "EDITION" is kept column for column, and N, E, X,
-//! O, R and A are Nexora's own glyphs (MIT, the rectangles below), drawn the
+//! player's own texture: "EDITION" is kept column for column, and V, O, L, T
+//! and "+" are Volt Plus's own glyphs (MIT, the rectangles below), drawn the
 //! way the texture's letters are built (a face with darker sides and a light
 //! bottom edge, a dark extrusion under it, a black outline and a soft rim) in
 //! the shades sampled from the texture itself. Only vanilla 26.3's exact
@@ -25,64 +25,41 @@ const EDITION_START: usize = 204;
 const FACE_TOP: usize = 4;
 const EXTRUSION: usize = 8;
 const OUTLINE: usize = 3;
-/// The face-to-face spacing between letters: six glyphs read "NEXORA".
-const LETTER_GAP: usize = 3;
-/// The new glyphs' face width: "NEXORA" then spans "JAVA"'s columns to within
+/// The face-to-face spacing between letters: five glyphs read "VOLT+".
+const LETTER_GAP: usize = 4;
+/// The new glyphs' face width: "VOLT+" then spans "JAVA"'s columns to within
 /// a few texels, so "EDITION" stays where it is and the banner stays centred.
-const GLYPH_WIDTH: usize = 30;
+const GLYPH_WIDTH: usize = 36;
 /// How many glyphs replace "JAVA".
-const GLYPH_COUNT: usize = 6;
+const GLYPH_COUNT: usize = 5;
 /// The first face column, as "JAVA"'s.
 const FIRST_FACE: usize = 4;
 
-/// Nexora's N, E, X, O, R and A: face rectangles `[x0, y0, x1, y1)` in texels
-/// from the face's top-left, 30 wide and 39 tall, stepped so the letters block
-/// up cleanly like the texture's own.
-const N: &[[usize; 4]] = &[
-    [0, 0, 8, 39],
-    [22, 0, 30, 39],
-    [6, 7, 14, 17],
-    [11, 15, 19, 25],
-    [16, 22, 24, 32],
-];
-const E: &[[usize; 4]] = &[
-    [0, 0, 9, 39],
-    [0, 0, 30, 8],
-    [0, 16, 24, 23],
-    [0, 31, 30, 39],
-];
-const X: &[[usize; 4]] = &[
-    [0, 0, 10, 14],
-    [20, 0, 30, 14],
-    [9, 13, 21, 26],
-    [0, 25, 10, 39],
-    [20, 25, 30, 39],
+/// Volt Plus's V, O, L, T and "+": face rectangles `[x0, y0, x1, y1)` in texels
+/// from the face's top-left, 36 wide and 39 tall, with 10-11 texel stems and
+/// 9-11 texel bars, stepped so the letters block up like the texture's own.
+const V: &[[usize; 4]] = &[
+    [0, 0, 12, 20],
+    [24, 0, 36, 20],
+    [8, 18, 28, 28],
+    [13, 26, 23, 39],
 ];
 const O: &[[usize; 4]] = &[
-    [0, 0, 30, 8],
-    [0, 0, 8, 39],
-    [22, 0, 30, 39],
-    [0, 31, 30, 39],
+    [0, 0, 36, 9],
+    [0, 0, 9, 39],
+    [27, 0, 36, 39],
+    [0, 30, 36, 39],
 ];
-const R: &[[usize; 4]] = &[
-    [0, 0, 8, 39],
-    [0, 0, 28, 8],
-    [21, 4, 30, 19],
-    [0, 16, 26, 23],
-    [16, 22, 25, 30],
-    [21, 28, 30, 39],
-];
-const A: &[[usize; 4]] = &[
-    [4, 0, 26, 8],
-    [0, 5, 8, 39],
-    [22, 5, 30, 39],
-    [0, 19, 30, 26],
-];
+const L: &[[usize; 4]] = &[[0, 0, 11, 39], [0, 29, 36, 39]];
+const T: &[[usize; 4]] = &[[0, 0, 36, 10], [13, 0, 23, 39]];
+/// The plus: a vertical and a horizontal bar, the four corners left open so it
+/// reads as a sign rather than a box.
+const PLUS: &[[usize; 4]] = &[[14, 6, 22, 33], [4, 14, 32, 25]];
 
 /// The glyphs in banner order.
-const GLYPHS: [&[[usize; 4]]; GLYPH_COUNT] = [N, E, X, O, R, A];
+const GLYPHS: [&[[usize; 4]]; GLYPH_COUNT] = [V, O, L, T, PLUS];
 
-/// The banner rebuilt to read "NEXORA EDITION", or `None` when the texture is
+/// The banner rebuilt to read "VOLT+ EDITION", or `None` when the texture is
 /// not vanilla's (a resource pack's own).
 pub fn volt_edition(width: u32, height: u32, pixels: &[u8]) -> Option<Vec<u8>> {
     (fingerprint(width, height, pixels) == VANILLA).then(|| compose(pixels))
@@ -397,21 +374,20 @@ mod tests {
                 assert!(glyph(i, (x0 + x1) / 2, (y0 + y1) / 2), "glyph {i}");
             }
         }
-        assert!(!glyph(0, 15, 34), "N's open bottom gap");
-        assert!(!glyph(1, 25, 11), "E's upper counter");
-        assert!(!glyph(2, 15, 4), "X's upper V notch");
-        assert!(!glyph(3, 15, 19), "O's counter");
-        assert!(!glyph(4, 15, 12), "R's loop counter");
-        assert!(!glyph(5, 15, 13), "A's upper counter");
+        assert!(!glyph(0, 18, 2), "V's open mouth");
+        assert!(!glyph(1, 18, 19), "O's counter");
+        assert!(!glyph(2, 30, 5), "L's open top right");
+        assert!(!glyph(3, 2, 30), "T's open under the bar");
+        assert!(!glyph(4, 5, 5), "the plus keeps its corners open");
         assert_soft_rim(&out);
         // Nothing below the 14 GUI rows vanilla draws.
         assert!(out[WIDTH * 55 * 4..].iter().all(|&b| b == 0));
-        // Centred: "NEXORA" spans "JAVA"'s columns to within a few texels.
+        // Centred: "VOLT+" spans "JAVA"'s columns to within a few texels.
         let used = |x: usize| (0..HEIGHT).any(|y| pixel(&out, x, y)[3] > 0);
         let last = (0..EDITION_START).rev().find(|&x| used(x)).unwrap();
         assert!(
             used(FIRST_FACE) && (199..EDITION_START).contains(&last),
-            "NEXORA ends at {last}"
+            "VOLT+ ends at {last}"
         );
     }
 

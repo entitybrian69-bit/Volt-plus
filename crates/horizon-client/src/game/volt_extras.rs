@@ -1015,7 +1015,7 @@ impl Game<'_> {
             if cfg.show_chat_feed {
                 self.ui.chat.add(
                     &self.gui.atlas,
-                    Text::literal(format!("[Nexora] {who} popped a Totem of Undying!")),
+                    Text::literal(format!("[Volt+] {who} popped a Totem of Undying!")),
                     None,
                     ChatSource::Client,
                     self.ticks,

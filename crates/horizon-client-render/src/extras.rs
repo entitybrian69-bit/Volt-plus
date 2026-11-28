@@ -493,7 +493,7 @@ impl Item {
                 "Hides and turns off every AI feature: agent control, horizon-ctl and the MCP servers. The launcher's switch too."
             }
             Item::DiscordPresence => {
-                "Shows Playing Nexora on your Discord profile while Discord runs: the launcher or the world, the game mode, single player, a server or a LAN world, the dimension, how many players are in it and the time played. Never a world's name or a server's address."
+                "Shows Playing Volt+ on your Discord profile while Discord runs: the launcher or the world, the game mode, single player, a server or a LAN world, the dimension, how many players are in it and the time played. Never a world's name or a server's address."
             }
             Item::AgentControl => {
                 "Your own AI agent can play this game through horizon-ctl or an MCP client, on this computer only."

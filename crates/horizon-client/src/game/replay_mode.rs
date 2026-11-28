@@ -882,7 +882,7 @@ impl Game<'_> {
                         .mcpr_path
                         .file_stem()
                         .map(|s| s.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| "Nexora_Replay".to_owned());
+                        .unwrap_or_else(|| "VoltPlus_Replay".to_owned());
                     Some((start_ms, end_ms, total_frames, stem))
                 });
                 if let Some((start_ms, end_ms, total_frames, stem)) = setup {

@@ -22,17 +22,6 @@ impl FrameGraph {
         }
         self.frames.push_back((frame_ms, cpu_ms, gpu));
     }
-    /// Returns recent average `(frame_ms, cpu_ms, gpu_ms)` for Nexora Booster telemetry.
-    pub fn latest(&self) -> (f32, f32, f32) {
-        if self.frames.is_empty() {
-            return (16.6, 5.8, 4.9);
-        }
-        let n = self.frames.len() as f32;
-        let sum = self.frames.iter().fold((0.0f32, 0.0f32, 0.0f32), |a, &(f, c, g)| {
-            (a.0 + f, a.1 + c, a.2 + g)
-        });
-        (sum.0 / n, sum.1 / n, sum.2 / n)
-    }
     pub fn draw(&self, mode: Overlay, batch: &mut HudBatch, atlas: &HudAtlas) {
         if mode == Overlay::Off || self.frames.is_empty() {
             return;

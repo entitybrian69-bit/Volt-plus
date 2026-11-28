@@ -104,26 +104,6 @@ pub struct TouchUi {
     pub custom_kb_scroll_x: f32,
     /// Active drag state `(touch_id, last_x, moved)` for the Floating Menu custom keyboard picker.
     pub custom_kb_drag: Option<(u64, f32, bool)>,
-    /// When true, tapping the floating "NX" trigger opens Nexora Booster instead of Control Hub.
-    pub booster_mode: bool,
-    /// When true, Nexora Booster shows the live FPS/frame-time sparkline graph instead of 2x2 gauges.
-    pub booster_graph_mode: bool,
-    /// Active Nexora Booster performance profile: 0=Eco, 1=Balanced, 2=Boost, 3=Demonic.
-    pub booster_profile: u8,
-    /// Whether Nexora Booster's 120Hz high-refresh request is latched on.
-    pub booster_120hz: bool,
-    /// Whether Android sustained performance / thermal pacing is active.
-    pub booster_adpf: bool,
-    /// Whether accidental-touch lock / edge guard is toggled on.
-    pub booster_touch_lock: bool,
-    /// Whether Booster Do-Not-Disturb mode is enabled.
-    pub booster_dnd: bool,
-    /// Short-lived status banner inside Nexora Booster `(message, timestamp)`.
-    pub booster_toast: Option<(String, Instant)>,
-    /// Live frame/thermal/RAM telemetry displayed by Nexora Booster.
-    pub telemetry: NexoraTelemetry,
-    last_hw_poll: Option<Instant>,
-    last_history_push: Option<Instant>,
     pub goy_mode: bool,
     pub virtual_mouse: bool,
     /// Mirror of `!settings.virtual_mouse_enabled` for legacy callers; authoritative state lives in `touch::Settings::virtual_mouse_enabled`.
@@ -204,17 +184,6 @@ impl Default for TouchUi {
             custom_input_picker: crate::touch::PickerStep::None,
             custom_kb_scroll_x: 0.0,
             custom_kb_drag: None,
-            booster_mode: true,
-            booster_graph_mode: false,
-            booster_profile: 2,
-            booster_120hz: true,
-            booster_adpf: true,
-            booster_touch_lock: false,
-            booster_dnd: false,
-            booster_toast: None,
-            telemetry: NexoraTelemetry::default(),
-            last_hw_poll: None,
-            last_history_push: None,
             goy_mode: false,
             virtual_mouse: false,
             pointer_off: false,
@@ -339,47 +308,6 @@ pub enum InGameMenuAction {
     UpdateVoltExtras(crate::extras::VoltExtras),
     VoltQuickAction(crate::extras::VoltQuickAction),
     FocusVoltExtrasSearch,
-    BoosterSetProfile(u8),
-    BoosterToggle120Hz,
-    BoosterRamPurge,
-    BoosterToggleTouchLock,
-    BoosterToggleEntityCulling,
-    BoosterToggleZeroLatency,
-    BoosterToggleFpsHud,
-    BoosterToggleDnd,
-    BoosterToggleVsync,
-    BoosterIgnite,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct NexoraTelemetry {
-    pub fps: f32,
-    pub frame_ms: f32,
-    pub cpu_ms: f32,
-    pub gpu_ms: f32,
-    pub temp_c: f32,
-    pub ram_used_mb: u32,
-    pub ram_total_mb: u32,
-    pub vsync: bool,
-    pub fps_history: [f32; 48],
-    pub history_len: usize,
-}
-
-impl Default for NexoraTelemetry {
-    fn default() -> Self {
-        Self {
-            fps: 60.0,
-            frame_ms: 16.6,
-            cpu_ms: 6.2,
-            gpu_ms: 5.4,
-            temp_c: 36.5,
-            ram_used_mb: 2400,
-            ram_total_mb: 6144,
-            vsync: false,
-            fps_history: [60.0; 48],
-            history_len: 0,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -408,55 +336,6 @@ impl TouchUi {
             } else {
                 b.toggle_key = token;
             }
-        }
-    }
-
-    pub fn set_booster_toast(&mut self, msg: impl Into<String>) {
-        self.booster_toast = Some((msg.into(), Instant::now()));
-    }
-
-    pub fn push_telemetry(
-        &mut self,
-        fps: f32,
-        frame_ms: f32,
-        cpu_ms: f32,
-        gpu_ms: f32,
-        vsync: bool,
-    ) {
-        self.telemetry.fps = if fps.is_finite() && fps > 0.0 { fps } else { 60.0 };
-        self.telemetry.frame_ms = if frame_ms.is_finite() && frame_ms > 0.0 {
-            frame_ms
-        } else {
-            1000.0 / self.telemetry.fps.max(1.0)
-        };
-        self.telemetry.cpu_ms = cpu_ms.max(0.0);
-        self.telemetry.gpu_ms = gpu_ms.max(0.0);
-        self.telemetry.vsync = vsync;
-
-        let now = Instant::now();
-        let should_poll_hw = self
-            .last_hw_poll
-            .is_none_or(|t| now.duration_since(t) >= std::time::Duration::from_millis(1200));
-        if should_poll_hw {
-            self.last_hw_poll = Some(now);
-            if let Some(temp) = crate::android_runtime::booster_battery_temp_c() {
-                self.telemetry.temp_c = temp;
-            }
-            if let Some((used, total)) = crate::android_runtime::booster_memory_used_total_mb() {
-                self.telemetry.ram_used_mb = used;
-                self.telemetry.ram_total_mb = total.max(1);
-            }
-        }
-
-        let should_push_hist = self
-            .last_history_push
-            .is_none_or(|t| now.duration_since(t) >= std::time::Duration::from_millis(120));
-        if should_push_hist {
-            self.last_history_push = Some(now);
-            let n = self.telemetry.fps_history.len();
-            self.telemetry.fps_history.rotate_left(1);
-            self.telemetry.fps_history[n - 1] = self.telemetry.fps.clamp(0.0, 240.0);
-            self.telemetry.history_len = (self.telemetry.history_len + 1).min(n);
         }
     }
 }
@@ -2181,7 +2060,6 @@ struct HubSidebarRects {
     done_btn: [f32; 4],
     close_x: [f32; 4],
     mode_badge: [f32; 4],
-    booster_pill: [f32; 4],
 }
 
 fn hub_sidebar_rects(dx: f32, dy: f32, dw: f32, dh: f32, side_w: f32) -> HubSidebarRects {
@@ -2206,121 +2084,12 @@ fn hub_sidebar_rects(dx: f32, dy: f32, dw: f32, dh: f32, side_w: f32) -> HubSide
     let done_btn = [dx + pad, done_y, inner_w, done_h];
     let close_x = [dx + dw - 38.0, dy + 10.0, 26.0, 26.0];
     let mode_badge = [dx + dw - 146.0, dy + 11.0, 100.0, 24.0];
-    let booster_pill = [dx + dw - 228.0, dy + 11.0, 76.0, 24.0];
     HubSidebarRects {
         quick_studio,
         tabs,
         done_btn,
         close_x,
         mode_badge,
-        booster_pill,
-    }
-}
-
-struct BoosterLayout {
-    shell: [f32; 4],
-    close_x: [f32; 4],
-    hub_btn: [f32; 4],
-    view_toggle: [f32; 4],
-    left_rect: [f32; 4],
-    right_rect: [f32; 4],
-    gauges: [[f32; 4]; 4],
-    modes: [[f32; 4]; 4],
-    ram_bar: [f32; 4],
-    frame_bar: [f32; 4],
-    tiles: [[f32; 4]; 6],
-    dnd_btn: [f32; 4],
-    vsync_btn: [f32; 4],
-    ignite_btn: [f32; 4],
-}
-
-fn booster_layout(w: f32, h: f32, slide_y: f32) -> BoosterLayout {
-    let dw = (w - 16.0).clamp(368.0, 624.0);
-    let dh = (h - 14.0).clamp(264.0, 396.0);
-    let dx = (w - dw) * 0.5;
-    let dy = (h - dh) * 0.5 + slide_y;
-
-    let close_x = [dx + dw - 38.0, dy + 9.0, 26.0, 26.0];
-    let hub_btn = [close_x[0] - 92.0, dy + 10.0, 84.0, 24.0];
-    let view_toggle = [hub_btn[0] - 114.0, dy + 10.0, 106.0, 24.0];
-
-    let body_y = dy + 50.0;
-    let body_h = (dh - 60.0).max(180.0);
-    let inner_w = dw - 24.0;
-    let col_gap = 12.0;
-    let left_w = (inner_w * 0.48).clamp(166.0, 290.0);
-    let right_x = dx + 12.0 + left_w + col_gap;
-    let right_w = (inner_w - left_w - col_gap).max(166.0);
-    let left_x = dx + 12.0;
-
-    let gauge_area_h = (body_h * 0.52).clamp(108.0, 174.0);
-    let gw = (left_w - 8.0) * 0.5;
-    let gh = (gauge_area_h - 8.0) * 0.5;
-    let gauges = [
-        [left_x, body_y, gw, gh],
-        [left_x + gw + 8.0, body_y, gw, gh],
-        [left_x, body_y + gh + 8.0, gw, gh],
-        [left_x + gw + 8.0, body_y + gh + 8.0, gw, gh],
-    ];
-
-    let mode_y = body_y + gauge_area_h + 8.0;
-    let mode_w = (left_w - 9.0) * 0.25;
-    let modes = [
-        [left_x, mode_y, mode_w, 30.0],
-        [left_x + (mode_w + 3.0), mode_y, mode_w, 30.0],
-        [left_x + (mode_w + 3.0) * 2.0, mode_y, mode_w, 30.0],
-        [left_x + (mode_w + 3.0) * 3.0, mode_y, mode_w, 30.0],
-    ];
-
-    let bars_y = mode_y + 38.0;
-    let bar_h = ((body_y + body_h - bars_y - 6.0) * 0.5).clamp(24.0, 38.0);
-    let ram_bar = [left_x, bars_y, left_w, bar_h];
-    let frame_bar = [left_x, bars_y + bar_h + 6.0, left_w, bar_h];
-
-    let act_h = 36.0;
-    let act_y = body_y + body_h - act_h;
-    let grid_h = (act_y - body_y - 10.0).max(114.0);
-    let tw = (right_w - 8.0) * 0.5;
-    let th = ((grid_h - 16.0) / 3.0).clamp(32.0, 56.0);
-    let mut tiles = [[0.0f32; 4]; 6];
-    for i in 0..6 {
-        let col = (i % 2) as f32;
-        let row = (i / 2) as f32;
-        tiles[i] = [
-            right_x + col * (tw + 8.0),
-            body_y + row * (th + 8.0),
-            tw,
-            th,
-        ];
-    }
-
-    let dnd_w = 56.0;
-    let vsync_w = 62.0;
-    let dnd_btn = [right_x, act_y, dnd_w, act_h];
-    let vsync_btn = [right_x + dnd_w + 6.0, act_y, vsync_w, act_h];
-    let ignite_x = right_x + dnd_w + vsync_w + 12.0;
-    let ignite_btn = [
-        ignite_x,
-        act_y,
-        (right_x + right_w - ignite_x).max(80.0),
-        act_h,
-    ];
-
-    BoosterLayout {
-        shell: [dx, dy, dw, dh],
-        close_x,
-        hub_btn,
-        view_toggle,
-        left_rect: [left_x, body_y, left_w, body_h],
-        right_rect: [right_x, body_y, right_w, body_h],
-        gauges,
-        modes,
-        ram_bar,
-        frame_bar,
-        tiles,
-        dnd_btn,
-        vsync_btn,
-        ignite_btn,
     }
 }
 
@@ -2447,7 +2216,6 @@ impl TouchUi {
                         } else if phase == TouchPhase::Ended {
                             self.floating_menu = !self.floating_menu;
                             if self.floating_menu {
-                                self.booster_mode = true;
                                 self.open_anim.set(0.0);
                                 self.tab_anim.set(0.0);
                                 self.last_anim_tick.set(None);
@@ -2483,124 +2251,6 @@ impl TouchUi {
 
         if !self.floating_menu {
             return None;
-        }
-
-        if self.booster_mode {
-            let bl = booster_layout(w, h, 0.0);
-            if phase != TouchPhase::Started {
-                return Some(InGameMenuAction::Close);
-            }
-            if !inside(bl.shell) || inside(bl.close_x) {
-                self.floating_menu = false;
-                return Some(InGameMenuAction::Close);
-            }
-            if inside(bl.hub_btn) {
-                self.booster_mode = false;
-                self.tab_anim.set(0.0);
-                self.last_anim_tick.set(None);
-                self.hub_scroll = 0.0;
-                self.refresh_presets_cache(settings.control_style);
-                return Some(InGameMenuAction::Close);
-            }
-            if inside(bl.view_toggle) {
-                let mid = bl.view_toggle[0] + bl.view_toggle[2] * 0.5;
-                self.booster_graph_mode = p[0] < mid;
-                return Some(InGameMenuAction::Close);
-            }
-            for (mi, mr) in bl.modes.iter().enumerate() {
-                if inside(*mr) {
-                    self.booster_profile = mi as u8;
-                    self.booster_120hz = mi >= 2;
-                    self.booster_adpf = mi >= 2;
-                    let label = match mi {
-                        0 => "Eco Mode Active (60Hz • Battery)",
-                        1 => "Balanced Mode Active",
-                        2 => "Boost Mode Active (120Hz • ADPF)",
-                        _ => "Demonic Mode Ignited (Max FPS)",
-                    };
-                    self.set_booster_toast(label);
-                    return Some(InGameMenuAction::BoosterSetProfile(mi as u8));
-                }
-            }
-            if inside(bl.tiles[0]) {
-                self.booster_120hz = !self.booster_120hz;
-                self.set_booster_toast(if self.booster_120hz {
-                    "120Hz Refresh Requested"
-                } else {
-                    "60Hz Power Refresh Set"
-                });
-                return Some(InGameMenuAction::BoosterToggle120Hz);
-            }
-            if inside(bl.tiles[1]) {
-                self.set_booster_toast("RAM & Render Caches Purged");
-                return Some(InGameMenuAction::BoosterRamPurge);
-            }
-            if inside(bl.tiles[2]) {
-                self.booster_touch_lock = !self.booster_touch_lock;
-                self.set_booster_toast(if self.booster_touch_lock {
-                    "Touch Lock Armed"
-                } else {
-                    "Touch Lock Released"
-                });
-                return Some(InGameMenuAction::BoosterToggleTouchLock);
-            }
-            if inside(bl.tiles[3]) {
-                let next = !self.volt_extras.entity_culling.enabled;
-                self.volt_extras.entity_culling.enabled = next;
-                self.set_booster_toast(if next {
-                    "Entity Culling Enabled"
-                } else {
-                    "Entity Culling Disabled"
-                });
-                return Some(InGameMenuAction::BoosterToggleEntityCulling);
-            }
-            if inside(bl.tiles[4]) {
-                let next = !settings.zero_latency_touch;
-                self.set_booster_toast(if next {
-                    "Zero-Latency Touch Enabled"
-                } else {
-                    "Zero-Latency Touch Standard"
-                });
-                return Some(InGameMenuAction::BoosterToggleZeroLatency);
-            }
-            if inside(bl.tiles[5]) {
-                let next = !self.volt_extras.telemetry_hud.show_fps;
-                self.volt_extras.telemetry_hud.show_fps = next;
-                self.set_booster_toast(if next {
-                    "FPS Telemetry HUD Shown"
-                } else {
-                    "FPS Telemetry HUD Hidden"
-                });
-                return Some(InGameMenuAction::BoosterToggleFpsHud);
-            }
-            if inside(bl.dnd_btn) {
-                self.booster_dnd = !self.booster_dnd;
-                self.set_booster_toast(if self.booster_dnd {
-                    "Do Not Disturb On"
-                } else {
-                    "Do Not Disturb Off"
-                });
-                return Some(InGameMenuAction::BoosterToggleDnd);
-            }
-            if inside(bl.vsync_btn) {
-                self.telemetry.vsync = !self.telemetry.vsync;
-                self.set_booster_toast(if self.telemetry.vsync {
-                    "VSync Enabled"
-                } else {
-                    "VSync Unlocked"
-                });
-                return Some(InGameMenuAction::BoosterToggleVsync);
-            }
-            if inside(bl.ignite_btn) {
-                self.booster_profile = 3;
-                self.booster_120hz = true;
-                self.booster_adpf = true;
-                self.volt_extras.entity_culling.enabled = true;
-                self.volt_extras.telemetry_hud.show_fps = true;
-                self.set_booster_toast("NEXORA BOOSTER IGNITED • MAX FPS");
-                return Some(InGameMenuAction::BoosterIgnite);
-            }
-            return Some(InGameMenuAction::Close);
         }
 
         let (dw, dh, dx, dy, side_w, cx, cw, body_top, body_h) = hub_metrics(w, h);
@@ -3498,11 +3148,6 @@ impl TouchUi {
                 return Some(InGameMenuAction::OpenControlEditor);
             }
 
-            if inside(sb_rects.booster_pill) && sb_rects.booster_pill[0] > dx + side_w + 130.0 {
-                self.booster_mode = true;
-                return Some(InGameMenuAction::Close);
-            }
-
             if inside(sb_rects.mode_badge) && sb_rects.mode_badge[0] > dx + side_w + 130.0 {
                 let next_style = if settings.control_style == ControlStyle::Mcpe {
                     ControlStyle::GoyControl
@@ -4271,24 +3916,25 @@ impl TouchUi {
         let open_ease = crate::ui_theme::motion::spring_expressive_default(open_t);
         let tab_ease = crate::ui_theme::motion::spring_expressive_default(tab_t);
 
-        // Nexora Obsidian-Crimson Glass theme for the NX overlay, Booster & Control Hub
-        let surface_bg = rgba(12, 4, 6, 246);
-        let sidebar_bg = rgba(26, 6, 10, 248);
-        let card_bg = rgba(22, 9, 12, 238);
-        let card_sel = rgba(58, 12, 20, 246);
-        let well_bg = rgba(16, 6, 8, 244);
-        let border_c = rgba(220, 20, 60, 88);
-        let border_strong = rgba(239, 68, 68, 240);
-        let accent = rgba(220, 20, 60, 255);
-        let accent_hi = rgba(248, 113, 113, 255);
-        let accent_edge = rgba(254, 202, 202, 200);
-        let accent_fg = rgba(255, 255, 255, 255);
-        let text_c = rgba(255, 246, 247, 255);
-        let muted_c = rgba(186, 162, 166, 255);
-        let danger_c = rgba(239, 68, 68, 245);
+        // Full monochrome Black & White theme for the V+ overlay & Control Hub:
+        // pure black surfaces, crisp white foreground letters/icons/borders, and inverted black-on-white active controls.
+        let surface_bg = rgba(0, 0, 0, 246);
+        let sidebar_bg = rgba(8, 8, 10, 248);
+        let card_bg = rgba(18, 18, 22, 238);
+        let card_sel = rgba(38, 38, 44, 246);
+        let well_bg = rgba(10, 10, 12, 244);
+        let border_c = rgba(255, 255, 255, 68);
+        let border_strong = rgba(255, 255, 255, 238);
+        let accent = rgba(255, 255, 255, 255);
+        let accent_hi = rgba(255, 255, 255, 255);
+        let accent_edge = rgba(255, 255, 255, 215);
+        let accent_fg = rgba(0, 0, 0, 255);
+        let text_c = rgba(255, 255, 255, 255);
+        let muted_c = rgba(190, 190, 196, 255);
+        let danger_c = rgba(242, 242, 246, 245);
         let _ = color::hex;
 
-        // Keep the NX overlay button visible regardless of touch/HUD fade state whenever
+        // Keep the V+ overlay button visible regardless of touch/HUD fade state whenever
         // `overlay_button_visible` allowed it to be drawn.
         let overlay_alpha = settings.overlay_opacity.clamp(0.20, 1.0);
         let bubble_alpha = if settings.overlay_hidden && !self.floating_menu {
@@ -4297,7 +3943,7 @@ impl TouchUi {
             overlay_alpha
         };
 
-        // Draw moveable Floating Menu Button (MCPE crimson-obsidian bevel NX button OR GoyControl NX pill)
+        // Draw moveable Floating Menu Button (MCPE black/white bevel V+ button OR GoyControl V+ pill)
         if !self.expanded && bubble_alpha > 0.001 {
             let [btn_x, btn_y, btn_w, btn_h] = floating_button_rect(w, h, settings);
             let ov_scale = settings.overlay_scale.clamp(0.5, 2.0);
@@ -4305,55 +3951,64 @@ impl TouchUi {
                 let scale_rgba = |r: u8, g: u8, bl: u8, al: u8| -> u32 {
                     rgba(r, g, bl, (f32::from(al) * bubble_alpha).round() as u8)
                 };
-                // Nexora Obsidian-Crimson MCPE top-bar NX button plate
+                // Monochrome B&W MCPE top-bar V+ button plate (predominantly black with crisp white letters)
                 ui.rounded(
                     btn_x + 1.5,
                     btn_y + 2.0,
                     btn_w,
                     btn_h,
-                    4.0,
-                    scale_rgba(0, 0, 0, 155),
+                    3.0,
+                    scale_rgba(0, 0, 0, 145),
                 );
-                ui.rounded(btn_x, btn_y, btn_w, btn_h, 4.0, scale_rgba(220, 20, 60, 230));
+                ui.rounded(btn_x, btn_y, btn_w, btn_h, 3.0, scale_rgba(255, 255, 255, 225));
                 let body_col = if self.floating_menu {
-                    scale_rgba(220, 20, 60, 245)
+                    scale_rgba(255, 255, 255, 245)
                 } else {
-                    scale_rgba(18, 5, 8, 238)
+                    scale_rgba(8, 8, 10, 236)
                 };
                 ui.rounded(
                     btn_x + 2.0,
                     btn_y + 2.0,
                     btn_w - 4.0,
                     btn_h - 4.0,
-                    3.0,
+                    2.0,
                     body_col,
                 );
-                let hi_bevel = scale_rgba(248, 113, 113, 210);
-                let lo_bevel = scale_rgba(90, 14, 28, 225);
+                let hi_bevel = scale_rgba(255, 255, 255, 225);
+                let lo_bevel = scale_rgba(95, 95, 102, 225);
                 ui.fill(btn_x + 2.0, btn_y + 2.0, btn_w - 4.0, 2.0, hi_bevel);
                 ui.fill(btn_x + 2.0, btn_y + 4.0, 2.0, btn_h - 6.0, hi_bevel);
                 ui.fill(btn_x + 2.0, btn_y + btn_h - 4.0, btn_w - 4.0, 2.0, lo_bevel);
                 ui.fill(btn_x + btn_w - 4.0, btn_y + 4.0, 2.0, btn_h - 6.0, lo_bevel);
-                let v_fg = scale_rgba(255, 255, 255, 255);
-                let v_sh = scale_rgba(0, 0, 0, 220);
-                let font_sz = (14.5 * ov_scale).clamp(9.0, 25.0);
+                // Crisp white "V+" letters on black (inverted black on white when menu is open)
+                let v_fg = if self.floating_menu {
+                    scale_rgba(0, 0, 0, 255)
+                } else {
+                    scale_rgba(255, 255, 255, 255)
+                };
+                let v_sh = if self.floating_menu {
+                    scale_rgba(210, 210, 215, 180)
+                } else {
+                    scale_rgba(0, 0, 0, 230)
+                };
+                let font_sz = (15.0 * ov_scale).clamp(9.0, 26.0);
                 ui.centered_fit(
                     Face::SemiBold,
                     font_sz,
                     [btn_x + 1.0, btn_y + 1.0, btn_w, btn_h],
                     v_sh,
-                    "NX",
+                    "V+",
                 );
                 ui.centered_fit(
                     Face::SemiBold,
                     font_sz,
                     [btn_x, btn_y, btn_w, btn_h],
                     v_fg,
-                    "NX",
+                    "V+",
                 );
             } else {
                 let rad = (14.0 * ov_scale).clamp(8.0, 24.0);
-                let font_sz = (15.0 * ov_scale).clamp(9.0, 26.0);
+                let font_sz = (16.0 * ov_scale).clamp(9.0, 28.0);
                 ui.rounded(
                     btn_x + 1.5,
                     btn_y + 3.0,
@@ -4382,7 +4037,7 @@ impl TouchUi {
                     1.6,
                     color::with_alpha(accent, bubble_alpha),
                 );
-                // Branded Nexora "NX" floating trigger
+                // Branded Volt+ "V+" floating trigger (white letters on black)
                 ui.centered_fit(
                     Face::SemiBold,
                     font_sz,
@@ -4395,7 +4050,7 @@ impl TouchUi {
                         },
                         bubble_alpha,
                     ),
-                    "NX",
+                    "V+",
                 );
             }
         }
@@ -4408,384 +4063,8 @@ impl TouchUi {
         // Backdrop scrim & Modal Shell with expressive entrance slide
         let scrim_a = (165.0 * open_ease.clamp(0.35, 1.0)).round() as u8;
         ui.fill(0.0, 0.0, w, h, rgba(0, 0, 0, scrim_a));
-        let slide_y = (1.0 - open_ease) * 18.0;
-
-        if self.booster_mode {
-            let bl = booster_layout(w, h, slide_y);
-            let [bx, by, bw, bh] = bl.shell;
-            crate::nexora_art::draw_crimson_shards(&mut ui, w, h, 0.32 * open_ease);
-            ui.rounded(bx + 2.0, by + 6.0, bw, bh, 18.0, rgba(0, 0, 0, 185));
-            ui.rounded(bx, by, bw, bh, 18.0, rgba(12, 4, 6, 246));
-            ui.fill(bx + 14.0, by + 43.0, bw - 28.0, 1.0, border_c);
-            ui.stroke_rounded(bx, by, bw, bh, 18.0, 1.5, border_strong);
-
-            // Header: Crimson Feather + NEXORA BOOSTER + [GRAPH | NUMERIC] + CONTROL HUB + Close
-            crate::nexora_art::draw_feather(&mut ui, bx + 14.0, by + 10.0, 22.0, 1.0);
-            ui.text(Face::SemiBold, 13.4, bx + 42.0, by + 11.0, text_c, "NEXORA");
-            let nw = ui.measure(Face::SemiBold, 13.4, "NEXORA ");
-            ui.text(Face::SemiBold, 11.4, bx + 42.0 + nw, by + 13.0, accent_hi, "BOOSTER");
-
-            // Graph / Numeric Segmented Toggle
-            let vt = bl.view_toggle;
-            ui.rounded(vt[0], vt[1], vt[2], vt[3], 12.0, well_bg);
-            ui.border(vt[0], vt[1], vt[2], vt[3], 12.0, border_c);
-            let half_vt = vt[2] * 0.5;
-            if self.booster_graph_mode {
-                ui.rounded(vt[0] + 2.0, vt[1] + 2.0, half_vt - 2.0, vt[3] - 4.0, 10.0, accent);
-            } else {
-                ui.rounded(vt[0] + half_vt, vt[1] + 2.0, half_vt - 2.0, vt[3] - 4.0, 10.0, accent);
-            }
-            ui.centered_fit(
-                Face::SemiBold,
-                8.8,
-                [vt[0], vt[1], half_vt, vt[3]],
-                if self.booster_graph_mode { accent_fg } else { muted_c },
-                "GRAPH",
-            );
-            ui.centered_fit(
-                Face::SemiBold,
-                8.8,
-                [vt[0] + half_vt, vt[1], half_vt, vt[3]],
-                if !self.booster_graph_mode { accent_fg } else { muted_c },
-                "NUMERIC",
-            );
-
-            // Control Hub Switch Pill
-            let hb = bl.hub_btn;
-            ui.rounded(hb[0], hb[1], hb[2], hb[3], 12.0, card_sel);
-            ui.border(hb[0], hb[1], hb[2], hb[3], 12.0, accent);
-            ui.centered_fit(Face::SemiBold, 8.8, hb, text_c, "CONTROL HUB");
-
-            // Close button
-            let xr = bl.close_x;
-            ui.rounded(xr[0], xr[1], xr[2], xr[3], 13.0, card_bg);
-            ui.border(xr[0], xr[1], xr[2], xr[3], 13.0, border_c);
-            ui.centered_fit(Face::SemiBold, 12.5, xr, text_c, "×");
-
-            // Left Column: 2x2 Circular Telemetry Gauges OR Live FPS Sparkline Graph
-            let t = &self.telemetry;
-            let target_hz: f32 = if self.booster_120hz { 120.0 } else { 60.0 };
-            if self.booster_graph_mode {
-                let g0 = bl.gauges[0];
-                let gw = bl.left_rect[2];
-                let gh = bl.gauges[2][1] + bl.gauges[2][3] - g0[1];
-                ui.rounded(g0[0], g0[1], gw, gh, 12.0, rgba(18, 6, 9, 236));
-                ui.border(g0[0], g0[1], gw, gh, 12.0, border_c);
-                let hdr = format!(
-                    "{:.0} FPS  •  {:.1}ms  •  {:.1}°C",
-                    t.fps, t.frame_ms, t.temp_c
-                );
-                ui.text(Face::SemiBold, 10.6, g0[0] + 10.0, g0[1] + 8.0, text_c, &hdr);
-                let plot_x = g0[0] + 10.0;
-                let plot_y = g0[1] + 28.0;
-                let plot_w = (gw - 20.0).max(40.0);
-                let plot_h = (gh - 40.0).max(32.0);
-                ui.rounded(plot_x, plot_y, plot_w, plot_h, 6.0, rgba(10, 3, 5, 220));
-                for gi in 1..4 {
-                    let ly = plot_y + plot_h * (gi as f32 / 4.0);
-                    ui.fill(plot_x, ly, plot_w, 1.0, rgba(220, 20, 60, 36));
-                }
-                let count = t.fps_history.len();
-                let bar_w = (plot_w / count as f32 - 1.0).max(1.5);
-                for (si, &sample_fps) in t.fps_history.iter().enumerate() {
-                    let frac = (sample_fps / target_hz.max(60.0)).clamp(0.06, 1.0);
-                    let bh_bar = (plot_h - 6.0) * frac;
-                    let sx = plot_x + si as f32 * (plot_w / count as f32);
-                    let sy = plot_y + plot_h - 3.0 - bh_bar;
-                    let bar_col = if frac >= 0.80 {
-                        rgba(239, 68, 68, 220)
-                    } else if frac >= 0.50 {
-                        rgba(245, 158, 11, 210)
-                    } else {
-                        rgba(185, 28, 28, 200)
-                    };
-                    ui.fill(sx, sy, bar_w, bh_bar, bar_col);
-                }
-            } else {
-                let cpu_pct = ((t.cpu_ms / 16.6) * 100.0).clamp(4.0, 100.0);
-                let gpu_pct = ((t.gpu_ms / 16.6) * 100.0).clamp(4.0, 100.0);
-                let dials: [(&str, String, f32); 4] = [
-                    (
-                        "FPS",
-                        format!("{:.0}", t.fps),
-                        (t.fps / target_hz.max(60.0) * 100.0).clamp(5.0, 100.0),
-                    ),
-                    (
-                        "CPU",
-                        format!("{:.0}%", cpu_pct),
-                        cpu_pct.clamp(5.0, 100.0),
-                    ),
-                    (
-                        "GPU",
-                        format!("{:.0}%", gpu_pct),
-                        gpu_pct.clamp(5.0, 100.0),
-                    ),
-                    (
-                        "TEMP",
-                        format!("{:.0}°", t.temp_c),
-                        ((t.temp_c - 22.0) / 36.0 * 100.0).clamp(8.0, 100.0),
-                    ),
-                ];
-                for (di, (lbl, val, pct)) in dials.iter().enumerate() {
-                    let gr = bl.gauges[di];
-                    ui.rounded(gr[0], gr[1], gr[2], gr[3], 11.0, rgba(20, 7, 10, 232));
-                    ui.border(gr[0], gr[1], gr[2], gr[3], 11.0, border_c);
-                    let dial_r = (gr[3].min(gr[2]) * 0.43).clamp(18.0, 29.0);
-                    let cx_d = gr[0] + gr[2] * 0.5;
-                    let cy_d = gr[1] + gr[3] * 0.5 + 1.0;
-                    crate::nexora_art::draw_booster_gauge(
-                        &mut ui,
-                        cx_d,
-                        cy_d,
-                        dial_r,
-                        *pct,
-                        val,
-                        lbl,
-                        1.0,
-                    );
-                }
-            }
-
-            // 4-Mode Selector Bar: ECO | BALANCED | BOOST | DEMONIC
-            let mode_names = ["ECO", "BALANCED", "BOOST", "DEMONIC"];
-            for (mi, mr) in bl.modes.iter().enumerate() {
-                let active = self.booster_profile == mi as u8;
-                ui.rounded(
-                    mr[0],
-                    mr[1],
-                    mr[2],
-                    mr[3],
-                    8.0,
-                    if active { accent } else { card_bg },
-                );
-                ui.border(
-                    mr[0],
-                    mr[1],
-                    mr[2],
-                    mr[3],
-                    8.0,
-                    if active { accent_hi } else { border_c },
-                );
-                if active {
-                    ui.fill(mr[0] + 4.0, mr[1], (mr[2] - 8.0).max(6.0), 1.3, accent_edge);
-                }
-                ui.centered_fit(
-                    Face::SemiBold,
-                    8.8,
-                    *mr,
-                    if active { accent_fg } else { muted_c },
-                    mode_names[mi],
-                );
-            }
-
-            // RAM & Frame Time Resource Bars
-            let ram_frac = (t.ram_used_mb as f32 / t.ram_total_mb.max(1) as f32).clamp(0.05, 1.0);
-            let ram_txt = format!(
-                "RAM  {:.1} / {:.1} GB",
-                t.ram_used_mb as f32 / 1024.0,
-                t.ram_total_mb as f32 / 1024.0
-            );
-            let rb = bl.ram_bar;
-            ui.rounded(rb[0], rb[1], rb[2], rb[3], 8.0, rgba(18, 6, 9, 232));
-            ui.border(rb[0], rb[1], rb[2], rb[3], 8.0, border_c);
-            ui.text(Face::SemiBold, 8.8, rb[0] + 8.0, rb[1] + 4.0, text_c, &ram_txt);
-            let r_track = [rb[0] + 8.0, rb[1] + rb[3] - 9.0, rb[2] - 16.0, 5.0];
-            ui.rounded(r_track[0], r_track[1], r_track[2], r_track[3], 2.5, well_bg);
-            ui.rounded(
-                r_track[0],
-                r_track[1],
-                (r_track[2] * ram_frac).max(4.0),
-                r_track[3],
-                2.5,
-                accent,
-            );
-
-            let frame_frac = (t.frame_ms / 33.3).clamp(0.05, 1.0);
-            let hz_lbl = if self.booster_120hz { "120Hz" } else { "60Hz" };
-            let ft_txt = format!("FRAME  {:.1} ms  •  {}", t.frame_ms, hz_lbl);
-            let fb = bl.frame_bar;
-            ui.rounded(fb[0], fb[1], fb[2], fb[3], 8.0, rgba(18, 6, 9, 232));
-            ui.border(fb[0], fb[1], fb[2], fb[3], 8.0, border_c);
-            ui.text(Face::SemiBold, 8.8, fb[0] + 8.0, fb[1] + 4.0, text_c, &ft_txt);
-            let f_track = [fb[0] + 8.0, fb[1] + fb[3] - 9.0, fb[2] - 16.0, 5.0];
-            ui.rounded(f_track[0], f_track[1], f_track[2], f_track[3], 2.5, well_bg);
-            ui.rounded(
-                f_track[0],
-                f_track[1],
-                (f_track[2] * frame_frac).max(4.0),
-                f_track[3],
-                2.5,
-                accent_hi,
-            );
-
-            // Right Column: 6 Quick Optimization Tiles
-            let tiles_meta: [(Icon, &str, &str, bool); 6] = [
-                (
-                    Icon::Bolt,
-                    "120 Hz",
-                    if self.booster_120hz { "HIGH REFRESH" } else { "60 HZ SAVER" },
-                    self.booster_120hz,
-                ),
-                (Icon::Fan, "RAM Purge", "FREE BUFFERS", false),
-                (
-                    Icon::Shield,
-                    "Touch Lock",
-                    if self.booster_touch_lock { "ARMED" } else { "UNLOCKED" },
-                    self.booster_touch_lock,
-                ),
-                (
-                    Icon::Mods,
-                    "Entity Cull",
-                    if self.volt_extras.entity_culling.enabled { "ACTIVE" } else { "OFF" },
-                    self.volt_extras.entity_culling.enabled,
-                ),
-                (
-                    Icon::Crosshair,
-                    "Zero-Lat",
-                    if settings.zero_latency_touch { "INSTANT" } else { "STANDARD" },
-                    settings.zero_latency_touch,
-                ),
-                (
-                    Icon::Gauge,
-                    "FPS HUD",
-                    if self.volt_extras.telemetry_hud.show_fps { "SHOWN" } else { "HIDDEN" },
-                    self.volt_extras.telemetry_hud.show_fps,
-                ),
-            ];
-            for (ti, (ic, title, sub, active)) in tiles_meta.iter().enumerate() {
-                let tr = bl.tiles[ti];
-                ui.rounded(
-                    tr[0],
-                    tr[1],
-                    tr[2],
-                    tr[3],
-                    10.0,
-                    if *active { card_sel } else { card_bg },
-                );
-                ui.border(
-                    tr[0],
-                    tr[1],
-                    tr[2],
-                    tr[3],
-                    10.0,
-                    if *active { accent } else { border_c },
-                );
-                if *active {
-                    ui.rounded(tr[0] + 3.0, tr[1] + 6.0, 2.5, (tr[3] - 12.0).max(6.0), 1.25, accent_hi);
-                }
-                ui.icon(
-                    *ic,
-                    tr[0] + 10.0,
-                    tr[1] + (tr[3] - 15.0) * 0.5,
-                    15.0,
-                    if *active { accent_hi } else { muted_c },
-                );
-                ui.text(
-                    Face::SemiBold,
-                    9.8,
-                    tr[0] + 31.0,
-                    tr[1] + (tr[3] * 0.5 - 11.0).max(4.0),
-                    text_c,
-                    title,
-                );
-                ui.text(
-                    Face::Medium,
-                    7.8,
-                    tr[0] + 31.0,
-                    tr[1] + (tr[3] * 0.5 + 2.0),
-                    if *active { accent_hi } else { muted_c },
-                    sub,
-                );
-            }
-
-            // Bottom Action Row: DND | VSYNC | IGNITE BOOST
-            let db = bl.dnd_btn;
-            ui.rounded(
-                db[0],
-                db[1],
-                db[2],
-                db[3],
-                9.0,
-                if self.booster_dnd { card_sel } else { card_bg },
-            );
-            ui.border(
-                db[0],
-                db[1],
-                db[2],
-                db[3],
-                9.0,
-                if self.booster_dnd { accent } else { border_c },
-            );
-            ui.icon(
-                Icon::Pause,
-                db[0] + 7.0,
-                db[1] + 12.0,
-                12.0,
-                if self.booster_dnd { accent_hi } else { muted_c },
-            );
-            ui.text(
-                Face::SemiBold,
-                8.8,
-                db[0] + 22.0,
-                db[1] + 12.0,
-                if self.booster_dnd { text_c } else { muted_c },
-                "DND",
-            );
-
-            let vb = bl.vsync_btn;
-            ui.rounded(
-                vb[0],
-                vb[1],
-                vb[2],
-                vb[3],
-                9.0,
-                if t.vsync { card_sel } else { card_bg },
-            );
-            ui.border(
-                vb[0],
-                vb[1],
-                vb[2],
-                vb[3],
-                9.0,
-                if t.vsync { accent } else { border_c },
-            );
-            ui.centered_fit(
-                Face::SemiBold,
-                8.8,
-                vb,
-                if t.vsync { text_c } else { muted_c },
-                if t.vsync { "VSYNC ON" } else { "VSYNC OFF" },
-            );
-
-            let ib = bl.ignite_btn;
-            ui.rounded(ib[0], ib[1], ib[2], ib[3], 10.0, accent);
-            ui.fill(ib[0] + 5.0, ib[1], (ib[2] - 10.0).max(8.0), 1.4, accent_edge);
-            ui.icon(Icon::Flame, ib[0] + 10.0, ib[1] + 11.0, 14.0, accent_fg);
-            ui.centered_fit(
-                Face::SemiBold,
-                10.4,
-                [ib[0] + 22.0, ib[1], (ib[2] - 26.0).max(40.0), ib[3]],
-                accent_fg,
-                "IGNITE BOOST",
-            );
-
-            // Ephemeral toast banner inside Booster header
-            if let Some((msg, at)) = &self.booster_toast
-                && at.elapsed() < std::time::Duration::from_millis(2400)
-            {
-                let tw = (ui.measure(Face::SemiBold, 9.2, msg) + 22.0).clamp(140.0, bw - 32.0);
-                let tx = bx + (bw - tw) * 0.5;
-                let ty = by + bh - 26.0;
-                ui.rounded(tx, ty, tw, 20.0, 10.0, rgba(32, 8, 12, 245));
-                ui.border(tx, ty, tw, 20.0, 10.0, accent_hi);
-                ui.centered_fit(Face::SemiBold, 9.0, [tx, ty, tw, 20.0], text_c, msg);
-            }
-
-            ui.finish();
-            return;
-        }
-
         let (dw, dh, dx, dy_base, side_w, cx, cw, body_top_base, body_h) = hub_metrics(w, h);
+        let slide_y = (1.0 - open_ease) * 18.0;
         let dy = dy_base + slide_y;
         let body_top = body_top_base + slide_y;
         let sb_rects = hub_sidebar_rects(dx, dy, dw, dh, side_w);
@@ -4793,20 +4072,20 @@ impl TouchUi {
         ui.rounded(dx + 2.0, dy + 6.0, dw, dh, 18.0, rgba(0, 0, 0, 175));
         ui.rounded(dx, dy, dw, dh, 18.0, surface_bg);
 
-        // Left Sidebar Shell & Vertical Divider
+        // Left Sidebar Shell & Vertical Divider (always visible per Option 2 layout)
         ui.rounded(dx + 1.0, dy + 1.0, side_w - 1.0, dh - 2.0, 17.0, sidebar_bg);
         ui.fill(dx + side_w - 12.0, dy + 1.0, 12.0, dh - 2.0, sidebar_bg);
         ui.fill(dx + side_w, dy + 1.0, 1.0, dh - 2.0, border_c);
         ui.fill(dx + side_w, dy + 47.0, dw - side_w, 1.0, border_c);
         ui.stroke_rounded(dx, dy, dw, dh, 18.0, 1.4, border_c);
 
-        // Sidebar Brand Header: Nexora Feather + "Nexora" + "Control Hub"
+        // Sidebar Brand Header: Volt+ Icon + "Volt+" + "Control Hub"
         let brand_x = dx + 12.0;
         let brand_y = dy + 10.0;
         ui.rounded(brand_x, brand_y + 2.0, 22.0, 22.0, 6.0, accent);
         ui.fill(brand_x + 2.0, brand_y + 2.0, 18.0, 1.0, accent_edge);
-        crate::nexora_art::draw_feather(&mut ui, brand_x + 3.0, brand_y + 5.0, 16.0, 1.0);
-        ui.text(Face::SemiBold, 12.2, brand_x + 28.0, brand_y, text_c, "Nexora");
+        ui.icon(Icon::HorizonLogo, brand_x + 4.0, brand_y + 6.0, 14.0, accent_fg);
+        ui.text(Face::SemiBold, 12.2, brand_x + 28.0, brand_y, text_c, "Volt+");
         ui.text(Face::Regular, 9.2, brand_x + 28.0, brand_y + 15.0, muted_c, "Control Hub");
 
         // Quick Controls Studio Launch Pill in Sidebar
@@ -4823,7 +4102,7 @@ impl TouchUi {
             "Customize HUD",
         );
 
-        // 10 Category Tabs in Sidebar
+        // 10 Category Tabs in Sidebar (Volt Graphics rounded plates + crisp active outline)
         let tabs: [(Icon, &str); 10] = [
             (Icon::HorizonLogo, "Recommended"),
             (Icon::Gamepad, "Controls"),
@@ -4834,7 +4113,7 @@ impl TouchUi {
             (Icon::Play, "Replay"),
             (Icon::Settings, "Overlay"),
             (Icon::Music, "Music"),
-            (Icon::Mods, "Nexora Mods"),
+            (Icon::Mods, "Volt+ Extras"),
         ];
         for (ti, (ic, lbl)) in tabs.iter().enumerate() {
             let active = self.hub_tab == ti as u8;
@@ -4885,12 +4164,6 @@ impl TouchUi {
             "Touch controls, virtual mouse & feedback",
         );
 
-        let booster_r = sb_rects.booster_pill;
-        if booster_r[0] > hdr_x + 150.0 {
-            ui.rounded(booster_r[0], booster_r[1], booster_r[2], booster_r[3], 12.0, accent);
-            ui.border(booster_r[0], booster_r[1], booster_r[2], booster_r[3], 12.0, accent_hi);
-            ui.centered_fit(Face::SemiBold, 9.0, booster_r, accent_fg, "BOOSTER");
-        }
         let mode_badge_txt = if settings.control_style == ControlStyle::Mcpe {
             "MCPE Controls"
         } else {
@@ -7068,7 +6341,7 @@ impl TouchUi {
                         cx,
                         body_y,
                         muted_c,
-                        &format!("NEXORA MODS  •  {active_cnt} / {} ACTIVE", crate::extras::VOLT_MOD_COUNT),
+                        &format!("VOLT+ EXTRAS  •  {active_cnt} / {} ACTIVE", crate::extras::VOLT_MOD_COUNT),
                     );
                     ui.text(
                         Face::Regular,

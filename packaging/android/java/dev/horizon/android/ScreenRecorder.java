@@ -18,7 +18,7 @@ public final class ScreenRecorder {
      * Where a finished recording lands in Android's shared storage: {@code Movies/VoltPlus}
      * (Android 10+ MediaStore rejects {@code Recordings} for {@code MediaStore.Video.Media}).
      */
-    static final String FOLDER = android.os.Environment.DIRECTORY_MOVIES + "/Nexora";
+    static final String FOLDER = android.os.Environment.DIRECTORY_MOVIES + "/VoltPlus";
 
     static java.io.File localRecordingsFolder(android.content.Context context) {
         java.io.File folder = new java.io.File(context.getFilesDir(), "recordings");

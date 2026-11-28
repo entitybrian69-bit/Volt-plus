@@ -2100,71 +2100,6 @@ impl Loading {
                         self.save_menu_settings();
                     }
                     InGameMenuAction::VoltQuickAction(_) => {}
-                    InGameMenuAction::BoosterSetProfile(profile) => {
-                        let (hz, adpf, scale, cull, anim_off, vsync_off) = match profile {
-                            0 => (60u16, false, 75u32, true, true, false),
-                            1 => (90u16, false, 90u32, true, false, false),
-                            2 => (120u16, true, 100u32, true, false, true),
-                            _ => (120u16, true, 100u32, true, false, true),
-                        };
-                        horizon_client::android_runtime::booster_set_refresh_rate_hz(hz);
-                        horizon_client::android_runtime::booster_set_sustained_performance(adpf);
-                        if profile >= 3 {
-                            horizon_client::android_runtime::booster_purge_memory();
-                        }
-                        self.menu.controls.settings.resolution_scale_percent = scale;
-                        self.settings.horizon.resolution_scale = scale;
-                        self.menu.controls.settings.disable_game_animations = anim_off;
-                        horizon_client::ui_theme::motion::set_game_animations_disabled(anim_off);
-                        self.settings.extras.volt.entity_culling.enabled = cull;
-                        if vsync_off {
-                            self.settings.vsync = false;
-                            self.menu.controls.settings.zero_latency_touch = true;
-                        }
-                        self.settings.touch = self.menu.controls.settings.clone();
-                        let _ = self.menu.controls.settings.save();
-                        self.save_menu_settings();
-                    }
-                    InGameMenuAction::BoosterToggle120Hz => {
-                        let hz = if self.menu.touch.booster_120hz { 120 } else { 60 };
-                        horizon_client::android_runtime::booster_set_refresh_rate_hz(hz);
-                    }
-                    InGameMenuAction::BoosterRamPurge => {
-                        horizon_client::android_runtime::booster_purge_memory();
-                    }
-                    InGameMenuAction::BoosterToggleEntityCulling => {
-                        self.settings.extras.volt.entity_culling.enabled =
-                            self.menu.touch.volt_extras.entity_culling.enabled;
-                        self.save_menu_settings();
-                    }
-                    InGameMenuAction::BoosterToggleZeroLatency => {
-                        self.menu.controls.settings.zero_latency_touch =
-                            !self.menu.controls.settings.zero_latency_touch;
-                        self.settings.touch = self.menu.controls.settings.clone();
-                        let _ = self.menu.controls.settings.save();
-                        self.save_menu_settings();
-                    }
-                    InGameMenuAction::BoosterToggleFpsHud => {
-                        self.settings.extras.volt.telemetry_hud.show_fps =
-                            self.menu.touch.volt_extras.telemetry_hud.show_fps;
-                        self.save_menu_settings();
-                    }
-                    InGameMenuAction::BoosterToggleVsync => {
-                        self.settings.vsync = self.menu.touch.telemetry.vsync;
-                        self.save_menu_settings();
-                    }
-                    InGameMenuAction::BoosterIgnite => {
-                        horizon_client::android_runtime::booster_set_refresh_rate_hz(120);
-                        horizon_client::android_runtime::booster_set_sustained_performance(true);
-                        horizon_client::android_runtime::booster_purge_memory();
-                        self.settings.vsync = false;
-                        self.menu.controls.settings.zero_latency_touch = true;
-                        self.settings.extras.volt.entity_culling.enabled = true;
-                        self.settings.extras.volt.telemetry_hud.show_fps = true;
-                        self.settings.touch = self.menu.controls.settings.clone();
-                        let _ = self.menu.controls.settings.save();
-                        self.save_menu_settings();
-                    }
                     _ => {}
                 }
                 if touch.phase == TouchPhase::Started {
@@ -2838,15 +2773,6 @@ impl Loading {
                     true,
                     horizon_client::recorder::hiding_controls(),
                 ) {
-                    let (frame_ms, cpu_ms, gpu_ms) = self.menu.frame_graph.latest();
-                    let fps_val = 1000.0 / frame_ms.max(1.0);
-                    self.menu.touch.push_telemetry(
-                        fps_val,
-                        frame_ms,
-                        cpu_ms,
-                        gpu_ms,
-                        self.settings.vsync,
-                    );
                     self.menu
                         .touch
                         .sync_volt_extras(&self.settings.extras.volt);

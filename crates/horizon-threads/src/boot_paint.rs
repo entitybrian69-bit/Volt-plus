@@ -19,8 +19,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
 
 /// The wordmark on the pure black.
 const WORDMARK: COLORREF = 0x00ff_ffff;
-/// The crimson-tinted loading tagline, `0xEF4444` in GDI's `0x00bbggrr`.
-const CONSOLE: COLORREF = 0x0044_44ef;
+/// The console's lines, `0x9BA1A6` in GDI's `0x00bbggrr`.
+const CONSOLE: COLORREF = 0x00a6_a19b;
 
 /// GDI's font table is global to the process: the bundled faces register once
 /// across every paint.
@@ -125,7 +125,7 @@ pub fn paint(hwnd: isize, semibold: &'static [u8], mono: &'static [u8], logs: &[
         let old_mark = SelectObject(hdc, mark);
         SetBkMode(hdc, TRANSPARENT as i32);
         SetTextColor(hdc, WORDMARK);
-        let text: Vec<u16> = "NEXORA".encode_utf16().collect();
+        let text: Vec<u16> = "Volt+".encode_utf16().collect();
         let mut mark_rect = RECT {
             left: 0,
             top: top as i32,
@@ -142,7 +142,7 @@ pub fn paint(hwnd: isize, semibold: &'static [u8], mono: &'static [u8], logs: &[
         let tagline = face(small as i32, 400, "Geist Mono");
         let old_tagline = SelectObject(hdc, tagline);
         SetTextColor(hdc, CONSOLE);
-        let tagline_text: Vec<u16> = "SOMETHING DEMONIC IS LOADING...".encode_utf16().collect();
+        let tagline_text: Vec<u16> = "Volt Launcher Plus".encode_utf16().collect();
         let tagline_top = top + size * 1.45 + small * 0.6;
         let mut tagline_rect = RECT {
             left: 0,

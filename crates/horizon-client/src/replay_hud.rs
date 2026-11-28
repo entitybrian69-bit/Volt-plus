@@ -682,7 +682,7 @@ impl TouchUi {
             ui.rounded(mr[0], mr[1], mr[2], mr[3], 14.0, rgba(16, 18, 28, 242));
             ui.border(mr[0], mr[1], mr[2], mr[3], 14.0, REPLAY_ACCENT);
             ui.text(Face::SemiBold, 11.2, mr[0] + 14.0, mr[1] + 12.0, REPLAY_TEXT, "Export Camera Path to MP4");
-            ui.text(Face::Regular, 8.4, mr[0] + 14.0, mr[1] + 29.0, REPLAY_MUTED, "Deterministic offline H.264 render saved to Movies/Nexora Replays");
+            ui.text(Face::Regular, 8.4, mr[0] + 14.0, mr[1] + 29.0, REPLAY_MUTED, "Deterministic offline H.264 render saved to Movies/VoltPlus Replays");
             ui.text(Face::SemiBold, 8.2, mr[0] + 14.0, mr[1] + 42.0, REPLAY_MUTED, "RESOLUTION");
             for (i, (lbl, _, _)) in EXPORT_RESOLUTIONS.iter().enumerate() {
                 pill(&mut ui, lay.modal_res[i], self.replay_export_res_idx == i, false, lbl);

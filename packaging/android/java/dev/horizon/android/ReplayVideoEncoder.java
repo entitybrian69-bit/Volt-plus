@@ -390,7 +390,7 @@ public final class ReplayVideoEncoder {
             values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
             values.put(
                     MediaStore.Video.Media.RELATIVE_PATH,
-                    Environment.DIRECTORY_MOVIES + "/Nexora Replays");
+                    Environment.DIRECTORY_MOVIES + "/VoltPlus Replays");
             values.put(MediaStore.Video.Media.IS_PENDING, 1);
             mediaUri =
                     context.getContentResolver()
@@ -434,7 +434,7 @@ public final class ReplayVideoEncoder {
                 values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
                 values.put(
                         MediaStore.Video.Media.RELATIVE_PATH,
-                        Environment.DIRECTORY_MOVIES + "/Nexora Replays");
+                        Environment.DIRECTORY_MOVIES + "/VoltPlus Replays");
                 values.put(MediaStore.Video.Media.IS_PENDING, 1);
                 Uri exported =
                         appContext.getContentResolver()
@@ -456,7 +456,7 @@ public final class ReplayVideoEncoder {
                 }
             } catch (Throwable ignored) {
             }
-            return "replays/rendered/" + fallbackFile.getName() + " & Movies/Nexora Replays";
+            return "replays/rendered/" + fallbackFile.getName() + " & Movies/VoltPlus Replays";
         }
         if (mediaUri != null && appContext != null) {
             try {
@@ -465,7 +465,7 @@ public final class ReplayVideoEncoder {
                 appContext.getContentResolver().update(mediaUri, values, null, null);
             } catch (Throwable ignored) {
             }
-            return "Movies/Nexora Replays/" + outputLabel;
+            return "Movies/VoltPlus Replays/" + outputLabel;
         }
         return fallbackFile != null ? fallbackFile.getAbsolutePath() : outputLabel;
     }
@@ -553,10 +553,10 @@ public final class ReplayVideoEncoder {
 
     private static String sanitizeName(String raw) {
         if (raw == null || raw.trim().isEmpty()) {
-            return "Nexora_Replay_" + System.currentTimeMillis();
+            return "VoltPlus_Replay_" + System.currentTimeMillis();
         }
         String clean = raw.trim().replaceAll("[^A-Za-z0-9._-]+", "_");
-        return clean.isEmpty() ? ("Nexora_Replay_" + System.currentTimeMillis()) : clean;
+        return clean.isEmpty() ? ("VoltPlus_Replay_" + System.currentTimeMillis()) : clean;
     }
 
     private static String shortMsg(Throwable t) {

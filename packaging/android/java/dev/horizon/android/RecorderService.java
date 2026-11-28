@@ -158,7 +158,7 @@ public final class RecorderService extends Service {
     }
 
     private void startForegroundNotice() {
-        String title = "Nexora is recording";
+        String title = "Volt Plus is recording";
         String text = "Tap the overlay to stop";
         Notification.Builder builder;
         if (Build.VERSION.SDK_INT >= 26) {
@@ -334,7 +334,7 @@ public final class RecorderService extends Service {
             Surface surface = recorder.getSurface();
             display =
                     projection.createVirtualDisplay(
-                            "Nexora",
+                            "VoltPlus",
                             width,
                             height,
                             Math.max(120, getResources().getDisplayMetrics().densityDpi),
@@ -406,7 +406,7 @@ public final class RecorderService extends Service {
     }
 
     private void openTarget() throws Exception {
-        String name = "Nexora-" + timestamp() + ".mp4";
+        String name = "VoltPlus-" + timestamp() + ".mp4";
         displayName = name;
         target = null;
         legacyTarget = null;
