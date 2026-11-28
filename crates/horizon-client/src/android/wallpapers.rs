@@ -14,8 +14,8 @@ mod previews {
     include!(concat!(env!("OUT_DIR"), "/wallpaper_previews.rs"));
 }
 
-pub const PREVIEW_WIDTH: u32 = 112;
-pub const PREVIEW_HEIGHT: u32 = 63;
+pub const PREVIEW_WIDTH: u32 = 288;
+pub const PREVIEW_HEIGHT: u32 = 162;
 
 static DOWNLOAD_DONE_BYTES: AtomicU64 = AtomicU64::new(0);
 static DOWNLOAD_TOTAL_BYTES: AtomicU64 = AtomicU64::new(0);
@@ -115,7 +115,7 @@ pub fn is_downloaded(home: &Path, index: usize) -> bool {
         .is_some_and(|m| m.len() == item.size)
 }
 
-/// Loads (or generates/fetches off-thread) a crisp `112x63` RGBA preview thumbnail
+/// Loads (or generates/fetches off-thread) a crisp `288x162` RGBA preview thumbnail
 /// plus its `(base, accent)` theme palette.
 pub fn load_or_fetch_preview(
     home: &Path,

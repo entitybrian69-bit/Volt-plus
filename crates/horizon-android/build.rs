@@ -82,9 +82,9 @@ fn generate_wallpaper_previews(root: &std::path::Path) {
                             "-frames:v",
                             "1",
                             "-vf",
-                            "scale=112:63:force_original_aspect_ratio=increase,crop=112:63",
+                            "scale=288:162:force_original_aspect_ratio=increase,crop=288:162",
                             "-q:v",
-                            "4",
+                            "3",
                         ])
                         .arg(&generated)
                         .status()

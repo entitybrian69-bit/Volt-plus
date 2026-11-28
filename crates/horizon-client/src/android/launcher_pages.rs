@@ -2901,7 +2901,7 @@ impl Launcher {
                     ui.rounded(img_x, img_y, img_w, img_h, 9.0, my3_surface_high());
                     if let Some((pw, ph, rgba)) = self.wallpaper_previews.get(i).and_then(|p| p.as_ref()) {
                         let thumb_key = format!("wp-thumb-{i}");
-                        let _ = ui.image(&thumb_key, *pw, *ph, rgba, img_x, img_y, img_w, img_h);
+                        let _ = ui.image_smooth(&thumb_key, *pw, *ph, rgba, img_x, img_y, img_w, img_h);
                     } else {
                         let ph_lbl = ui.fit_text(Face::Medium, 9.5, item.name, img_w - 16.0);
                         ui.centered_fit(

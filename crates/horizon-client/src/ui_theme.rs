@@ -801,13 +801,16 @@ impl Cache {
         self.shelf = (x + w + 1, y, row.max(h));
         Some((x, y, region))
     }
-    /// Reserve `w x h` pixels in the dedicated bottom image band (`y: 320..region.h`) so project
-    /// thumbnails and gallery screenshots never overwrite or evict UI text, corners, or vector icons.
+    /// Reserve `w x h` pixels in the dedicated image band (`y: 1024..2048` on the 2048x2048
+    /// launcher UI atlas, or `y: 320..512` on the compact boot atlas) so thumbnails never
+    /// overwrite or evict UI text, corners, vector icons, or the launcher landscape/avatar.
     fn place_image(&mut self, atlas: &HudAtlas, w: u32, h: u32) -> Option<(u32, u32, Rect)> {
         let region = Self::region(atlas)?;
-        let band_top = 320u32.min(region.h.saturating_sub(64));
-        // The lower half is reserved for the launcher landscape.
-        let band_bottom = region.h.min(512);
+        let (band_top, band_bottom) = if region.h >= 2048 {
+            (1024u32, region.h.min(2048))
+        } else {
+            (320u32.min(region.h.saturating_sub(64)), region.h.min(512))
+        };
         if w > region.w || band_top + h > band_bottom {
             return None;
         }
@@ -829,7 +832,14 @@ impl Cache {
         self.image_shelf = (x + w + 1, y, row.max(h));
         Some((x, y, region))
     }
-    fn upload_image_rgba(&mut self, atlas: &HudAtlas, w: u32, h: u32, rgba: Vec<u8>) -> Option<Rect> {
+    fn upload_image_rgba(
+        &mut self,
+        atlas: &HudAtlas,
+        w: u32,
+        h: u32,
+        rgba: Vec<u8>,
+        inset_half_texel: bool,
+    ) -> Option<Rect> {
         let (x, y, region) = self.place_image(atlas, w, h)?;
         let (ax, ay) = (
             (region.u0 * atlas.width as f32).round() as u32 + x,
@@ -843,11 +853,12 @@ impl Cache {
             rgba,
         });
         let (aw, ah) = (atlas.width as f32, atlas.height as f32);
+        let pad = if inset_half_texel && w >= 2 && h >= 2 { 0.5 } else { 0.0 };
         Some(Rect {
-            u0: ax as f32 / aw,
-            v0: ay as f32 / ah,
-            u1: (ax + w) as f32 / aw,
-            v1: (ay + h) as f32 / ah,
+            u0: (ax as f32 + pad) / aw,
+            v0: (ay as f32 + pad) / ah,
+            u1: ((ax + w) as f32 - pad) / aw,
+            v1: ((ay + h) as f32 - pad) / ah,
             w,
             h,
         })
@@ -1036,15 +1047,40 @@ impl Cache {
         rect
     }
     fn image(&mut self, atlas: &HudAtlas, key: &str, w: u32, h: u32, rgba: &[u8]) -> Option<Rect> {
+        let (max_w, max_h) = if w > h * 4 / 3 { (96u32, 54u32) } else { (48u32, 48u32) };
+        self.image_with_bounds(atlas, key, w, h, rgba, max_w, max_h, 0.22, false)
+    }
+
+    fn image_smooth(
+        &mut self,
+        atlas: &HudAtlas,
+        key: &str,
+        w: u32,
+        h: u32,
+        rgba: &[u8],
+    ) -> Option<Rect> {
+        self.image_with_bounds(atlas, key, w, h, rgba, 320, 180, 0.08, true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn image_with_bounds(
+        &mut self,
+        atlas: &HudAtlas,
+        key: &str,
+        w: u32,
+        h: u32,
+        rgba: &[u8],
+        max_w: u32,
+        max_h: u32,
+        corner_ratio: f32,
+        inset_half_texel: bool,
+    ) -> Option<Rect> {
         if let Some(&rect) = self.images.get(key) {
             return Some(rect);
         }
         if w == 0 || h == 0 || rgba.len() != (w * h * 4) as usize {
             return None;
         }
-        // Fit project icons (<= 48x48) and wide gallery screenshots (<= 96x54) into the dedicated
-        // bottom image band (`y: 320..512`) so they never overflow the atlas shelf.
-        let (max_w, max_h) = if w > h * 4 / 3 { (96u32, 54u32) } else { (48u32, 48u32) };
         let (tw, th, mut masked) = if w > max_w || h > max_h {
             let scale = (max_w as f32 / w as f32).min(max_h as f32 / h as f32);
             let nw = ((w as f32 * scale).round() as u32).clamp(1, max_w);
@@ -1063,8 +1099,8 @@ impl Cache {
         } else {
             (w, h, rgba.to_vec())
         };
-        // Apply a soft rounded-corner mask to project icons so they sit cleanly in cards.
-        let r = (tw.min(th) as f32 * 0.22).max(2.0);
+        // Apply a soft rounded-corner mask so cards sit cleanly without jagged edges.
+        let r = (tw.min(th) as f32 * corner_ratio).max(2.0);
         let (wf, hf) = (tw as f32, th as f32);
         for y in 0..th {
             for x in 0..tw {
@@ -1092,7 +1128,7 @@ impl Cache {
                 }
             }
         }
-        let rect = self.upload_image_rgba(atlas, tw, th, masked)?;
+        let rect = self.upload_image_rgba(atlas, tw, th, masked, inset_half_texel)?;
         self.images.insert(key.to_owned(), rect);
         Some(rect)
     }
@@ -2329,6 +2365,35 @@ impl<'a> Ui<'a> {
             self.px_y(y + dh),
         );
         self.emit_clipped_uv(x0, y0, x1, y1, rect.u0, rect.v0, rect.u1, rect.v1, u32::MAX);
+        true
+    }
+
+    /// Draw a cached RGBA preview image (`w x h`, up to `320x180`) using bilinear filtering.
+    #[allow(clippy::too_many_arguments)]
+    pub fn image_smooth(
+        &mut self,
+        key: &str,
+        w: u32,
+        h: u32,
+        rgba: &[u8],
+        x: f32,
+        y: f32,
+        dw: f32,
+        dh: f32,
+    ) -> bool {
+        let atlas = self.atlas;
+        let Some(rect) = with_cache(atlas, |c| c.image_smooth(atlas, key, w, h, rgba)) else {
+            return false;
+        };
+        let start = self.batch.vertices.len();
+        let (x0, y0, x1, y1) = (
+            self.px_x(x),
+            self.px_y(y),
+            self.px_x(x + dw),
+            self.px_y(y + dh),
+        );
+        self.emit_clipped_uv(x0, y0, x1, y1, rect.u0, rect.v0, rect.u1, rect.v1, u32::MAX);
+        self.batch.blend_since(start, crate::hud::Blend::Linear);
         true
     }
 

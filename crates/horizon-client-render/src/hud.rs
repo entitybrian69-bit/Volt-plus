@@ -432,12 +432,13 @@ impl HudAtlas {
                 images.push((name.into(), w, h, rgba));
             }
         }
-        // The on-screen keyboard's text and corner masks (ui_theme), rasterized at run time.
+        // The on-screen keyboard's text and corner masks (ui_theme), plus smooth preview
+        // thumbnails (`y: 1024..2048`), rasterized at run time.
         images.push((
             "horizon/ui-text".into(),
             2048,
-            1024,
-            vec![0; 2048 * 1024 * 4],
+            2048,
+            vec![0; 2048 * 2048 * 4],
         ));
     }
     /// Only the font's metrics, for a game that draws nothing (the
@@ -1075,6 +1076,8 @@ pub enum Blend {
     EndPortal,
     /// Separate full-resolution video texture, used only by the Android launcher.
     Video,
+    /// Linearly filtered HUD atlas sample (smooth preview thumbnails in the launcher).
+    Linear,
 }
 /// What a `Blend::EndPortal` fill samples: the atlas rects (u0, v0, width,
 /// height) of `end_sky.png` and `end_portal.png`, and the `GameTime` uniform.
@@ -1828,6 +1831,7 @@ pub struct HudRenderer {
     vignette_pipeline: wgpu::RenderPipeline,
     end_portal_pipeline: wgpu::RenderPipeline,
     group: wgpu::BindGroup,
+    linear_group: wgpu::BindGroup,
     video_layout: wgpu::BindGroupLayout,
     video_sampler: wgpu::Sampler,
     video_glint_view: wgpu::TextureView,
@@ -2061,6 +2065,38 @@ impl HudRenderer {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let video_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Wallpaper linear sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let linear_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("HUD linear atlas resources"),
+            layout: &layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&video_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(glint_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(glint_sampler),
+                },
+            ],
+        });
         Ok(Self {
             atlas_texture: None,
             sprite_animations: Vec::new(),
@@ -2071,13 +2107,9 @@ impl HudRenderer {
             vignette_pipeline,
             end_portal_pipeline,
             group,
+            linear_group,
             video_layout: layout,
-            video_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("Wallpaper linear sampler"),
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            }),
+            video_sampler,
             video_glint_view: glint_view.clone(),
             video_glint_sampler: glint_sampler.clone(),
             video_texture: None,
@@ -2358,7 +2390,7 @@ impl HudRenderer {
                     Blend::Depth(_) => &self.depth_pipeline,
                     Blend::Vignette => &self.vignette_pipeline,
                     Blend::EndPortal => &self.end_portal_pipeline,
-                    Blend::Video => &self.pipeline,
+                    Blend::Video | Blend::Linear => &self.pipeline,
                 };
                 if *blend == Blend::Video {
                     if let Some(group) = &self.video_group {
@@ -2367,6 +2399,13 @@ impl HudRenderer {
                         pass.draw(range.clone(), 0..1);
                         pass.set_bind_group(0, &self.group, &[]);
                     }
+                    continue;
+                }
+                if *blend == Blend::Linear {
+                    pass.set_bind_group(0, &self.linear_group, &[]);
+                    pass.set_pipeline(pipeline);
+                    pass.draw(range.clone(), 0..1);
+                    pass.set_bind_group(0, &self.group, &[]);
                     continue;
                 }
                 match &self.pack_text {
