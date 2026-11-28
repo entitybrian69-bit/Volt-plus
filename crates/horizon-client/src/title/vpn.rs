@@ -1,32 +1,100 @@
 use crate::hud::{HudAtlas, HudBatch, rgba};
 use crate::ui::{Caret, Scroll, list_background, scrollbar, separators};
-use horizon_protocol::connection::{VpnEndpoint, active_vpn, set_active_vpn, test_vpn_endpoint};
+use horizon_protocol::connection::{
+    VpnEndpoint, active_vpn, probe_vpn_exit_ip, set_active_vpn, test_vpn_endpoint,
+};
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const HEADER: f32 = 44.0;
-const FOOTER: f32 = 48.0;
-const ROW_WIDTH: f32 = 305.0;
+const HEADER: f32 = 46.0;
+const FOOTER: f32 = 46.0;
+const ROW_WIDTH: f32 = 320.0;
 const ROW_HEIGHT: f32 = 24.0;
 const VPN_CONFIG_FILE: &str = "horizon-vpn.json";
 const VPN_CUSTOM_FIELD: crate::clipboard::FieldId = ("vpn.custom", 0);
 
+const PRIORITY_COUNTRIES: &[&str] = &[
+    "IN", "SG", "US", "AE", "GB", "DE", "JP", "CA", "NL", "FR", "AU", "BR", "KR", "ID", "HK",
+    "TR", "PL", "FI", "SA", "TH", "VN", "MY", "PH",
+];
+
+const EXTRA_COUNTRIES: &[(&str, &str)] = &[
+    ("", "More..."),
+    ("GB", "UK (GB)"),
+    ("DE", "Germany"),
+    ("JP", "Japan"),
+    ("CA", "Canada"),
+    ("NL", "Netherlands"),
+    ("FR", "France"),
+    ("AU", "Australia"),
+    ("BR", "Brazil"),
+    ("KR", "S. Korea"),
+    ("ID", "Indonesia"),
+    ("HK", "Hong Kong"),
+    ("TR", "Turkey"),
+    ("PL", "Poland"),
+    ("FI", "Finland"),
+    ("SA", "Saudi Arabia"),
+    ("LOCAL", "Local App"),
+];
+
+fn country_display(code: &str) -> &'static str {
+    match code {
+        "IN" => "India",
+        "SG" => "Singapore",
+        "US" => "America (USA)",
+        "AE" => "Dubai / UAE",
+        "GB" | "UK" => "United Kingdom",
+        "DE" => "Germany",
+        "JP" => "Japan",
+        "CA" => "Canada",
+        "NL" => "Netherlands",
+        "FR" => "France",
+        "AU" => "Australia",
+        "BR" => "Brazil",
+        "KR" => "South Korea",
+        "ID" => "Indonesia",
+        "HK" => "Hong Kong",
+        "TR" => "Turkey",
+        "PL" => "Poland",
+        "FI" => "Finland",
+        "SA" => "Saudi Arabia",
+        "TH" => "Thailand",
+        "VN" => "Vietnam",
+        "MY" => "Malaysia",
+        "PH" => "Philippines",
+        "SE" => "Sweden",
+        "CH" => "Switzerland",
+        "NO" => "Norway",
+        "IT" => "Italy",
+        "ES" => "Spain",
+        "MX" => "Mexico",
+        "RU" => "Russia",
+        "UA" => "Ukraine",
+        "TW" => "Taiwan",
+        "ZA" => "South Africa",
+        "LOCAL" => "Local Device VPN",
+        "CUSTOM" => "Custom Tunnel",
+        _ => "Global",
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VpnProto {
-    FastDns,
     Socks5,
     HttpConnect,
+    FastDns,
 }
 
 impl VpnProto {
     fn tag(self) -> &'static str {
         match self {
-            Self::FastDns => "DNS",
             Self::Socks5 => "SOCKS5",
             Self::HttpConnect => "HTTP",
+            Self::FastDns => "DNS",
         }
     }
 }
@@ -35,6 +103,8 @@ impl VpnProto {
 pub struct VpnNode {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub country_code: String,
     pub region: String,
     pub proto: VpnProto,
     pub host: String,
@@ -54,10 +124,6 @@ pub struct VpnNode {
 impl VpnNode {
     pub fn to_endpoint(&self) -> VpnEndpoint {
         match self.proto {
-            VpnProto::FastDns => VpnEndpoint::FastDns {
-                label: self.name.clone(),
-                dns_ip: self.host.clone(),
-            },
             VpnProto::Socks5 => VpnEndpoint::Socks5 {
                 label: self.name.clone(),
                 host: self.host.clone(),
@@ -68,36 +134,23 @@ impl VpnNode {
                 host: self.host.clone(),
                 port: self.port,
             },
+            VpnProto::FastDns => VpnEndpoint::FastDns {
+                label: self.name.clone(),
+                dns_ip: self.host.clone(),
+            },
         }
     }
 
     fn matches_endpoint(&self, ep: &VpnEndpoint) -> bool {
         match (self.proto, ep) {
-            (VpnProto::FastDns, VpnEndpoint::FastDns { dns_ip, .. }) => self.host == *dns_ip,
             (VpnProto::Socks5, VpnEndpoint::Socks5 { host, port, .. }) => {
                 self.host == *host && self.port == *port
             }
             (VpnProto::HttpConnect, VpnEndpoint::HttpConnect { host, port, .. }) => {
                 self.host == *host && self.port == *port
             }
+            (VpnProto::FastDns, VpnEndpoint::FastDns { dns_ip, .. }) => self.host == *dns_ip,
             _ => false,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FilterTab {
-    All,
-    Tunnels,
-    FastDns,
-}
-
-impl FilterTab {
-    fn matches(self, node: &VpnNode) -> bool {
-        match self {
-            Self::All => true,
-            Self::Tunnels => matches!(node.proto, VpnProto::Socks5 | VpnProto::HttpConnect),
-            Self::FastDns => matches!(node.proto, VpnProto::FastDns),
         }
     }
 }
@@ -132,52 +185,23 @@ pub fn restore_saved_vpn() {
     set_active_vpn(cfg.active.map(|n| n.to_endpoint()));
 }
 
-fn builtin_nodes() -> Vec<VpnNode> {
-    let dns = [
-        ("dns-cf-1", "Cloudflare Fast Route", "Global Anycast", "1.1.1.1"),
-        ("dns-cf-2", "Cloudflare Backup Route", "Global Anycast", "1.0.0.1"),
-        ("dns-gg-1", "Google Global Route", "Global Anycast", "8.8.8.8"),
-        ("dns-gg-2", "Google Secondary Route", "Global Anycast", "8.8.4.4"),
-        ("dns-q9", "Quad9 Encrypted Route", "Global Anycast", "9.9.9.9"),
-        ("dns-adg", "AdGuard Clean Route", "EU / Global", "94.140.14.14"),
-        ("dns-cd", "ControlD Low-Latency", "Global Anycast", "76.76.2.0"),
-        ("dns-od", "OpenDNS Cisco Route", "US / Global", "208.67.222.222"),
-        ("dns-mv", "Mullvad Privacy DNS", "SE / Europe", "194.242.2.2"),
-        ("dns-cb", "CleanBrowsing Fast", "US / EU", "185.228.168.9"),
-        ("dns-nd", "NextDNS Anycast", "Global Anycast", "45.90.28.0"),
-        ("dns-cf-sec", "Cloudflare Security DNS", "Global Anycast", "1.1.1.2"),
-    ];
+fn local_daemon_candidates() -> Vec<VpnNode> {
     let local_tunnels = [
-        ("local-warp", "Cloudflare WARP Tunnel", "Local 127.0.0.1:40000", VpnProto::Socks5, "127.0.0.1", 40000),
-        ("local-clash-s", "Clash / Mihomo SOCKS5", "Local 127.0.0.1:7890", VpnProto::Socks5, "127.0.0.1", 7890),
-        ("local-clash-h", "Clash / Mihomo HTTP", "Local 127.0.0.1:7891", VpnProto::HttpConnect, "127.0.0.1", 7891),
-        ("local-v2ray-s", "V2Ray / NekoBox SOCKS5", "Local 127.0.0.1:10808", VpnProto::Socks5, "127.0.0.1", 10808),
-        ("local-v2ray-h", "V2Ray / NekoBox HTTP", "Local 127.0.0.1:10809", VpnProto::HttpConnect, "127.0.0.1", 10809),
-        ("local-tor", "Tor / Orbot Tunnel", "Local 127.0.0.1:9050", VpnProto::Socks5, "127.0.0.1", 9050),
-        ("local-ss", "Shadowsocks / Sing-box", "Local 127.0.0.1:1080", VpnProto::Socks5, "127.0.0.1", 1080),
+        ("local-warp", "Cloudflare WARP Tunnel", "127.0.0.1", 40000, VpnProto::Socks5),
+        ("local-clash-s", "Clash / Mihomo SOCKS5", "127.0.0.1", 7890, VpnProto::Socks5),
+        ("local-clash-h", "Clash / Mihomo HTTP", "127.0.0.1", 7891, VpnProto::HttpConnect),
+        ("local-v2ray-s", "V2Ray / NekoBox SOCKS5", "127.0.0.1", 10808, VpnProto::Socks5),
+        ("local-v2ray-h", "V2Ray / NekoBox HTTP", "127.0.0.1", 10809, VpnProto::HttpConnect),
+        ("local-tor", "Tor / Orbot Tunnel", "127.0.0.1", 9050, VpnProto::Socks5),
+        ("local-ss", "Shadowsocks / Sing-box", "127.0.0.1", 1080, VpnProto::Socks5),
     ];
-
-    let mut out = Vec::with_capacity(dns.len() + local_tunnels.len());
-    for (id, name, region, ip) in dns {
-        out.push(VpnNode {
+    local_tunnels
+        .into_iter()
+        .map(|(id, name, host, port, proto)| VpnNode {
             id: id.into(),
             name: name.into(),
-            region: region.into(),
-            proto: VpnProto::FastDns,
-            host: ip.into(),
-            port: 53,
-            custom: false,
-            local: false,
-            ping_ms: None,
-            testing: true,
-            working: None,
-        });
-    }
-    for (id, name, region, proto, host, port) in local_tunnels {
-        out.push(VpnNode {
-            id: id.into(),
-            name: name.into(),
-            region: region.into(),
+            country_code: "LOCAL".into(),
+            region: format!("Local {host}:{port}"),
             proto,
             host: host.into(),
             port,
@@ -186,9 +210,8 @@ fn builtin_nodes() -> Vec<VpnNode> {
             ping_ms: None,
             testing: true,
             working: None,
-        });
-    }
-    out
+        })
+        .collect()
 }
 
 pub fn parse_custom_node(raw: &str) -> Option<VpnNode> {
@@ -196,9 +219,15 @@ pub fn parse_custom_node(raw: &str) -> Option<VpnNode> {
     if s.is_empty() {
         return None;
     }
-    let (proto, rest) = if let Some(r) = s.strip_prefix("socks5://").or_else(|| s.strip_prefix("socks://")) {
+    let (proto, rest) = if let Some(r) = s
+        .strip_prefix("socks5://")
+        .or_else(|| s.strip_prefix("socks://"))
+    {
         (VpnProto::Socks5, r)
-    } else if let Some(r) = s.strip_prefix("http://").or_else(|| s.strip_prefix("https://")) {
+    } else if let Some(r) = s
+        .strip_prefix("http://")
+        .or_else(|| s.strip_prefix("https://"))
+    {
         (VpnProto::HttpConnect, r)
     } else if let Some(r) = s.strip_prefix("dns://") {
         (VpnProto::FastDns, r)
@@ -214,6 +243,7 @@ pub fn parse_custom_node(raw: &str) -> Option<VpnNode> {
         return Some(VpnNode {
             id: format!("custom-dns-{host}"),
             name: format!("Custom DNS ({host})"),
+            country_code: "CUSTOM".into(),
             region: "Custom Fast DNS".into(),
             proto,
             host: host.into(),
@@ -234,6 +264,7 @@ pub fn parse_custom_node(raw: &str) -> Option<VpnNode> {
     Some(VpnNode {
         id: format!("custom-{}-{host}:{port}", proto.tag().to_lowercase()),
         name: format!("Custom {} ({host})", proto.tag()),
+        country_code: "CUSTOM".into(),
         region: format!("Custom {host}:{port}"),
         proto,
         host: host.into(),
@@ -246,115 +277,309 @@ pub fn parse_custom_node(raw: &str) -> Option<VpnNode> {
     })
 }
 
-fn fetch_live_proxy_candidates() -> Vec<VpnNode> {
+#[derive(Clone)]
+struct RawCandidate {
+    proto: VpnProto,
+    host: String,
+    port: u16,
+    country_code: String,
+    city: String,
+}
+
+fn make_node(c: RawCandidate) -> VpnNode {
+    let cc = c.country_code.to_ascii_uppercase();
+    let country_name = country_display(&cc);
+    let label = if c.city.is_empty() {
+        format!("[{cc}] {country_name}")
+    } else {
+        format!("[{cc}] {country_name} · {}", c.city)
+    };
+    VpnNode {
+        id: format!("vpn-{}-{}-{}:{}", cc, c.proto.tag(), c.host, c.port),
+        name: label,
+        country_code: cc,
+        region: format!("{} · {}:{}", c.proto.tag(), c.host, c.port),
+        proto: c.proto,
+        host: c.host,
+        port: c.port,
+        custom: false,
+        local: false,
+        ping_ms: None,
+        testing: true,
+        working: None,
+    }
+}
+
+fn fetch_live_country_tunnels(focus_country: &str) -> Vec<VpnNode> {
     let agent: ureq::Agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(4))
+        .timeout_connect(Duration::from_secs(3))
         .timeout(Duration::from_secs(6))
         .build();
 
-    let mut raw_entries: Vec<(VpnProto, String, u16, String)> = Vec::new();
+    let mut urls: Vec<(usize, String, &'static str)> = Vec::new();
+    // 1. Proxifly geo-tagged JSON (fast jsDelivr CDN + GitHub raw, full country & city metadata)
+    urls.push((
+        0,
+        "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/socks5/data.json".into(),
+        "proxifly_socks5",
+    ));
+    urls.push((
+        1,
+        "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.json".into(),
+        "proxifly_http",
+    ));
+    // 2. ProxyScrape v4 rich JSON (countryCode + city + uptime + socks5/http)
+    urls.push((
+        2,
+        "https://api.proxyscrape.com/v4/free-proxy-list/get?request=display_proxies&proxy_format=protocolipport&format=json&protocol=socks5,http&timeout=4000".into(),
+        "proxyscrape_v4",
+    ));
+    // 3. GeoNode rich JSON filtered for popular countries first
+    urls.push((
+        3,
+        "https://proxylist.geonode.com/api/proxy-list?limit=150&page=1&sort_by=lastChecked&sort_type=desc&protocols=socks5%2Chttp".into(),
+        "geonode",
+    ));
 
-    // 1) GeoNode rich JSON feed (gives country codes + latency + socks5/http)
-    if let Ok(resp) = agent
-        .get("https://proxylist.geonode.com/api/proxy-list?limit=80&page=1&sort_by=lastChecked&sort_type=desc&protocols=socks5%2Chttp")
-        .call()
-        && let Ok(text) = resp.into_string()
-        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&text)
-        && let Some(arr) = json.get("data").and_then(|v| v.as_array())
-    {
-        for item in arr {
-            let Some(ip) = item.get("ip").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            let Some(port) = item
-                .get("port")
-                .and_then(|v| v.as_str().and_then(|s| s.parse::<u16>().ok()).or_else(|| v.as_u64().and_then(|n| u16::try_from(n).ok())))
-            else {
-                continue;
-            };
-            let country = item
-                .get("country")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Global");
-            let is_socks5 = item
-                .get("protocols")
-                .and_then(|v| v.as_array())
-                .is_some_and(|ps| ps.iter().any(|p| p.as_str() == Some("socks5")));
-            let proto = if is_socks5 {
-                VpnProto::Socks5
-            } else {
-                VpnProto::HttpConnect
-            };
-            raw_entries.push((proto, ip.to_owned(), port, country.to_owned()));
-        }
+    // 4. Dedicated per-country feeds fetched concurrently so IN, SG, US, AE (Dubai), GB, DE, JP, etc.
+    // always get rich country-specific candidates!
+    let mut country_list: Vec<&str> = PRIORITY_COUNTRIES.to_vec();
+    if !focus_country.is_empty() && focus_country != "LOCAL" && !country_list.contains(&focus_country) {
+        country_list.insert(0, focus_country);
+    }
+    for (idx, cc) in country_list.iter().take(16).enumerate() {
+        urls.push((
+            10 + idx * 2,
+            format!("https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=4000&country={cc}&ssl=all&anonymity=all"),
+            "ps_v2_socks5",
+        ));
+        urls.push((
+            11 + idx * 2,
+            format!("https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=4000&country={cc}&ssl=all&anonymity=all"),
+            "ps_v2_http",
+        ));
     }
 
-    // 2) ProxyScrape fast live SOCKS5 + HTTP feeds + SpeedX mirror
-    let feeds = [
-        (
-            VpnProto::Socks5,
-            "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=3000&country=all&ssl=all&anonymity=all",
-            "Global Tunnel",
-        ),
-        (
-            VpnProto::HttpConnect,
-            "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=3000&country=all&ssl=all&anonymity=all",
-            "Global HTTP",
-        ),
-        (
-            VpnProto::Socks5,
-            "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
-            "Community Pool",
-        ),
-    ];
+    let collected = Arc::new(Mutex::new(Vec::<RawCandidate>::new()));
+    let country_tags: Vec<String> = urls
+        .iter()
+        .map(|(_, u, _)| {
+            u.split("country=")
+                .nth(1)
+                .and_then(|s| s.split('&').next())
+                .unwrap_or("")
+                .to_owned()
+        })
+        .collect();
 
-    for (proto, url, region) in feeds {
-        if let Ok(resp) = agent.get(url).call()
-            && let Ok(body) = resp.into_string()
-        {
-            for line in body.lines().take(60) {
-                let line = line.trim();
-                if let Some((h, p)) = line.rsplit_once(':')
-                    && let Ok(port) = p.trim().parse::<u16>()
-                    && !h.trim().is_empty()
-                    && port > 0
-                {
-                    raw_entries.push((proto, h.trim().to_owned(), port, region.to_owned()));
+    std::thread::scope(|s| {
+        for ((_, url, kind), cc_hint) in urls.into_iter().zip(country_tags.into_iter()) {
+            let agent = agent.clone();
+            let collected = Arc::clone(&collected);
+            s.spawn(move || {
+                let Ok(resp) = agent.get(&url).call() else {
+                    return;
+                };
+                let Ok(text) = resp.into_string() else {
+                    return;
+                };
+                let mut local = Vec::new();
+                match kind {
+                    "proxifly_socks5" | "proxifly_http" => {
+                        let proto = if kind == "proxifly_socks5" {
+                            VpnProto::Socks5
+                        } else {
+                            VpnProto::HttpConnect
+                        };
+                        if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&text) {
+                            for item in arr.into_iter().take(240) {
+                                let Some(ip) = item.get("ip").and_then(|v| v.as_str()) else {
+                                    continue;
+                                };
+                                let Some(port) = item.get("port").and_then(|v| v.as_u64()).and_then(|n| u16::try_from(n).ok()) else {
+                                    continue;
+                                };
+                                let cc = item
+                                    .get("geolocation")
+                                    .and_then(|g| g.get("country"))
+                                    .and_then(|v| v.as_str())
+                                    .or_else(|| item.get("country").and_then(|v| v.as_str()))
+                                    .unwrap_or("GL");
+                                let city = item
+                                    .get("geolocation")
+                                    .and_then(|g| g.get("city"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                local.push(RawCandidate {
+                                    proto,
+                                    host: ip.to_owned(),
+                                    port,
+                                    country_code: cc.to_ascii_uppercase(),
+                                    city: city.to_owned(),
+                                });
+                            }
+                        }
+                    }
+                    "proxyscrape_v4" => {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text)
+                            && let Some(arr) = json.get("proxies").and_then(|v| v.as_array())
+                        {
+                            for item in arr.iter().take(240) {
+                                let Some(ip) = item.get("ip").and_then(|v| v.as_str()) else {
+                                    continue;
+                                };
+                                let Some(port) = item.get("port").and_then(|v| v.as_u64()).and_then(|n| u16::try_from(n).ok()) else {
+                                    continue;
+                                };
+                                let proto_str = item.get("protocol").and_then(|v| v.as_str()).unwrap_or("http");
+                                let proto = if proto_str.eq_ignore_ascii_case("socks5") {
+                                    VpnProto::Socks5
+                                } else {
+                                    VpnProto::HttpConnect
+                                };
+                                let cc = item
+                                    .get("ip_data")
+                                    .and_then(|d| d.get("countryCode"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("GL");
+                                let city = item
+                                    .get("ip_data")
+                                    .and_then(|d| d.get("city"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                local.push(RawCandidate {
+                                    proto,
+                                    host: ip.to_owned(),
+                                    port,
+                                    country_code: cc.to_ascii_uppercase(),
+                                    city: city.to_owned(),
+                                });
+                            }
+                        }
+                    }
+                    "geonode" => {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text)
+                            && let Some(arr) = json.get("data").and_then(|v| v.as_array())
+                        {
+                            for item in arr {
+                                let Some(ip) = item.get("ip").and_then(|v| v.as_str()) else {
+                                    continue;
+                                };
+                                let Some(port) = item.get("port").and_then(|v| {
+                                    v.as_str()
+                                        .and_then(|s| s.parse::<u16>().ok())
+                                        .or_else(|| v.as_u64().and_then(|n| u16::try_from(n).ok()))
+                                }) else {
+                                    continue;
+                                };
+                                let cc = item.get("country").and_then(|v| v.as_str()).unwrap_or("GL");
+                                let city = item.get("city").and_then(|v| v.as_str()).unwrap_or("");
+                                let is_socks5 = item
+                                    .get("protocols")
+                                    .and_then(|v| v.as_array())
+                                    .is_some_and(|ps| ps.iter().any(|p| p.as_str() == Some("socks5")));
+                                local.push(RawCandidate {
+                                    proto: if is_socks5 { VpnProto::Socks5 } else { VpnProto::HttpConnect },
+                                    host: ip.to_owned(),
+                                    port,
+                                    country_code: cc.to_ascii_uppercase(),
+                                    city: city.to_owned(),
+                                });
+                            }
+                        }
+                    }
+                    _ => {
+                        let proto = if kind == "ps_v2_socks5" {
+                            VpnProto::Socks5
+                        } else {
+                            VpnProto::HttpConnect
+                        };
+                        for line in text.lines().take(25) {
+                            let line = line.trim();
+                            if let Some((h, p)) = line.rsplit_once(':')
+                                && let Ok(port) = p.trim().parse::<u16>()
+                                && !h.trim().is_empty()
+                                && port > 0
+                            {
+                                local.push(RawCandidate {
+                                    proto,
+                                    host: h.trim().to_owned(),
+                                    port,
+                                    country_code: cc_hint.clone(),
+                                    city: String::new(),
+                                });
+                            }
+                        }
+                    }
+                }
+                if !local.is_empty() {
+                    collected.lock().unwrap().extend(local);
+                }
+            });
+        }
+    });
+
+    // Deduplicate and round-robin interleave across countries so India, Singapore, America,
+    // Dubai, UK, Germany, Japan, etc. are all probed early and evenly!
+    let raw = std::mem::take(&mut *collected.lock().unwrap());
+    let mut seen = HashSet::new();
+    let mut by_country: HashMap<String, Vec<VpnNode>> = HashMap::new();
+    for c in raw {
+        if c.country_code.is_empty() || c.country_code == "GL" {
+            continue;
+        }
+        if !seen.insert((c.proto.tag(), c.host.clone(), c.port)) {
+            continue;
+        }
+        let cc = c.country_code.clone();
+        by_country.entry(cc).or_default().push(make_node(c));
+    }
+
+    let mut ordered_ccs: Vec<String> = Vec::new();
+    if !focus_country.is_empty() && by_country.contains_key(focus_country) {
+        ordered_ccs.push(focus_country.to_owned());
+    }
+    for &cc in PRIORITY_COUNTRIES {
+        if cc != focus_country && by_country.contains_key(cc) {
+            ordered_ccs.push(cc.to_owned());
+        }
+    }
+    let mut rest_ccs: Vec<String> = by_country
+        .keys()
+        .filter(|cc| !ordered_ccs.contains(cc))
+        .cloned()
+        .collect();
+    rest_ccs.sort();
+    ordered_ccs.extend(rest_ccs);
+
+    let mut interleaved = Vec::new();
+    let mut depth = 0usize;
+    while interleaved.len() < 320 {
+        let mut added = false;
+        for cc in &ordered_ccs {
+            if let Some(list) = by_country.get(cc)
+                && let Some(node) = list.get(depth)
+            {
+                interleaved.push(node.clone());
+                added = true;
+                if interleaved.len() >= 320 {
+                    break;
                 }
             }
         }
-    }
-
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for (proto, host, port, region) in raw_entries {
-        if !seen.insert((proto.tag(), host.clone(), port)) {
-            continue;
-        }
-        out.push(VpnNode {
-            id: format!("live-{}-{host}:{port}", proto.tag().to_lowercase()),
-            name: format!("{} · {region}", proto.tag()),
-            region: format!("{host}:{port}"),
-            proto,
-            host,
-            port,
-            custom: false,
-            local: false,
-            ping_ms: None,
-            testing: true,
-            working: None,
-        });
-        if out.len() >= 120 {
+        if !added {
             break;
         }
+        depth += 1;
     }
-    out
+    interleaved
 }
 
 #[derive(Clone)]
 struct SharedState {
     nodes: Vec<VpnNode>,
     status: String,
+    exit_info: Option<String>,
     scanning: bool,
     generation: u64,
 }
@@ -362,13 +587,14 @@ struct SharedState {
 #[derive(Clone)]
 pub struct Screen {
     shared: Arc<Mutex<SharedState>>,
-    pub filter: FilterTab,
-    pub selected: Option<usize>,
+    pub country_filter: String,
+    pub extra_idx: usize,
+    pub selected: Option<String>,
     pub scroll: Cell<Scroll>,
     pub adding_custom: bool,
     pub custom_input: String,
     pub focused_at: Instant,
-    last_click: Option<(Instant, usize)>,
+    last_click: Option<(Instant, String)>,
     drag_last_y: Option<f32>,
     drag_moved: f32,
 }
@@ -376,7 +602,7 @@ pub struct Screen {
 impl std::fmt::Debug for Screen {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VpnScreen")
-            .field("filter", &self.filter)
+            .field("country_filter", &self.country_filter)
             .field("selected", &self.selected)
             .field("adding_custom", &self.adding_custom)
             .finish()
@@ -393,21 +619,24 @@ impl Screen {
     pub fn new() -> Self {
         let disk = load_disk_config();
         let mut nodes = disk.custom_nodes;
-        nodes.extend(builtin_nodes());
         if let Some(active) = &disk.active
-            && !nodes.iter().any(|n| n.host == active.host && n.port == active.port && n.proto == active.proto)
+            && !nodes
+                .iter()
+                .any(|n| n.host == active.host && n.port == active.port && n.proto == active.proto)
         {
             nodes.insert(0, active.clone());
         }
         let shared = Arc::new(Mutex::new(SharedState {
             nodes,
-            status: "Probing VPN routes & fetching fast nodes...".into(),
+            status: "Fetching & verifying live country VPN servers...".into(),
+            exit_info: None,
             scanning: false,
             generation: 0,
         }));
         let mut screen = Self {
             shared,
-            filter: FilterTab::All,
+            country_filter: String::new(),
+            extra_idx: 0,
             selected: None,
             scroll: Cell::new(Scroll::default()),
             adding_custom: false,
@@ -417,126 +646,194 @@ impl Screen {
             drag_last_y: None,
             drag_moved: 0.0,
         };
+        if active_vpn().is_some() {
+            screen.verify_active_exit_ip();
+        }
         screen.refresh_and_test();
         screen
     }
 
+    pub fn verify_active_exit_ip(&self) {
+        let Some(ep) = active_vpn() else {
+            self.shared.lock().unwrap().exit_info = None;
+            return;
+        };
+        let shared = Arc::clone(&self.shared);
+        {
+            let mut g = shared.lock().unwrap();
+            g.exit_info = Some(format!("Verifying tunnel IP ({})...", ep.label()));
+        }
+        std::thread::Builder::new()
+            .name("horizon-vpn-ip".into())
+            .spawn(move || {
+                let msg = match probe_vpn_exit_ip(&ep, Duration::from_secs(4)) {
+                    Ok((ip, ms)) => format!("Exit IP: {ip} · {ms}ms ({})", ep.label()),
+                    Err(e) => format!("{} ({e})", ep.label()),
+                };
+                if active_vpn().as_ref() == Some(&ep) {
+                    shared.lock().unwrap().exit_info = Some(msg);
+                }
+            })
+            .ok();
+    }
+
     pub fn refresh_and_test(&mut self) {
+        let focus_country = self.country_filter.clone();
         let mut guard = self.shared.lock().unwrap();
         guard.generation += 1;
         let generation = guard.generation;
         guard.scanning = true;
-        guard.status = "Testing routes & fetching live fast VPN nodes...".into();
-        for n in &mut guard.nodes {
-            n.testing = true;
-            n.working = None;
-            n.ping_ms = None;
-        }
-        let base_nodes: Vec<VpnNode> = guard
+        guard.status = "Fetching live VPNs (India, Singapore, USA, Dubai & more)...".into();
+        let preserved: Vec<VpnNode> = guard
             .nodes
             .iter()
-            .filter(|n| n.custom || n.local || n.proto == VpnProto::FastDns)
+            .filter(|n| n.custom)
             .cloned()
             .collect();
+        guard.nodes = preserved.clone();
         drop(guard);
 
         let shared = Arc::clone(&self.shared);
         std::thread::Builder::new()
             .name("horizon-vpn-scan".into())
             .spawn(move || {
-                // Phase 1: probe built-in DNS + local tunnels + custom nodes right away (<1.2s)
-                let probe_batch = |batch: Vec<VpnNode>, timeout_ms: u64| -> Vec<VpnNode> {
-                    let len = batch.len();
-                    let results = Arc::new(Mutex::new(vec![None; len]));
-                    let idx = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-                    let threads = len.min(24).max(1);
+                // Step 1: Quickly probe any installed local VPN daemons + custom nodes (300ms)
+                let mut quick_nodes = preserved;
+                quick_nodes.extend(local_daemon_candidates());
+                if !quick_nodes.is_empty() {
                     std::thread::scope(|s| {
-                        for _ in 0..threads {
-                            let idx = Arc::clone(&idx);
-                            let results = Arc::clone(&results);
-                            let batch_ref = &batch;
-                            s.spawn(move || {
-                                loop {
-                                    let i = idx.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                    if i >= len {
-                                        break;
+                        for node in &mut quick_nodes {
+                            s.spawn(|| {
+                                let ep = node.to_endpoint();
+                                let res = test_vpn_endpoint(&ep, Duration::from_millis(450));
+                                node.testing = false;
+                                match res {
+                                    Ok(ms) => {
+                                        node.working = Some(true);
+                                        node.ping_ms = Some(ms);
                                     }
-                                    let ep = batch_ref[i].to_endpoint();
-                                    let res = test_vpn_endpoint(&ep, Duration::from_millis(timeout_ms));
-                                    results.lock().unwrap()[i] = Some(res);
+                                    Err(_) => {
+                                        node.working = Some(false);
+                                    }
                                 }
                             });
                         }
                     });
-                    let mut out = batch;
-                    let res_guard = results.lock().unwrap();
-                    for (i, n) in out.iter_mut().enumerate() {
-                        n.testing = false;
-                        match &res_guard[i] {
-                            Some(Ok(ms)) => {
-                                n.working = Some(true);
-                                n.ping_ms = Some(*ms);
-                            }
-                            _ => {
-                                n.working = Some(false);
-                                n.ping_ms = None;
-                            }
-                        }
+                    let working_quick: Vec<VpnNode> = quick_nodes
+                        .into_iter()
+                        .filter(|n| n.custom || n.working == Some(true))
+                        .collect();
+                    let mut g = shared.lock().unwrap();
+                    if g.generation != generation {
+                        return;
                     }
-                    out
-                };
+                    g.nodes = working_quick;
+                    sort_nodes(&mut g.nodes);
+                }
 
-                let probed_base = probe_batch(base_nodes, 1100);
+                // Step 2: Fetch multi-country live SOCKS5 & HTTP tunnel nodes
+                let candidates = fetch_live_country_tunnels(&focus_country);
+                let total_candidates = candidates.len();
+                if total_candidates == 0 {
+                    let mut g = shared.lock().unwrap();
+                    if g.generation == generation {
+                        g.scanning = false;
+                        g.status = "No tunnel feeds reachable; use Add Custom or check internet".into();
+                    }
+                    return;
+                }
                 {
                     let mut g = shared.lock().unwrap();
                     if g.generation != generation {
                         return;
                     }
-                    g.nodes = probed_base.clone();
-                    sort_nodes(&mut g.nodes);
-                    let ok_count = g.nodes.iter().filter(|n| n.working == Some(true)).count();
-                    g.status = format!("{ok_count} fast routes ready · scanning global tunnels...");
+                    g.status = format!("Verifying {total_candidates} country VPN servers...");
                 }
 
-                // Phase 2: fetch live SOCKS5 & HTTP tunnels and verify them concurrently
-                let live_candidates = fetch_live_proxy_candidates();
-                let probed_live = probe_batch(live_candidates, 1400);
+                // Step 3: Stream verified working nodes progressively with 32 threads!
+                let idx = std::sync::atomic::AtomicUsize::new(0);
+                let tested = std::sync::atomic::AtomicUsize::new(0);
+                let threads = total_candidates.min(32).max(1);
+                std::thread::scope(|s| {
+                    for _ in 0..threads {
+                        s.spawn(|| {
+                            loop {
+                                if shared.lock().unwrap().generation != generation {
+                                    break;
+                                }
+                                let i = idx.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                if i >= total_candidates {
+                                    break;
+                                }
+                                let mut node = candidates[i].clone();
+                                let ep = node.to_endpoint();
+                                if let Ok(ms) = test_vpn_endpoint(&ep, Duration::from_millis(1800)) {
+                                    node.testing = false;
+                                    node.working = Some(true);
+                                    node.ping_ms = Some(ms);
+                                    let mut g = shared.lock().unwrap();
+                                    if g.generation != generation {
+                                        break;
+                                    }
+                                    if !g.nodes.iter().any(|existing| {
+                                        existing.host == node.host
+                                            && existing.port == node.port
+                                            && existing.proto == node.proto
+                                    }) {
+                                        g.nodes.push(node);
+                                        sort_nodes(&mut g.nodes);
+                                    }
+                                }
+                                let done =
+                                    tested.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                                if done % 12 == 0 {
+                                    let mut g = shared.lock().unwrap();
+                                    if g.generation == generation {
+                                        let ok = g.nodes.iter().filter(|n| n.working == Some(true)).count();
+                                        g.status = format!(
+                                            "Verified {ok} working VPNs ({done}/{total_candidates} tested)..."
+                                        );
+                                    }
+                                }
+                            }
+                        });
+                    }
+                });
+
                 let mut g = shared.lock().unwrap();
-                if g.generation != generation {
-                    return;
+                if g.generation == generation {
+                    g.scanning = false;
+                    sort_nodes(&mut g.nodes);
+                    let ok = g.nodes.iter().filter(|n| n.working == Some(true)).count();
+                    let countries: HashSet<&str> = g
+                        .nodes
+                        .iter()
+                        .filter(|n| n.working == Some(true) && !n.country_code.is_empty())
+                        .map(|n| n.country_code.as_str())
+                        .collect();
+                    g.status = format!(
+                        "{ok} verified working VPNs across {} countries",
+                        countries.len().max(1)
+                    );
                 }
-                let working_live: Vec<VpnNode> = probed_live
-                    .into_iter()
-                    .filter(|n| n.working == Some(true))
-                    .collect();
-                let live_count = working_live.len();
-                g.nodes = probed_base;
-                g.nodes.extend(working_live);
-                sort_nodes(&mut g.nodes);
-                let total_ok = g.nodes.iter().filter(|n| n.working == Some(true)).count();
-                g.scanning = false;
-                g.status = if live_count > 0 {
-                    format!("{total_ok} working VPN routes ({live_count} verified tunnels)")
-                } else {
-                    format!("{total_ok} working fast routes ready")
-                };
             })
             .ok();
     }
 
-    fn visible_nodes(&self) -> Vec<(usize, VpnNode)> {
+    fn visible_nodes(&self) -> Vec<VpnNode> {
         let g = self.shared.lock().unwrap();
         g.nodes
             .iter()
-            .enumerate()
-            .filter(|(_, n)| {
-                if !self.filter.matches(n) {
-                    return false;
+            .filter(|n| {
+                if self.country_filter.is_empty() {
+                    true
+                } else if self.country_filter == "GB" {
+                    n.country_code == "GB" || n.country_code == "UK"
+                } else {
+                    n.country_code == self.country_filter
                 }
-                // Keep custom, local tunnels, fast DNS routes, and all verified working live tunnels.
-                n.custom || n.local || n.proto == VpnProto::FastDns || n.working == Some(true)
             })
-            .map(|(i, n)| (i, n.clone()))
+            .cloned()
             .collect()
     }
 
@@ -563,7 +860,7 @@ impl Screen {
         if self.adding_custom {
             let valid = parse_custom_node(&self.custom_input).is_some();
             return vec![
-                b(cx - 100.0, 146.0, 200.0, "Add & Enable VPN", valid, 110),
+                b(cx - 100.0, 146.0, 200.0, "Add & Connect VPN", valid, 110),
                 b(cx - 100.0, 170.0, 200.0, "Cancel", true, 111),
             ];
         }
@@ -571,30 +868,37 @@ impl Screen {
         let visible = self.visible_nodes();
         let sel_node = self
             .selected
-            .and_then(|idx| visible.iter().find(|(i, _)| *i == idx).map(|(_, n)| n));
-        let is_selected_active = sel_node.is_some_and(|n| active.as_ref().is_some_and(|a| n.matches_endpoint(a)));
+            .as_ref()
+            .and_then(|id| visible.iter().find(|n| n.id == *id));
+        let is_selected_active =
+            sel_node.is_some_and(|n| active.as_ref().is_some_and(|a| n.matches_endpoint(a)));
         let toggle_label = if is_selected_active {
             "Disconnect"
         } else if sel_node.is_some() {
             "Connect"
         } else if active.is_some() {
-            "Disable VPN"
+            "Disconnect"
         } else {
             "Connect"
         };
         let can_toggle = sel_node.is_some() || active.is_some();
-        let footer_y = h - FOOTER + 12.0;
+        let footer_y = h - FOOTER + 14.0;
+        let extra_label = EXTRA_COUNTRIES[self.extra_idx].1;
 
         vec![
-            // Filter bar (top row under title)
-            b(cx - 152.0, 21.0, 72.0, "All", self.filter != FilterTab::All, 105),
-            b(cx - 76.0, 21.0, 74.0, "Tunnels", self.filter != FilterTab::Tunnels, 106),
-            b(cx + 2.0, 21.0, 74.0, "Fast DNS", self.filter != FilterTab::FastDns, 107),
-            b(cx + 80.0, 21.0, 72.0, "Refresh", true, 101),
+            // Country selector bar (row at y = 21)
+            b(cx - 160.0, 21.0, 34.0, "All", !self.country_filter.is_empty(), 105),
+            b(cx - 123.0, 21.0, 48.0, "India", self.country_filter != "IN", 106),
+            b(cx - 72.0, 21.0, 62.0, "Singapore", self.country_filter != "SG", 107),
+            b(cx - 7.0, 21.0, 40.0, "USA", self.country_filter != "US", 108),
+            b(cx + 36.0, 21.0, 48.0, "Dubai", self.country_filter != "AE", 109),
+            b(cx + 87.0, 21.0, 73.0, extra_label, true, 112),
             // Footer controls
-            b(cx - 152.0, footer_y, 98.0, toggle_label, can_toggle, 100),
-            b(cx - 50.0, footer_y, 98.0, "Add Custom", true, 102),
-            b(cx + 52.0, footer_y, 100.0, "Done", true, 103),
+            b(cx - 160.0, footer_y, 78.0, toggle_label, can_toggle, 100),
+            b(cx - 79.0, footer_y, 64.0, "Test IP", active.is_some(), 104),
+            b(cx - 12.0, footer_y, 58.0, "Refresh", true, 101),
+            b(cx + 49.0, footer_y, 62.0, "Custom", true, 102),
+            b(cx + 114.0, footer_y, 46.0, "Done", true, 103),
         ]
     }
 
@@ -610,17 +914,17 @@ impl Screen {
         let cx = (w / 2.0).floor();
 
         if self.adding_custom {
-            let title = "Add Custom VPN Tunnel";
+            let title = "Add Custom VPN Server";
             let tw = HudBatch::text_width(atlas, title);
             batch.text(atlas, title, cx - (tw.ceil() / 2.0).floor(), 24.0, u32::MAX, true);
 
-            let label = "socks5://ip:port, http://ip:port, or dns://ip";
+            let label = "socks5://ip:port or http://ip:port";
             batch.text(
                 atlas,
                 label,
                 cx - 100.0,
                 84.0,
-                super::rgba(160, 160, 160, 255),
+                rgba(160, 160, 160, 255),
                 true,
             );
             caret.draw(
@@ -631,26 +935,31 @@ impl Screen {
                 true,
                 self.focused_at,
             );
-            let hint = "Examples: 127.0.0.1:40000 or http://1.2.3.4:8080";
+            let hint = "Examples: socks5://1.2.3.4:1080 or http://5.6.7.8:8080";
             let hw = HudBatch::text_width(atlas, hint);
             batch.text(
                 atlas,
                 hint,
                 cx - (hw.ceil() / 2.0).floor(),
                 125.0,
-                super::rgba(140, 140, 140, 255),
+                rgba(140, 140, 140, 255),
                 true,
             );
             return;
         }
 
         let active = active_vpn();
-        let header_text = match &active {
-            Some(ep) => format!("VPN: ON ({})", ep.label()),
-            None => "VPN Networks (Direct)".to_owned(),
+        let (status, exit_info) = {
+            let g = self.shared.lock().unwrap();
+            (g.status.clone(), g.exit_info.clone())
+        };
+        let header_text = if let Some(ep) = &active {
+            exit_info.unwrap_or_else(|| format!("VPN: ON · {}", ep.label()))
+        } else {
+            "VPN Networks (Select a Country Server)".to_owned()
         };
         let header_color = if active.is_some() {
-            super::rgba(85, 255, 85, 255)
+            rgba(85, 255, 85, 255)
         } else {
             u32::MAX
         };
@@ -677,12 +986,29 @@ impl Screen {
         let millis = started.elapsed().as_millis();
         let hovered_row = self.row_at(cursor, (w, h), &visible);
 
-        for (row_idx, (real_idx, node)) in visible.iter().enumerate() {
+        if visible.is_empty() {
+            let empty_msg = if self.country_filter.is_empty() {
+                "Scanning & verifying working country VPNs..."
+            } else {
+                "No verified servers in this country yet — scanning or click Refresh"
+            };
+            let ew = HudBatch::text_width(atlas, empty_msg);
+            batch.text(
+                atlas,
+                empty_msg,
+                cx - (ew.ceil() / 2.0).floor(),
+                top + 24.0,
+                rgba(170, 170, 170, 255),
+                true,
+            );
+        }
+
+        for (row_idx, node) in visible.iter().enumerate() {
             let y = top + 2.0 - scroll.amount.trunc() + row_idx as f32 * ROW_HEIGHT;
             if y + ROW_HEIGHT < top || y > bottom {
                 continue;
             }
-            let is_selected = self.selected == Some(*real_idx);
+            let is_selected = self.selected.as_deref() == Some(node.id.as_str());
             let is_active = active.as_ref().is_some_and(|a| node.matches_endpoint(a));
             let is_hovered = hovered_row == Some(row_idx);
 
@@ -716,75 +1042,63 @@ impl Screen {
                 );
             }
 
-            let tag = format!("[{}]", node.proto.tag());
-            let tag_color = match node.proto {
-                VpnProto::FastDns => super::rgba(85, 255, 255, 255),
-                VpnProto::Socks5 => super::rgba(85, 255, 85, 255),
-                VpnProto::HttpConnect => super::rgba(255, 215, 85, 255),
-            };
-            batch.text(atlas, &tag, left + 5.0, y + 3.0, tag_color, false);
-            let tag_w = HudBatch::text_width(atlas, &tag).ceil();
             let title_color = if is_active {
-                super::rgba(85, 255, 85, 255)
+                rgba(85, 255, 85, 255)
             } else {
                 u32::MAX
             };
             let title_text = if is_active {
-                format!("{} (ON)", node.name)
+                format!("{} (CONNECTED)", node.name)
             } else {
                 node.name.clone()
             };
-            batch.text(
-                atlas,
-                &title_text,
-                left + 9.0 + tag_w,
-                y + 3.0,
-                title_color,
-                false,
-            );
+            batch.text(atlas, &title_text, left + 5.0, y + 3.0, title_color, false);
             batch.text(
                 atlas,
                 &node.region,
                 left + 5.0,
                 y + 13.0,
-                super::rgba(160, 160, 160, 255),
+                rgba(160, 160, 160, 255),
                 false,
             );
 
-            // Ping sprite + ms readout on the right side of the row
             let icon_x = left + ROW_WIDTH - 16.0;
             let (sprite, ping_label, ping_color) = if node.testing {
                 let frame = ((millis / 150) % 5) + 1;
                 (
                     format!("gui/sprites/icon/pinging_{frame}"),
                     "...".to_owned(),
-                    super::rgba(170, 170, 170, 255),
+                    rgba(170, 170, 170, 255),
                 )
             } else if let Some(ms) = node.ping_ms {
-                let bars = if ms < 60 {
+                let bars = if ms < 90 {
                     5
-                } else if ms < 130 {
+                } else if ms < 180 {
                     4
-                } else if ms < 240 {
+                } else if ms < 320 {
                     3
-                } else if ms < 450 {
+                } else if ms < 600 {
                     2
                 } else {
                     1
                 };
-                let color = if ms < 130 {
-                    super::rgba(85, 255, 85, 255)
-                } else if ms < 320 {
-                    super::rgba(255, 255, 85, 255)
+                let color = if ms < 180 {
+                    rgba(85, 255, 85, 255)
+                } else if ms < 400 {
+                    rgba(255, 255, 85, 255)
                 } else {
-                    super::rgba(255, 170, 85, 255)
+                    rgba(255, 170, 85, 255)
                 };
-                (format!("gui/sprites/icon/ping_{bars}"), format!("{ms}ms"), color)
+                (
+                    format!("gui/sprites/icon/ping_{bars}"),
+                    format!("{ms}ms"),
+                    color,
+                )
             } else {
                 (
                     "gui/sprites/icon/unreachable".to_owned(),
-                    if node.local { "Off".into() } else { "Timeout".into() },
-                    super::rgba(150, 150, 150, 255),
+                    "Check".into(),
+                    rgba(150, 150, 150, 255),
                 )
             };
             batch.sprite_scaled(atlas, &sprite, icon_x, y + 3.0, 10.0, 8.0, u32::MAX);
@@ -811,14 +1125,13 @@ impl Screen {
             scroll.amount,
         );
 
-        let status = self.shared.lock().unwrap().status.clone();
         let sw = HudBatch::text_width(atlas, &status);
         batch.text(
             atlas,
             &status,
             cx - (sw.ceil() / 2.0).floor(),
             bottom + 2.0,
-            super::rgba(170, 170, 170, 255),
+            rgba(180, 180, 180, 255),
             true,
         );
     }
@@ -827,7 +1140,7 @@ impl Screen {
         &self,
         cursor: (f32, f32),
         (w, h): (f32, f32),
-        visible: &[(usize, VpnNode)],
+        visible: &[VpnNode],
     ) -> Option<usize> {
         let (top, bottom, left) = Self::list_area(w, h);
         let (x, y) = cursor;
@@ -909,6 +1222,24 @@ impl Screen {
         self.drag_last_y = None;
     }
 
+    fn connect_or_disconnect_node(&mut self, node: &VpnNode) {
+        let active = active_vpn();
+        let already_active = active.as_ref().is_some_and(|a| node.matches_endpoint(a));
+        if already_active {
+            set_active_vpn(None);
+            let mut g = self.shared.lock().unwrap();
+            g.exit_info = None;
+            save_disk_config(None, &g.nodes);
+        } else {
+            set_active_vpn(Some(node.to_endpoint()));
+            {
+                let g = self.shared.lock().unwrap();
+                save_disk_config(Some(node), &g.nodes);
+            }
+            self.verify_active_exit_ip();
+        }
+    }
+
     /// Handles a click on the VPN screen. Returns `true` to return to the Title screen.
     pub fn click(&mut self, hit: Option<u8>, x: f32, y: f32, size: (f32, f32)) -> bool {
         let (w, h) = (size.0.ceil(), size.1.ceil());
@@ -916,16 +1247,18 @@ impl Screen {
             match hit {
                 Some(110) => {
                     if let Some(node) = parse_custom_node(&self.custom_input) {
-                        let ep = node.to_endpoint();
-                        set_active_vpn(Some(ep));
+                        set_active_vpn(Some(node.to_endpoint()));
                         {
                             let mut g = self.shared.lock().unwrap();
-                            g.nodes.retain(|n| !(n.host == node.host && n.port == node.port && n.proto == node.proto));
+                            g.nodes.retain(|n| {
+                                !(n.host == node.host && n.port == node.port && n.proto == node.proto)
+                            });
                             g.nodes.insert(0, node.clone());
                             save_disk_config(Some(&node), &g.nodes);
                         }
                         self.adding_custom = false;
                         self.custom_input.clear();
+                        self.verify_active_exit_ip();
                         self.refresh_and_test();
                     }
                     return false;
@@ -940,27 +1273,24 @@ impl Screen {
 
         match hit {
             Some(100) => {
-                // Connect / Disconnect / Disable
                 let visible = self.visible_nodes();
-                let active = active_vpn();
-                if let Some(sel_idx) = self.selected
-                    && let Some((_, node)) = visible.iter().find(|(i, _)| *i == sel_idx)
-                {
-                    let already_active = active.as_ref().is_some_and(|a| node.matches_endpoint(a));
-                    if already_active {
-                        set_active_vpn(None);
-                        let g = self.shared.lock().unwrap();
-                        save_disk_config(None, &g.nodes);
-                    } else {
-                        set_active_vpn(Some(node.to_endpoint()));
-                        let g = self.shared.lock().unwrap();
-                        save_disk_config(Some(node), &g.nodes);
-                    }
-                } else if active.is_some() {
+                let sel_node = self
+                    .selected
+                    .as_ref()
+                    .and_then(|id| visible.iter().find(|n| n.id == *id))
+                    .cloned();
+                if let Some(node) = sel_node {
+                    self.connect_or_disconnect_node(&node);
+                } else if active_vpn().is_some() {
                     set_active_vpn(None);
-                    let g = self.shared.lock().unwrap();
+                    let mut g = self.shared.lock().unwrap();
+                    g.exit_info = None;
                     save_disk_config(None, &g.nodes);
                 }
+                false
+            }
+            Some(104) => {
+                self.verify_active_exit_ip();
                 false
             }
             Some(101) => {
@@ -974,42 +1304,53 @@ impl Screen {
             }
             Some(103) => true,
             Some(105) => {
-                self.filter = FilterTab::All;
+                self.country_filter.clear();
+                self.extra_idx = 0;
                 self.scroll.set(Scroll::default());
                 false
             }
             Some(106) => {
-                self.filter = FilterTab::Tunnels;
+                self.country_filter = "IN".into();
+                self.extra_idx = 0;
                 self.scroll.set(Scroll::default());
                 false
             }
             Some(107) => {
-                self.filter = FilterTab::FastDns;
+                self.country_filter = "SG".into();
+                self.extra_idx = 0;
+                self.scroll.set(Scroll::default());
+                false
+            }
+            Some(108) => {
+                self.country_filter = "US".into();
+                self.extra_idx = 0;
+                self.scroll.set(Scroll::default());
+                false
+            }
+            Some(109) => {
+                self.country_filter = "AE".into();
+                self.extra_idx = 0;
+                self.scroll.set(Scroll::default());
+                false
+            }
+            Some(112) => {
+                self.extra_idx = (self.extra_idx + 1) % EXTRA_COUNTRIES.len();
+                self.country_filter = EXTRA_COUNTRIES[self.extra_idx].0.to_owned();
                 self.scroll.set(Scroll::default());
                 false
             }
             _ => {
                 let visible = self.visible_nodes();
                 if let Some(row_idx) = self.row_at((x, y), (w, h), &visible) {
-                    let (real_idx, node) = &visible[row_idx];
+                    let node = visible[row_idx].clone();
                     let now = Instant::now();
-                    let double = self.last_click.is_some_and(|(at, prev)| {
-                        prev == *real_idx && now.duration_since(at) < Duration::from_millis(350)
+                    let double = self.last_click.as_ref().is_some_and(|(at, prev)| {
+                        *prev == node.id && now.duration_since(*at) < Duration::from_millis(350)
                     });
-                    self.selected = Some(*real_idx);
-                    self.last_click = Some((now, *real_idx));
+                    self.selected = Some(node.id.clone());
+                    self.last_click = Some((now, node.id.clone()));
                     if double {
-                        let active = active_vpn();
-                        let already_active = active.as_ref().is_some_and(|a| node.matches_endpoint(a));
-                        if already_active {
-                            set_active_vpn(None);
-                            let g = self.shared.lock().unwrap();
-                            save_disk_config(None, &g.nodes);
-                        } else {
-                            set_active_vpn(Some(node.to_endpoint()));
-                            let g = self.shared.lock().unwrap();
-                            save_disk_config(Some(node), &g.nodes);
-                        }
+                        self.connect_or_disconnect_node(&node);
                     }
                 }
                 false
@@ -1039,11 +1380,14 @@ fn sort_nodes(nodes: &mut [VpnNode]) {
             .then_with(|| b.custom.cmp(&a.custom))
             .then_with(|| (b.working == Some(true)).cmp(&(a.working == Some(true))))
             .then_with(|| {
-                // Prefer actual encrypted proxy tunnels over plain FastDNS when both work cleanly,
-                // sorted by lowest measured latency.
+                let a_socks = matches!(a.proto, VpnProto::Socks5);
+                let b_socks = matches!(b.proto, VpnProto::Socks5);
                 let a_ms = a.ping_ms.unwrap_or(u128::MAX);
                 let b_ms = b.ping_ms.unwrap_or(u128::MAX);
-                a_ms.cmp(&b_ms)
+                // Prefer SOCKS5 slightly over HTTP when pings are similar, sorted fastest first.
+                let a_score = a_ms + if a_socks { 0 } else { 35 };
+                let b_score = b_ms + if b_socks { 0 } else { 35 };
+                a_score.cmp(&b_score)
             })
     });
 }

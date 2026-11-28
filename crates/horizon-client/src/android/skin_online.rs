@@ -83,15 +83,71 @@ pub(super) struct CapeItem {
     pub frame_runs: Vec<Vec<([f32; 4], u32)>>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DiskCapeEntry {
+    title: String,
+    subtitle: String,
+    source: String,
+    png_bytes: Vec<u8>,
+}
+
+const CAPES_DISK_CACHE_FILE: &str = "skin-online-capes-p1.json";
+
+fn load_capes_disk_cache() -> Vec<CapeItem> {
+    let Ok(raw) = std::fs::read(CAPES_DISK_CACHE_FILE) else {
+        return Vec::new();
+    };
+    let Ok(entries) = serde_json::from_slice::<Vec<DiskCapeEntry>>(&raw) else {
+        return Vec::new();
+    };
+    entries
+        .into_iter()
+        .filter_map(|e| {
+            let src: &'static str = match e.source.as_str() {
+                "KLauncher" => "KLauncher",
+                "SkinMC" => "SkinMC",
+                "Player" => "Player",
+                _ => "Online",
+            };
+            make_cape_item(e.title, e.subtitle, src, e.png_bytes)
+        })
+        .collect()
+}
+
+fn save_capes_disk_cache(items: &[CapeItem]) {
+    if items.is_empty() {
+        return;
+    }
+    let entries: Vec<DiskCapeEntry> = items
+        .iter()
+        .take(24)
+        .map(|c| DiskCapeEntry {
+            title: c.title.clone(),
+            subtitle: c.subtitle.clone(),
+            source: c.source.to_owned(),
+            png_bytes: c.png_bytes.clone(),
+        })
+        .collect();
+    if let Ok(bytes) = serde_json::to_vec(&entries) {
+        let _ = std::fs::write(CAPES_DISK_CACHE_FILE, bytes);
+    }
+}
+
 enum FetchUpdate {
-    SkinsPage {
+    SkinItem {
         generation: u64,
-        items: Vec<SkinItem>,
+        item: SkinItem,
+    },
+    SkinsDone {
+        generation: u64,
         status: String,
     },
-    CapesPage {
+    CapeItem {
         generation: u64,
-        items: Vec<CapeItem>,
+        item: CapeItem,
+    },
+    CapesDone {
+        generation: u64,
         status: String,
     },
 }
@@ -122,6 +178,28 @@ pub(super) struct SkinOnlineState {
 
 impl SkinOnlineState {
     pub fn new() -> Self {
+        let cached_capes = load_capes_disk_cache();
+        let has_disk_capes = !cached_capes.is_empty();
+        let mut page_cache = HashMap::new();
+        if has_disk_capes {
+            page_cache.insert(
+                PageCacheKey {
+                    tab: Tab::Capes,
+                    skin_cat: SkinCategory::Trending,
+                    cape_filter: CapeKindFilter::All,
+                    cape_source: CapeSourceFilter::All,
+                    page: 1,
+                    query: String::new(),
+                },
+                CachedPage::Capes {
+                    items: cached_capes.clone(),
+                    status: format!(
+                        "Loaded {} cached online capes + built-in animated/plain collection",
+                        cached_capes.len()
+                    ),
+                },
+            );
+        }
         Self {
             tab: Tab::Skins,
             skin_cat: SkinCategory::Trending,
@@ -132,14 +210,14 @@ impl SkinOnlineState {
             status: "Browse SkinMC skins & KLauncher animated/plain capes".into(),
             loading: false,
             fetched_skins_once: false,
-            fetched_capes_once: false,
+            fetched_capes_once: has_disk_capes,
             skins: Vec::new(),
-            capes: Vec::new(),
-            builtin_capes: build_builtin_capes(),
+            capes: cached_capes,
+            builtin_capes: cached_builtin_capes(),
             active_query: String::new(),
             generation: 0,
             worker: None,
-            page_cache: HashMap::new(),
+            page_cache,
             prefetch_worker: None,
             anim_origin: Instant::now(),
             syncing_equip: false,
@@ -150,6 +228,16 @@ impl SkinOnlineState {
     pub fn open_initial(&mut self) {
         if self.tab == Tab::Skins && !self.fetched_skins_once && !self.loading {
             self.fetch_current(String::new());
+            // Silently pre-warm Capes page 1 in the background so switching to Capes is instant!
+            let capes_p1 = PageCacheKey {
+                tab: Tab::Capes,
+                skin_cat: SkinCategory::Trending,
+                cape_filter: CapeKindFilter::All,
+                cape_source: CapeSourceFilter::All,
+                page: 1,
+                query: String::new(),
+            };
+            self.start_prefetch_key(capes_p1);
         } else if self.tab == Tab::Capes && !self.fetched_capes_once && !self.loading {
             self.fetch_current(String::new());
         }
@@ -160,6 +248,25 @@ impl SkinOnlineState {
             self.tab = tab;
             self.page = 1;
             self.scroll = 0.0;
+            if tab == Tab::Capes {
+                if let Some(CachedPage::Capes { items, status }) = self
+                    .page_cache
+                    .get(&PageCacheKey {
+                        tab: Tab::Capes,
+                        skin_cat: self.skin_cat,
+                        cape_filter: self.cape_filter,
+                        cape_source: self.cape_source,
+                        page: 1,
+                        query: query.trim().to_owned(),
+                    })
+                    .cloned()
+                {
+                    self.fetched_capes_once = true;
+                    self.capes = items;
+                    self.status = status;
+                    return;
+                }
+            }
             if (tab == Tab::Skins && !self.fetched_skins_once)
                 || (tab == Tab::Capes && !self.fetched_capes_once)
             {
@@ -226,46 +333,57 @@ impl SkinOnlineState {
         }
 
         self.loading = true;
-        self.status = match tab {
+        match tab {
             Tab::Skins => {
-                if q.is_empty() {
+                self.skins.clear();
+                self.status = if q.is_empty() {
                     format!("Loading SkinMC page {page}...")
                 } else {
                     format!("Searching '{q}' on Mojang & SkinMC...")
-                }
+                };
             }
             Tab::Capes => {
-                if q.is_empty() {
-                    format!("Loading KLauncher & SkinMC capes (page {page})...")
+                self.capes.clear();
+                self.status = if q.is_empty() {
+                    format!("Streaming KLauncher & SkinMC capes (page {page})...")
                 } else {
                     format!("Searching capes for '{q}'...")
-                }
+                };
             }
-        };
+        }
 
         let (tx, rx) = mpsc::channel();
         self.worker = Some(rx);
         std::thread::spawn(move || match tab {
             Tab::Skins => {
-                let (items, status) = fetch_skins_blocking(skin_cat, page, &q);
-                let _ = tx.send(FetchUpdate::SkinsPage { generation, items, status });
+                let status = fetch_skins_streaming(skin_cat, page, &q, |item| {
+                    let _ = tx.send(FetchUpdate::SkinItem { generation, item });
+                });
+                let _ = tx.send(FetchUpdate::SkinsDone { generation, status });
             }
             Tab::Capes => {
-                let (items, status) = fetch_capes_blocking(cape_filter, cape_source, page, &q);
-                let _ = tx.send(FetchUpdate::CapesPage { generation, items, status });
+                let status =
+                    fetch_capes_streaming(cape_filter, cape_source, page, &q, |item| {
+                        let _ = tx.send(FetchUpdate::CapeItem { generation, item });
+                    });
+                let _ = tx.send(FetchUpdate::CapesDone { generation, status });
             }
         });
     }
 
     fn start_prefetch(&mut self, current: PageCacheKey) {
-        if current.page >= 50 || self.prefetch_worker.is_some() {
+        if current.page >= 50 {
             return;
         }
         let next = PageCacheKey {
             page: current.page + 1,
             ..current
         };
-        if self.page_cache.contains_key(&next) {
+        self.start_prefetch_key(next);
+    }
+
+    fn start_prefetch_key(&mut self, next: PageCacheKey) {
+        if self.prefetch_worker.is_some() || self.page_cache.contains_key(&next) {
             return;
         }
         let key_clone = next.clone();
@@ -274,17 +392,27 @@ impl SkinOnlineState {
         std::thread::spawn(move || {
             let page = match key_clone.tab {
                 Tab::Skins => {
-                    let (items, status) =
-                        fetch_skins_blocking(key_clone.skin_cat, key_clone.page, &key_clone.query);
+                    let mut items = Vec::new();
+                    let status = fetch_skins_streaming(
+                        key_clone.skin_cat,
+                        key_clone.page,
+                        &key_clone.query,
+                        |item| items.push(item),
+                    );
                     CachedPage::Skins { items, status }
                 }
                 Tab::Capes => {
-                    let (items, status) = fetch_capes_blocking(
+                    let mut items = Vec::new();
+                    let status = fetch_capes_streaming(
                         key_clone.cape_filter,
                         key_clone.cape_source,
                         key_clone.page,
                         &key_clone.query,
+                        |item| items.push(item),
                     );
+                    if key_clone.page == 1 && key_clone.query.is_empty() {
+                        save_capes_disk_cache(&items);
+                    }
                     CachedPage::Capes { items, status }
                 }
             };
@@ -306,65 +434,92 @@ impl SkinOnlineState {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
-        let Some(rx) = &self.worker else {
+        let Some(rx) = self.worker.take() else {
             return;
         };
-        match rx.try_recv() {
-            Ok(FetchUpdate::SkinsPage { generation, items, status }) => {
-                self.worker = None;
-                if generation == self.generation {
-                    self.loading = false;
-                    self.fetched_skins_once = true;
-                    let key = PageCacheKey {
-                        tab: Tab::Skins,
-                        skin_cat: self.skin_cat,
-                        cape_filter: self.cape_filter,
-                        cape_source: self.cape_source,
-                        page: self.page,
-                        query: self.active_query.clone(),
-                    };
-                    self.page_cache.insert(
-                        key.clone(),
-                        CachedPage::Skins {
-                            items: items.clone(),
-                            status: status.clone(),
-                        },
-                    );
-                    self.skins = items;
-                    self.status = status;
-                    self.start_prefetch(key);
+        let mut keep_rx = true;
+        loop {
+            match rx.try_recv() {
+                Ok(FetchUpdate::SkinItem { generation, item }) => {
+                    if generation == self.generation {
+                        self.fetched_skins_once = true;
+                        self.skins.push(item);
+                        self.status = format!("Loaded {} skins...", self.skins.len());
+                    }
                 }
-            }
-            Ok(FetchUpdate::CapesPage { generation, items, status }) => {
-                self.worker = None;
-                if generation == self.generation {
-                    self.loading = false;
-                    self.fetched_capes_once = true;
-                    let key = PageCacheKey {
-                        tab: Tab::Capes,
-                        skin_cat: self.skin_cat,
-                        cape_filter: self.cape_filter,
-                        cape_source: self.cape_source,
-                        page: self.page,
-                        query: self.active_query.clone(),
-                    };
-                    self.page_cache.insert(
-                        key.clone(),
-                        CachedPage::Capes {
-                            items: items.clone(),
-                            status: status.clone(),
-                        },
-                    );
-                    self.capes = items;
-                    self.status = status;
-                    self.start_prefetch(key);
+                Ok(FetchUpdate::SkinsDone { generation, status }) => {
+                    keep_rx = false;
+                    if generation == self.generation {
+                        self.loading = false;
+                        self.fetched_skins_once = true;
+                        self.status = status.clone();
+                        let key = PageCacheKey {
+                            tab: Tab::Skins,
+                            skin_cat: self.skin_cat,
+                            cape_filter: self.cape_filter,
+                            cape_source: self.cape_source,
+                            page: self.page,
+                            query: self.active_query.clone(),
+                        };
+                        self.page_cache.insert(
+                            key.clone(),
+                            CachedPage::Skins {
+                                items: self.skins.clone(),
+                                status,
+                            },
+                        );
+                        self.start_prefetch(key);
+                    }
+                    break;
                 }
+                Ok(FetchUpdate::CapeItem { generation, item }) => {
+                    if generation == self.generation {
+                        self.fetched_capes_once = true;
+                        self.capes.push(item);
+                        self.status = format!(
+                            "Loaded {} online capes (streaming)...",
+                            self.capes.len()
+                        );
+                    }
+                }
+                Ok(FetchUpdate::CapesDone { generation, status }) => {
+                    keep_rx = false;
+                    if generation == self.generation {
+                        self.loading = false;
+                        self.fetched_capes_once = true;
+                        self.status = status.clone();
+                        let key = PageCacheKey {
+                            tab: Tab::Capes,
+                            skin_cat: self.skin_cat,
+                            cape_filter: self.cape_filter,
+                            cape_source: self.cape_source,
+                            page: self.page,
+                            query: self.active_query.clone(),
+                        };
+                        if key.page == 1 && key.query.is_empty() {
+                            save_capes_disk_cache(&self.capes);
+                        }
+                        self.page_cache.insert(
+                            key.clone(),
+                            CachedPage::Capes {
+                                items: self.capes.clone(),
+                                status,
+                            },
+                        );
+                        self.start_prefetch(key);
+                    }
+                    break;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    keep_rx = false;
+                    self.loading = false;
+                    break;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
             }
-            Err(mpsc::TryRecvError::Disconnected) => {
-                self.worker = None;
-                self.loading = false;
-            }
-            Err(mpsc::TryRecvError::Empty) => {}
+        }
+        if keep_rx {
+            self.worker = Some(rx);
         }
     }
 
@@ -1111,6 +1266,22 @@ fn make_skin_item(
     })
 }
 
+fn extract_cape_front_runs(sheet: &image::RgbaImage, frames: usize, frame_idx: usize) -> Vec<([f32; 4], u32)> {
+    let w = sheet.width().max(1);
+    let h = sheet.height().max(1);
+    let frame_h = (h / frames.max(1) as u32).max(1);
+    let y0 = frame_idx as u32 * frame_h;
+    let mut pixels = [[0u8; 4]; 160];
+    for py in 0..16u32 {
+        let sy = (y0 + ((1 + py) * frame_h) / 32).min(h - 1);
+        for px in 0..10u32 {
+            let sx = (((1 + px) * w) / 64).min(w - 1);
+            pixels[py as usize * 10 + px as usize] = sheet.get_pixel(sx, sy).0;
+        }
+    }
+    pack_runs(&pixels, 10, 16)
+}
+
 fn make_cape_item(
     title: String,
     subtitle: String,
@@ -1126,9 +1297,7 @@ fn make_cape_item(
         } else {
             (i * frames) / preview_count
         };
-        let frame = skins::cape_frame_64x32(&sheet, f_idx);
-        let front = skins::cape_front(&frame);
-        frame_runs.push(pack_runs(&front, 10, 16));
+        frame_runs.push(extract_cape_front_runs(&sheet, frames, f_idx));
     }
     Some(CapeItem {
         title,
@@ -1146,8 +1315,8 @@ fn shared_http_agent() -> &'static ureq::Agent {
     AGENT.get_or_init(|| {
         crate::proxy::agent(
             ureq::AgentBuilder::new()
-                .timeout_connect(Duration::from_secs(4))
-                .timeout_read(Duration::from_secs(7)),
+                .timeout_connect(Duration::from_secs(2))
+                .timeout_read(Duration::from_secs(4)),
             "https://skinmc.net",
         )
         .build()
@@ -1158,8 +1327,8 @@ fn http_agent(url: &str) -> ureq::Agent {
     if crate::proxy::spec_for(url).is_some() {
         crate::proxy::agent(
             ureq::AgentBuilder::new()
-                .timeout_connect(Duration::from_secs(4))
-                .timeout_read(Duration::from_secs(7)),
+                .timeout_connect(Duration::from_secs(2))
+                .timeout_read(Duration::from_secs(4)),
             url,
         )
         .build()
@@ -1240,18 +1409,20 @@ fn fetch_player_skin(username: &str) -> Option<SkinItem> {
     )
 }
 
-fn fetch_skins_blocking(
+fn fetch_skins_streaming(
     cat: SkinCategory,
     page: usize,
     query: &str,
-) -> (Vec<SkinItem>, String) {
-    let mut items = Vec::new();
+    mut on_item: impl FnMut(SkinItem) + Send,
+) -> String {
+    let mut count = 0usize;
     let mut seen_urls = HashSet::new();
 
     if !query.is_empty()
         && let Some(player_skin) = fetch_player_skin(query)
     {
-        items.push(player_skin);
+        count += 1;
+        on_item(player_skin);
     }
 
     let list_url = if !query.is_empty() {
@@ -1277,12 +1448,11 @@ fn fetch_skins_blocking(
     let html = match fetch_text(&list_url) {
         Ok(h) => h,
         Err(e) => {
-            let status = if items.is_empty() {
+            return if count == 0 {
                 format!("Could not reach SkinMC: {e}")
             } else {
-                format!("Found {} player skin (SkinMC offline)", items.len())
+                format!("Found {count} player skin (SkinMC offline)")
             };
-            return (items, status);
         }
     };
 
@@ -1323,238 +1493,257 @@ fn fetch_skins_blocking(
         }
     }
 
-    let downloaded = download_parallel(candidates, |(title, url, src)| {
-        let bytes = fetch_bytes(&url).ok()?;
-        make_skin_item(title, "SkinMC Community".into(), src, false, bytes)
-    });
-    items.extend(downloaded);
+    let emit = Mutex::new(&mut on_item);
+    let streamed = download_parallel_streaming(
+        candidates,
+        |(title, url, src)| {
+            let bytes = fetch_bytes(&url).ok()?;
+            make_skin_item(title, "SkinMC Community".into(), src, false, bytes)
+        },
+        |item| {
+            if let Ok(mut cb) = emit.lock() {
+                (*cb)(item);
+            }
+        },
+    );
+    count += streamed;
 
-    let status = if items.is_empty() {
+    if count == 0 {
         "No skins returned from SkinMC for this query.".into()
     } else {
-        format!("Loaded {} skins from SkinMC (page {page})", items.len())
-    };
-    (items, status)
+        format!("Loaded {count} skins from SkinMC (page {page})")
+    }
 }
 
-fn fetch_capes_blocking(
+fn fetch_capes_streaming(
     filter: CapeKindFilter,
     source: CapeSourceFilter,
     page: usize,
     query: &str,
-) -> (Vec<CapeItem>, String) {
-    let mut candidates: Vec<(String, String, &'static str)> = Vec::new();
-    let mut seen_urls = HashSet::new();
-    let mut items = Vec::new();
-
+    mut on_item: impl FnMut(CapeItem) + Send,
+) -> String {
     let need_player = !query.is_empty() && !query.contains(' ') && query.len() <= 16;
     let need_kl_anim = filter != CapeKindFilter::Plain && source != CapeSourceFilter::SkinMc;
     let need_kl_plain = filter != CapeKindFilter::Animated && source != CapeSourceFilter::SkinMc;
     let need_smc = source != CapeSourceFilter::KLauncher && page == 1;
 
-    let (player_res, kl_anim_html, kl_plain_html, smc_html) = std::thread::scope(|s| {
-        let h_player = s.spawn(move || {
-            if !need_player {
-                return Vec::new();
-            }
-            let api_url = format!("https://api.capes.dev/load/{}", url_encode_query(query));
-            let mut found = Vec::new();
-            if let Ok(text) = fetch_text(&api_url)
-                && let Ok(val) = serde_json::from_str::<serde_json::Value>(&text)
-                && let Some(obj) = val.as_object()
-            {
-                for (provider, entry) in obj {
-                    if let Some(img_url) = entry["imageUrl"].as_str()
-                        && entry["exists"].as_bool().unwrap_or(false)
-                    {
-                        found.push((
-                            format!("{query} ({provider})"),
-                            img_url.to_owned(),
-                            "Player",
-                        ));
-                    }
-                }
-            }
-            found
-        });
-        let h_kl_anim = s.spawn(move || {
-            if !need_kl_anim {
-                return None;
-            }
-            fetch_text(&format!("https://klauncher.gg/en/capes?category=4&page={page}")).ok()
-        });
-        let h_kl_plain = s.spawn(move || {
-            if !need_kl_plain {
-                return None;
-            }
-            fetch_text(&format!("https://klauncher.gg/en/capes?page={page}")).ok()
-        });
-        let h_smc = s.spawn(move || {
-            if !need_smc {
-                return None;
-            }
-            fetch_text("https://skinmc.net/capes").ok()
-        });
-        (
-            h_player.join().unwrap_or_default(),
-            h_kl_anim.join().ok().flatten(),
-            h_kl_plain.join().ok().flatten(),
-            h_smc.join().ok().flatten(),
-        )
-    });
+    let seen_urls = Arc::new(Mutex::new(HashSet::<String>::new()));
+    let emit = Arc::new(Mutex::new(&mut on_item));
+    let total_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
 
-    for (title, url, src) in player_res {
-        if seen_urls.insert(url.clone()) {
-            candidates.push((title, url, src));
+    let emit_cape = |item: CapeItem| {
+        total_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if let Ok(mut cb) = emit.lock() {
+            (*cb)(item);
         }
-    }
+    };
 
-    // 1. KLauncher Animated Capes (category=4)
-    if let Some(html) = kl_anim_html {
-        let re_anim = Regex::new(
-            r#"https://skin\.klaun\.ch/storage/capes/(?:anim_flat/)?([a-f0-9]{16,64})\.png"#,
-        )
-        .unwrap();
-        let mut count = 0usize;
-        for cap in re_anim.captures_iter(&html) {
-            let hash = &cap[1];
-            let full_url = format!("https://skin.klaun.ch/storage/capes/{hash}.png");
-            if seen_urls.insert(full_url.clone()) {
-                let title = extract_nearby_title(&html, cap.get(0).unwrap().start())
-                    .unwrap_or_else(|| format!("KL Animated #{}", count + 1));
-                candidates.push((title, full_url, "KLauncher"));
-                count += 1;
-                if count >= 8 {
-                    break;
-                }
-            }
-        }
-    }
-
-    // 2. KLauncher Plain Capes
-    if let Some(html) = kl_plain_html {
-        let re_plain = Regex::new(
-            r#"https://skin\.klaun\.ch/storage/capes/([a-f0-9]{16,64})\.png"#,
-        )
-        .unwrap();
-        let mut count = 0usize;
-        for cap in re_plain.captures_iter(&html) {
-            let hash = &cap[1];
-            let full_url = format!("https://skin.klaun.ch/storage/capes/{hash}.png");
-            if seen_urls.insert(full_url.clone()) {
-                let title = extract_nearby_title(&html, cap.get(0).unwrap().start())
-                    .unwrap_or_else(|| format!("KL Cape #{}", count + 1));
-                candidates.push((title, full_url, "KLauncher"));
-                count += 1;
-                if count >= 6 {
-                    break;
-                }
-            }
-        }
-        if count == 0 {
-            let re_detail = Regex::new(r#"/en/capes/(\d+)"#).unwrap();
-            let mut detail_ids = HashSet::new();
-            let mut detail_jobs = Vec::new();
-            for cap in re_detail.captures_iter(&html) {
-                let id = cap[1].to_owned();
-                if detail_ids.insert(id.clone()) {
-                    detail_jobs.push(id);
-                    if detail_jobs.len() >= 2 {
-                        break;
-                    }
-                }
-            }
-            for id in detail_jobs {
-                if let Ok(detail_html) = fetch_text(&format!("https://klauncher.gg/en/capes/{id}"))
-                    && let Some(m) = re_plain.captures(&detail_html)
+    std::thread::scope(|s| {
+        if need_player {
+            let seen = Arc::clone(&seen_urls);
+            let emit_fn = &emit_cape;
+            s.spawn(move || {
+                let api_url = format!("https://api.capes.dev/load/{}", url_encode_query(query));
+                let mut jobs = Vec::new();
+                if let Ok(text) = fetch_text(&api_url)
+                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(&text)
+                    && let Some(obj) = val.as_object()
                 {
-                    let full_url = m[0].to_owned();
-                    if seen_urls.insert(full_url.clone()) {
-                        let title = extract_nearby_title(&detail_html, 0)
-                            .unwrap_or_else(|| format!("KL Cape #{id}"));
-                        candidates.push((title, full_url, "KLauncher"));
+                    for (provider, entry) in obj {
+                        if let Some(img_url) = entry["imageUrl"].as_str()
+                            && entry["exists"].as_bool().unwrap_or(false)
+                            && seen.lock().is_ok_and(|mut g| g.insert(img_url.to_owned()))
+                        {
+                            jobs.push((
+                                format!("{query} ({provider})"),
+                                img_url.to_owned(),
+                                "Player",
+                            ));
+                        }
                     }
                 }
-            }
+                download_parallel_streaming(
+                    jobs,
+                    |(title, url, src)| {
+                        let bytes = fetch_bytes(&url).ok()?;
+                        make_cape_item(title, "Online Cape".into(), src, bytes)
+                    },
+                    |item| emit_fn(item),
+                );
+            });
         }
-    }
 
-    // 3. SkinMC Official / Community Capes
-    if let Some(html) = smc_html {
-        let re_smc = Regex::new(r#"/capes/(\d+)"#).unwrap();
-        let mut smc_ids = HashSet::new();
-        for cap in re_smc.captures_iter(&html) {
-            let id = cap[1].to_owned();
-            if smc_ids.insert(id.clone()) {
-                let dl_url = format!("https://skinmc.net/capes/{id}/download");
-                if seen_urls.insert(dl_url.clone()) {
-                    let title = extract_nearby_title(&html, cap.get(0).unwrap().start())
-                        .unwrap_or_else(|| format!("SkinMC Cape #{id}"));
-                    candidates.push((title, dl_url, "SkinMC"));
+        if need_kl_anim {
+            let seen = Arc::clone(&seen_urls);
+            let emit_fn = &emit_cape;
+            s.spawn(move || {
+                let Ok(html) =
+                    fetch_text(&format!("https://klauncher.gg/en/capes?category=4&page={page}"))
+                else {
+                    return;
+                };
+                let re_anim = Regex::new(
+                    r#"https://skin\.klaun\.ch/storage/capes/(?:anim_flat/)?([a-f0-9]{16,64})\.png"#,
+                )
+                .unwrap();
+                let mut jobs = Vec::new();
+                for cap in re_anim.captures_iter(&html) {
+                    let hash = &cap[1];
+                    let full_url = format!("https://skin.klaun.ch/storage/capes/{hash}.png");
+                    if seen.lock().is_ok_and(|mut g| g.insert(full_url.clone())) {
+                        let title = extract_nearby_title(&html, cap.get(0).unwrap().start())
+                            .unwrap_or_else(|| format!("KL Animated #{}", jobs.len() + 1));
+                        jobs.push((title, full_url, "KLauncher"));
+                        if jobs.len() >= 8 {
+                            break;
+                        }
+                    }
                 }
-                if smc_ids.len() >= 8 {
-                    break;
-                }
-            }
+                download_parallel_streaming(
+                    jobs,
+                    |(title, url, src)| {
+                        let bytes = fetch_bytes(&url).ok()?;
+                        make_cape_item(title, "klauncher.gg".into(), src, bytes)
+                    },
+                    |item| emit_fn(item),
+                );
+            });
         }
-    }
 
-    let downloaded = download_parallel(candidates, |(title, url, src)| {
-        let bytes = fetch_bytes(&url).ok()?;
-        let sub = match src {
-            "KLauncher" => "klauncher.gg".into(),
-            "SkinMC" => "skinmc.net".into(),
-            _ => "Online Cape".into(),
-        };
-        make_cape_item(title, sub, src, bytes)
+        if need_kl_plain {
+            let seen = Arc::clone(&seen_urls);
+            let emit_fn = &emit_cape;
+            s.spawn(move || {
+                let Ok(html) = fetch_text(&format!("https://klauncher.gg/en/capes?page={page}"))
+                else {
+                    return;
+                };
+                let re_plain = Regex::new(
+                    r#"https://skin\.klaun\.ch/storage/capes/([a-f0-9]{16,64})\.png"#,
+                )
+                .unwrap();
+                let mut jobs = Vec::new();
+                for cap in re_plain.captures_iter(&html) {
+                    let hash = &cap[1];
+                    let full_url = format!("https://skin.klaun.ch/storage/capes/{hash}.png");
+                    if seen.lock().is_ok_and(|mut g| g.insert(full_url.clone())) {
+                        let title = extract_nearby_title(&html, cap.get(0).unwrap().start())
+                            .unwrap_or_else(|| format!("KL Cape #{}", jobs.len() + 1));
+                        jobs.push((title, full_url, "KLauncher"));
+                        if jobs.len() >= 6 {
+                            break;
+                        }
+                    }
+                }
+                if jobs.is_empty() {
+                    let re_detail = Regex::new(r#"/en/capes/(\d+)"#).unwrap();
+                    let mut detail_ids = HashSet::new();
+                    let mut detail_jobs = Vec::new();
+                    for cap in re_detail.captures_iter(&html) {
+                        let id = cap[1].to_owned();
+                        if detail_ids.insert(id.clone()) {
+                            detail_jobs.push(id);
+                            if detail_jobs.len() >= 2 {
+                                break;
+                            }
+                        }
+                    }
+                    for id in detail_jobs {
+                        if let Ok(detail_html) =
+                            fetch_text(&format!("https://klauncher.gg/en/capes/{id}"))
+                            && let Some(m) = re_plain.captures(&detail_html)
+                        {
+                            let full_url = m[0].to_owned();
+                            if seen.lock().is_ok_and(|mut g| g.insert(full_url.clone())) {
+                                let title = extract_nearby_title(&detail_html, 0)
+                                    .unwrap_or_else(|| format!("KL Cape #{id}"));
+                                jobs.push((title, full_url, "KLauncher"));
+                            }
+                        }
+                    }
+                }
+                download_parallel_streaming(
+                    jobs,
+                    |(title, url, src)| {
+                        let bytes = fetch_bytes(&url).ok()?;
+                        make_cape_item(title, "klauncher.gg".into(), src, bytes)
+                    },
+                    |item| emit_fn(item),
+                );
+            });
+        }
+
+        if need_smc {
+            let seen = Arc::clone(&seen_urls);
+            let emit_fn = &emit_cape;
+            s.spawn(move || {
+                let Ok(html) = fetch_text("https://skinmc.net/capes") else {
+                    return;
+                };
+                let re_smc = Regex::new(r#"/capes/(\d+)"#).unwrap();
+                let mut smc_ids = HashSet::new();
+                let mut jobs = Vec::new();
+                for cap in re_smc.captures_iter(&html) {
+                    let id = cap[1].to_owned();
+                    if smc_ids.insert(id.clone()) {
+                        let dl_url = format!("https://skinmc.net/capes/{id}/download");
+                        if seen.lock().is_ok_and(|mut g| g.insert(dl_url.clone())) {
+                            let title = extract_nearby_title(&html, cap.get(0).unwrap().start())
+                                .unwrap_or_else(|| format!("SkinMC Cape #{id}"));
+                            jobs.push((title, dl_url, "SkinMC"));
+                        }
+                        if smc_ids.len() >= 8 {
+                            break;
+                        }
+                    }
+                }
+                download_parallel_streaming(
+                    jobs,
+                    |(title, url, src)| {
+                        let bytes = fetch_bytes(&url).ok()?;
+                        make_cape_item(title, "skinmc.net".into(), src, bytes)
+                    },
+                    |item| emit_fn(item),
+                );
+            });
+        }
     });
-    items.extend(downloaded);
 
-    let status = if items.is_empty() {
+    let total = total_count.load(std::sync::atomic::Ordering::Relaxed);
+    if total == 0 {
         "Showing built-in animated & plain capes (online catalog unavailable)".into()
     } else {
-        format!(
-            "Loaded {} online capes + built-in animated/plain collection",
-            items.len()
-        )
-    };
-    (items, status)
+        format!("Loaded {total} online capes + built-in animated/plain collection")
+    }
 }
 
-fn download_parallel<T: Send + 'static>(
+fn download_parallel_streaming<T: Send>(
     jobs: Vec<(String, String, &'static str)>,
-    worker: impl Fn((String, String, &'static str)) -> Option<T> + Send + Sync + 'static,
-) -> Vec<T> {
+    worker: impl Fn((String, String, &'static str)) -> Option<T> + Send + Sync,
+    on_item: impl Fn(T) + Send + Sync,
+) -> usize {
     if jobs.is_empty() {
-        return Vec::new();
+        return 0;
     }
-    let worker = Arc::new(worker);
-    let queue = Arc::new(Mutex::new(jobs.into_iter().enumerate()));
-    let results = Arc::new(Mutex::new(Vec::new()));
-    let threads = 10usize.min(queue.lock().map(|q| q.len()).unwrap_or(10)).max(1);
-    let mut handles = Vec::with_capacity(threads);
-    for _ in 0..threads {
-        let q = queue.clone();
-        let out = results.clone();
-        let w = worker.clone();
-        handles.push(std::thread::spawn(move || loop {
-            let next = q.lock().ok().and_then(|mut g| g.next());
-            let Some((idx, job)) = next else {
-                break;
-            };
-            if let Some(item) = w(job)
-                && let Ok(mut g) = out.lock()
-            {
-                g.push((idx, item));
-            }
-        }));
-    }
-    for h in handles {
-        let _ = h.join();
-    }
-    let mut vec = results.lock().map(|mut g| std::mem::take(&mut *g)).unwrap_or_default();
-    vec.sort_by_key(|(idx, _)| *idx);
-    vec.into_iter().map(|(_, item)| item).collect()
+    let count = jobs.len();
+    let queue = Mutex::new(jobs.into_iter());
+    let emitted = std::sync::atomic::AtomicUsize::new(0);
+    let threads = 16usize.min(count).max(1);
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| loop {
+                let next = queue.lock().ok().and_then(|mut g| g.next());
+                let Some(job) = next else {
+                    break;
+                };
+                if let Some(item) = worker(job) {
+                    emitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    on_item(item);
+                }
+            });
+        }
+    });
+    emitted.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 fn is_ui_noise_title(s: &str) -> bool {
@@ -1664,6 +1853,11 @@ fn encode_rgba_png(img: &image::RgbaImage) -> Option<Vec<u8>> {
     let mut cursor = std::io::Cursor::new(Vec::new());
     img.write_to(&mut cursor, image::ImageFormat::Png).ok()?;
     Some(cursor.into_inner())
+}
+
+fn cached_builtin_capes() -> Vec<CapeItem> {
+    static BUILTIN: OnceLock<Vec<CapeItem>> = OnceLock::new();
+    BUILTIN.get_or_init(build_builtin_capes).clone()
 }
 
 fn build_builtin_capes() -> Vec<CapeItem> {

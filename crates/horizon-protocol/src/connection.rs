@@ -301,7 +301,8 @@ fn resolve_a_via_udp_dns(dns_ip: &str, host: &str, port: u16, timeout: Duration)
     (!out.is_empty()).then_some(out)
 }
 
-/// Real protocol-level probe for a VPN endpoint; returns measured RTT in ms if working.
+/// Real end-to-end tunnel probe for a VPN endpoint; returns measured RTT in ms only if
+/// the proxy actually opens an outbound tunnel to `1.1.1.1:443`.
 pub fn test_vpn_endpoint(
     endpoint: &VpnEndpoint,
     timeout: Duration,
@@ -316,24 +317,10 @@ pub fn test_vpn_endpoint(
             }
         }
         VpnEndpoint::Socks5 { host, port, .. } => {
-            let addr: SocketAddr = format!("{host}:{port}")
-                .to_socket_addrs()
-                .map_err(|e| e.to_string())?
-                .next()
-                .ok_or_else(|| "Unresolved proxy".to_owned())?;
-            let mut stream = TcpStream::connect_timeout(&addr, timeout).map_err(|e| e.to_string())?;
-            let _ = stream.set_read_timeout(Some(timeout));
-            let _ = stream.set_write_timeout(Some(timeout));
-            stream
-                .write_all(&[0x05, 0x01, 0x00])
+            let stream = connect_via_socks5(host, *port, "1.1.1.1", 443, timeout)
                 .map_err(|e| e.to_string())?;
-            let mut reply = [0u8; 2];
-            stream.read_exact(&mut reply).map_err(|e| e.to_string())?;
-            if reply == [0x05, 0x00] {
-                Ok(start.elapsed().as_millis().max(1))
-            } else {
-                Err("SOCKS5 auth required or invalid".into())
-            }
+            let _ = stream.shutdown(Shutdown::Both);
+            Ok(start.elapsed().as_millis().max(1))
         }
         VpnEndpoint::HttpConnect { host, port, .. } => {
             let stream = connect_via_http(host, *port, "1.1.1.1", 443, timeout)
@@ -341,6 +328,51 @@ pub fn test_vpn_endpoint(
             let _ = stream.shutdown(Shutdown::Both);
             Ok(start.elapsed().as_millis().max(1))
         }
+    }
+}
+
+/// Connects through `endpoint` to `api.ipify.org:80` and returns the live external exit IP
+/// plus end-to-end RTT in milliseconds.
+pub fn probe_vpn_exit_ip(
+    endpoint: &VpnEndpoint,
+    timeout: Duration,
+) -> std::result::Result<(String, u128), String> {
+    let start = Instant::now();
+    let mut stream = match endpoint {
+        VpnEndpoint::Socks5 { host, port, .. } => {
+            connect_via_socks5(host, *port, "api.ipify.org", 80, timeout)
+                .map_err(|e| e.to_string())?
+        }
+        VpnEndpoint::HttpConnect { host, port, .. } => {
+            connect_via_http(host, *port, "api.ipify.org", 80, timeout)
+                .map_err(|e| e.to_string())?
+        }
+        VpnEndpoint::FastDns { dns_ip, .. } => {
+            let addrs = resolve_a_via_udp_dns(dns_ip, "api.ipify.org", 80, timeout)
+                .ok_or_else(|| "DNS resolution failed".to_owned())?;
+            connect_tcp_addrs("api.ipify.org", addrs, timeout).map_err(|e| e.to_string())?
+        }
+    };
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+    stream
+        .write_all(b"GET / HTTP/1.1\r\nHost: api.ipify.org\r\nConnection: close\r\n\r\n")
+        .map_err(|e| e.to_string())?;
+    let mut resp = Vec::with_capacity(512);
+    let _ = stream.read_to_end(&mut resp);
+    let text = String::from_utf8_lossy(&resp);
+    let body = text
+        .split_once("\r\n\r\n")
+        .map(|(_, b)| b.trim())
+        .unwrap_or("")
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim();
+    if body.parse::<IpAddr>().is_ok() {
+        Ok((body.to_owned(), start.elapsed().as_millis().max(1)))
+    } else {
+        Err("Tunnel connected (exit IP check blocked)".into())
     }
 }
 
