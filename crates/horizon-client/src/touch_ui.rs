@@ -7190,7 +7190,8 @@ impl TouchUi {
             for (ch, (lbl, frac, bar_c, val_txt)) in sliders.into_iter().enumerate() {
                 let sy = sl_y0 + ch as f32 * 34.0;
                 ui.text(Face::Medium, 9.0, rx, sy, text_c, lbl);
-                ui.text_right(Face::SemiBold, 9.0, rx + rw, sy, muted_c, &val_txt);
+                let vw = ui.measure(Face::SemiBold, 9.0, &val_txt);
+                ui.text(Face::SemiBold, 9.0, rx + rw - vw, sy, muted_c, &val_txt);
                 let bar_y = sy + 13.0;
                 ui.rounded(rx, bar_y, rw, 12.0, 6.0, well_bg);
                 let fill_w = (rw * frac.clamp(0.0, 1.0)).max(10.0);
