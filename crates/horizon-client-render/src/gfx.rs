@@ -675,6 +675,8 @@ pub struct Renderer {
     offscreen: Option<wgpu::Texture>,
     /// Offscreen submissions still on the GPU: at most two frames run ahead.
     in_flight: std::collections::VecDeque<wgpu::SubmissionIndex>,
+    #[cfg(target_os = "android")]
+    android_in_flight_timeouts: u32,
     /// Splitscreen: the caller waits for the GPU once every player has submitted
     /// (`wait_in_flight`), so one player's work overlaps the GPU drawing another's.
     pub paced_elsewhere: bool,
@@ -3898,6 +3900,8 @@ impl Renderer {
             spare_surface: std::sync::Mutex::new(None),
             offscreen,
             in_flight: std::collections::VecDeque::new(),
+            #[cfg(target_os = "android")]
+            android_in_flight_timeouts: 0,
             paced_elsewhere: false,
             first_frame: if previous.is_none() {
                 FirstFrame::Acquire
@@ -4217,6 +4221,7 @@ impl Renderer {
     pub fn suspend_surface(&mut self) {
         self.suspended = true;
         self.in_flight.clear();
+        self.android_in_flight_timeouts = 0;
         let _ = self.device.poll(wgpu::PollType::Poll);
         self.surface = None;
         self.spare_surface
@@ -4245,7 +4250,20 @@ impl Renderer {
         };
         let surface = match spare {
             Some(surface) => surface,
-            None => self.instance.create_surface(self.window.clone())?,
+            None => match self.instance.create_surface(self.window.clone()) {
+                Ok(surface) => surface,
+                Err(error) => {
+                    #[cfg(target_os = "android")]
+                    {
+                        log::warn!("Horizon renderer: surface recreation deferred ({error})");
+                        self.surface_unconfigured = true;
+                        self.suspended = false;
+                        return Ok(());
+                    }
+                    #[cfg(not(target_os = "android"))]
+                    return Err(error.into());
+                }
+            },
         };
         let configured = Self::configure(
             &self.device,
@@ -6216,6 +6234,15 @@ impl Renderer {
         }
         #[cfg(target_os = "android")]
         {
+            if self.suspended {
+                return Ok(false);
+            }
+            if self.surface.is_none() && self.offscreen.is_none() {
+                let _ = self.recreate_surface();
+                if self.surface.is_none() {
+                    return Ok(false);
+                }
+            }
             let _ = self.device.poll(wgpu::PollType::Poll);
             let max_in_flight = if self.pack_post.as_ref().is_some_and(|p| p.1.is_some())
                 || self.native.is_some()
@@ -6224,12 +6251,30 @@ impl Renderer {
             } else {
                 2
             };
-            while self.in_flight.len() > max_in_flight {
-                let index = self.in_flight.pop_front();
-                let _ = self.device.poll(wgpu::PollType::Wait {
-                    submission_index: index,
-                    timeout: Some(std::time::Duration::from_millis(8)),
-                });
+            while self.in_flight.len() >= max_in_flight {
+                let Some(index) = self.in_flight.front().cloned() else {
+                    break;
+                };
+                if self
+                    .device
+                    .poll(wgpu::PollType::Wait {
+                        submission_index: Some(index),
+                        timeout: Some(std::time::Duration::from_millis(16)),
+                    })
+                    .is_ok()
+                {
+                    self.in_flight.pop_front();
+                    self.android_in_flight_timeouts = 0;
+                } else {
+                    self.android_in_flight_timeouts =
+                        self.android_in_flight_timeouts.saturating_add(1);
+                    if self.android_in_flight_timeouts >= 30 {
+                        self.in_flight.pop_front();
+                        self.android_in_flight_timeouts = 0;
+                    } else {
+                        return Ok(false);
+                    }
+                }
             }
         }
         let started = Instant::now();

@@ -1594,6 +1594,8 @@ impl Settings {
         let prev_vibrate = self.vibrate;
         let prev_auto_jump = self.auto_jump;
         let prev_zero_latency = self.zero_latency_touch;
+        let prev_resolution_scale = self.resolution_scale_percent;
+        let prev_disable_game_animations = self.disable_game_animations;
         let mut loaded = Self::load_preset(game_home, style, id);
         let clean = loaded.preset_id.clone();
         loaded.active_mcpe_preset = if style == ControlStyle::Mcpe {
@@ -1622,6 +1624,8 @@ impl Settings {
         loaded.vibrate = prev_vibrate;
         loaded.auto_jump = prev_auto_jump;
         loaded.zero_latency_touch = prev_zero_latency;
+        loaded.resolution_scale_percent = prev_resolution_scale;
+        loaded.disable_game_animations = prev_disable_game_animations;
         *self = loaded;
         let _ = self.save_to(&game_home.join("horizon-touch.json"));
     }
@@ -1666,6 +1670,8 @@ impl Settings {
         let prev_vibrate = self.vibrate;
         let prev_auto_jump = self.auto_jump;
         let prev_zero_latency = self.zero_latency_touch;
+        let prev_resolution_scale = self.resolution_scale_percent;
+        let prev_disable_game_animations = self.disable_game_animations;
         let mut loaded = Self::load_preset(game_home, target, &target_preset_id);
         loaded.control_style = target;
         loaded.active_mcpe_preset = prev_mcpe;
@@ -1686,6 +1692,8 @@ impl Settings {
         loaded.vibrate = prev_vibrate;
         loaded.auto_jump = prev_auto_jump;
         loaded.zero_latency_touch = prev_zero_latency;
+        loaded.resolution_scale_percent = prev_resolution_scale;
+        loaded.disable_game_animations = prev_disable_game_animations;
         *self = loaded;
         let _ = self.save_to(&game_home.join("horizon-touch.json"));
     }
@@ -2852,6 +2860,25 @@ mod tests {
         settings.toggle_split_touch();
         assert!(settings.crosshair());
         assert_eq!(settings.mode, Mode::Crosshair);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolution_scale_persists_across_preset_and_system_switches() {
+        let tmp = std::env::temp_dir().join(format!("horizon-res-persist-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        let mut settings = Settings::default();
+        settings.resolution_scale_percent = 65;
+        settings.disable_game_animations = true;
+        settings.switch_control_system(&tmp, ControlStyle::GoyControl);
+        assert_eq!(settings.resolution_scale_percent, 65);
+        assert!(settings.disable_game_animations);
+
+        settings.select_preset(&tmp, ControlStyle::Mcpe, "default");
+        assert_eq!(settings.resolution_scale_percent, 65);
+        assert!(settings.disable_game_animations);
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

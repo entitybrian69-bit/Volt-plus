@@ -2226,6 +2226,7 @@ impl TouchUi {
                                 self.preset_dialog = None;
                                 self.custom_input_picker = crate::touch::PickerStep::None;
                                 self.custom_kb_drag = None;
+                                self.resolution_scale_dragging = false;
                                 self.sensitivity_dragging = false;
                                 self.pointer_size_dragging = false;
                                 self.mouse_speed_dragging = false;
@@ -3336,8 +3337,8 @@ impl TouchUi {
                     let sl_x = cx + 14.0;
                     let sl_w = (cw - 28.0).max(40.0);
                     let t = ((p[0] - sl_x) / sl_w).clamp(0.0, 1.0);
-                    let pct = (25.0 + t * 75.0).round() as u32;
-                    return Some(InGameMenuAction::SetResolutionScale(pct.clamp(25, 100)));
+                    let pct = (((25.0 + t * 75.0) / 5.0).round() as u32 * 5).clamp(25, 100);
+                    return Some(InGameMenuAction::SetResolutionScale(pct));
                 }
                 let sens_y = body_y + 118.0;
                 if inside([cx, sens_y, cw, 50.0]) {

@@ -172,6 +172,7 @@ jobs:
           ABI: ${{ matrix.abi }}
         run: |
           set -o pipefail
+          command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg)
           python3 tools/android_build.py --abi "$ABI" --public --profile release \
             --sdk "$ANDROID_HOME" --java-home "${JAVA_HOME_17_X64:-$JAVA_HOME}" --gradle "$(command -v gradle)" \
             --ndk-version 28.2.13676358 --build-tools-version 35.0.0 \

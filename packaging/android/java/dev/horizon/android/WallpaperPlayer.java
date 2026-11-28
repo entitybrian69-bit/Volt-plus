@@ -65,6 +65,48 @@ final class WallpaperPlayer {
         return new int[] { 1280, 720 };
     }
 
+    static boolean extractThumbnail(String videoPath, String outJpgPath, int targetW, int targetH) {
+        if (videoPath == null || outJpgPath == null || targetW <= 0 || targetH <= 0) return false;
+        android.media.MediaMetadataRetriever r = new android.media.MediaMetadataRetriever();
+        android.graphics.Bitmap raw = null;
+        android.graphics.Bitmap scaled = null;
+        try {
+            r.setDataSource(videoPath);
+            raw = r.getFrameAtTime(500_000L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+            if (raw == null) {
+                raw = r.getFrameAtTime(0L, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+            }
+            if (raw == null) return false;
+            int rw = raw.getWidth();
+            int rh = raw.getHeight();
+            if (rw <= 0 || rh <= 0) return false;
+            // Center-crop scale to targetW x targetH without distortion.
+            float scale = Math.max((float) targetW / rw, (float) targetH / rh);
+            int sw = Math.max(targetW, Math.round(rw * scale));
+            int sh = Math.max(targetH, Math.round(rh * scale));
+            android.graphics.Bitmap resized = android.graphics.Bitmap.createScaledBitmap(raw, sw, sh, true);
+            int ox = Math.max(0, (sw - targetW) / 2);
+            int oy = Math.max(0, (sh - targetH) / 2);
+            scaled = android.graphics.Bitmap.createBitmap(resized, ox, oy, targetW, targetH);
+            if (resized != raw && resized != scaled) resized.recycle();
+            java.io.File outFile = new java.io.File(outJpgPath);
+            java.io.File parent = outFile.getParentFile();
+            if (parent != null && !parent.exists()) parent.mkdirs();
+            java.io.File tmp = new java.io.File(outJpgPath + ".part");
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tmp)) {
+                scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 84, fos);
+                fos.flush();
+            }
+            return tmp.renameTo(outFile);
+        } catch (Throwable ignored) {
+            return false;
+        } finally {
+            if (scaled != null) scaled.recycle();
+            if (raw != null) raw.recycle();
+            try { r.release(); } catch (Throwable ignored) {}
+        }
+    }
+
     void start(String path, int sourceWidth, int sourceHeight, int w, int h) {
         final int id;
         synchronized (lock) { id = ++generation; ready = false; status = "Preparing wallpaper..."; }

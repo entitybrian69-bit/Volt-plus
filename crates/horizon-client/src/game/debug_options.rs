@@ -162,7 +162,13 @@ impl Game<'_> {
         let size = self.renderer.as_ref().map_or([1280, 720], |r| {
             [r.config.width as i32, r.config.height as i32]
         });
-        let max = horizon_client::window::calculate_scale(size, 0, self.settings.force_unicode);
+        let auto_max = horizon_client::window::calculate_scale(size, 0, self.settings.force_unicode);
+        #[cfg(target_os = "android")]
+        let max = auto_max
+            .max(4)
+            .min((size[0].max(1) / 80).min(size[1].max(1) / 60).max(1));
+        #[cfg(not(target_os = "android"))]
+        let max = auto_max;
         let current = self.settings.file.int("debugGuiScale").clamp(-1, max);
         let next = match (back, current) {
             (false, c) if c >= max => -1,

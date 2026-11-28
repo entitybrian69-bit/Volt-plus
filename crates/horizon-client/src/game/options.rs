@@ -387,7 +387,18 @@ impl Game<'_> {
                 Event::ButtonClick => self.audio.play_button_click(),
                 Event::Changed => {
                     #[cfg(target_os = "android")]
-                    crate::save_input_mode();
+                    {
+                        crate::save_input_mode();
+                        if self.ui.options.page() == Page::Video {
+                            let pct = self.settings.horizon.resolution_scale.clamp(25, 100);
+                            if self.settings.touch.resolution_scale_percent != pct {
+                                self.settings.touch.resolution_scale_percent = pct;
+                                self.pad.touch.settings.resolution_scale_percent = pct;
+                                let _ = self.pad.touch.settings.save();
+                                super::android_input::sync_launcher_render_scale(pct);
+                            }
+                        }
+                    }
                     self.settings.save(&Self::options_path());
                     self.apply_settings();
                     self.sync_mods();

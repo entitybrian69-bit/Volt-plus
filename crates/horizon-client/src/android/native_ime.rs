@@ -1103,6 +1103,45 @@ pub fn wallpaper_status() -> Option<String> {
     match result { Ok(status) => Some(status), Err(_) => { let _ = env.exception_clear(); None } }
 }
 
+pub fn wallpaper_extract_thumbnail(
+    video_path: &std::path::Path,
+    out_jpg: &std::path::Path,
+    width: u32,
+    height: u32,
+) -> bool {
+    let Some(ui) = UI.get() else {
+        return false;
+    };
+    let Ok(mut env) = ui.vm.attach_current_thread() else {
+        return false;
+    };
+    let result = env.with_local_frame(8, |env| -> jni::errors::Result<bool> {
+        let v = JObject::from(env.new_string(video_path.to_string_lossy().as_ref())?);
+        let o = JObject::from(env.new_string(out_jpg.to_string_lossy().as_ref())?);
+        let ok = env
+            .call_method(
+                &ui.activity,
+                "extractWallpaperThumbnail",
+                "(Ljava/lang/String;Ljava/lang/String;II)Z",
+                &[
+                    JValue::Object(&v),
+                    JValue::Object(&o),
+                    JValue::Int(width as i32),
+                    JValue::Int(height as i32),
+                ],
+            )?
+            .z()?;
+        Ok(ok)
+    });
+    match result {
+        Ok(ok) => ok,
+        Err(_) => {
+            let _ = env.exception_clear();
+            false
+        }
+    }
+}
+
 fn music_call_void(method: &str) {
     let Some(ui) = UI.get() else {
         return;

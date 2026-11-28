@@ -1093,13 +1093,19 @@ pub const fn rgb(c: u32, a: u8) -> u32 {
 }
 impl HudBatch {
     /// Window.calculateScale: the largest scale keeping >= 320x240 GUI pixels,
-    /// capped by the GUI Scale option (0 = auto).
+    /// capped by the GUI Scale option (0 = auto). On Android, explicit non-Auto
+    /// scales allow smaller logical sizes so GUI scale remains customizable at
+    /// lowered resolutions.
     pub fn new(window: [u32; 2]) -> Self {
         let limit = GUI_SCALE.load(std::sync::atomic::Ordering::Relaxed);
         let mut scale = 1;
+        #[cfg(target_os = "android")]
+        let (min_w, min_h) = if limit > 0 { (80, 60) } else { (320, 240) };
+        #[cfg(not(target_os = "android"))]
+        let (min_w, min_h) = (320, 240);
         while (limit == 0 || scale < limit)
-            && window[0] / (scale + 1) >= 320
-            && window[1] / (scale + 1) >= 240
+            && window[0] / (scale + 1) >= min_w
+            && window[1] / (scale + 1) >= min_h
         {
             scale += 1;
         }

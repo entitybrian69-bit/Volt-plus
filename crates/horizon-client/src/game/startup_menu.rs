@@ -168,7 +168,8 @@ impl StartupMenu {
             horizon_client::ui_theme::motion::set_game_animations_disabled(
                 game.pad.touch.settings.disable_game_animations,
             );
-            if game.pad.touch.settings.resolution_scale_percent >= 25
+            if game.settings.horizon.resolution_scale <= 100
+                && game.pad.touch.settings.resolution_scale_percent >= 25
                 && game.pad.touch.settings.resolution_scale_percent <= 100
             {
                 game.settings.horizon.resolution_scale =
@@ -620,6 +621,16 @@ impl Loading {
                     self.menu.controls.open_editor();
                 }
                 Event::Changed => {
+                    #[cfg(target_os = "android")]
+                    if self.menu.options.page() == Page::Video {
+                        let pct = self.settings.horizon.resolution_scale.clamp(25, 100);
+                        if self.settings.touch.resolution_scale_percent != pct {
+                            self.settings.touch.resolution_scale_percent = pct;
+                            self.menu.controls.settings.resolution_scale_percent = pct;
+                            let _ = self.menu.controls.settings.save();
+                            super::android_input::sync_launcher_render_scale(pct);
+                        }
+                    }
                     self.save_menu_settings();
                     self.apply_menu_settings();
                 }

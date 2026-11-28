@@ -408,7 +408,9 @@ impl Config {
         }
         settings.horizon.cave_culling = true;
         settings.horizon.entity_culling = true;
-        settings.horizon.resolution_scale = self.render_scale.percent().clamp(25, 100);
+        if !(self.render_scale.percent() == 100 && settings.horizon.resolution_scale > 100) {
+            settings.horizon.resolution_scale = self.render_scale.percent().clamp(25, 100);
+        }
         match self.renderer {
             RendererMode::OpenGl => {
                 settings.horizon.api = horizon_client::graphics::GraphicsApi::OpenGl;
@@ -3928,7 +3930,6 @@ impl Catalog {
                     match crate::display::RenderScale::parse(&self.render_scale_text) {
                         Ok(scale) => {
                             self.config.render_scale = scale;
-                            crate::display::set_scale(scale);
                         }
                         Err(error) => {
                             self.status = error.into();

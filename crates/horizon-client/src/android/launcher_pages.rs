@@ -1399,22 +1399,41 @@ impl Launcher {
         glass.text_primary = color::hex(0xffffff, fg_a);
         glass.text_muted = color::hex(0xd9d3e5, fg_a);
         if let Some([r, g, b]) = self.wallpaper_color {
+            let [ar, ag, ab] = self.wallpaper_accent.unwrap_or([r, g, b]);
             let rgb = |r: u8, g: u8, b: u8| (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
-            let dark = |v: u8| (u16::from(v) * 18 / 100 + 12).min(90) as u8;
-            let medium = |v: u8| (u16::from(v) * 55 / 100 + 50).min(215) as u8;
-            let light = |v: u8| (u16::from(v) * 50 / 100 + 128).min(245) as u8;
-            glass.bg_solid = color::hex(rgb(dark(r), dark(g), dark(b)), scale_a(235, 16));
-            glass.sidebar_bg = color::hex(rgb(dark(r), dark(g), dark(b)), scale_a(205, 16));
-            glass.header_bg = color::hex(rgb(dark(r), dark(g), dark(b)), scale_a(205, 16));
-            glass.surface = color::hex(rgb(dark(r), dark(g), dark(b)), scale_a(185, 16));
-            glass.surface_dim = color::hex(rgb(dark(r), dark(g), dark(b)), scale_a(165, 14));
-            glass.surface_bright = color::hex(rgb(medium(r), medium(g), medium(b)), scale_a(185, 18));
-            glass.surface_selected = color::hex(rgb(medium(r), medium(g), medium(b)), scale_a(165, 18));
-            glass.border = color::hex(rgb(light(r), light(g), light(b)), scale_a(165, 24));
-            glass.border_strong = color::hex(rgb(light(r), light(g), light(b)), scale_a(220, 42));
-            glass.accent = color::hex(rgb(light(r), light(g), light(b)), fg_a);
-            glass.accent_soft = color::hex(rgb(medium(r), medium(g), medium(b)), scale_a(145, 14));
+            let mix = |a: u8, b: u8, num: u16, den: u16| -> u8 {
+                ((u16::from(a) * (den - num) + u16::from(b) * num) / den).min(255) as u8
+            };
+            // Blend base scene mood with vibrant accent for rich Material You dark glass surfaces.
+            let surf = [mix(r, ar, 28, 100), mix(g, ag, 28, 100), mix(b, ab, 28, 100)];
+            let dark = |v: u8| (u16::from(v) * 18 / 100 + 11).min(78) as u8;
+            let deeper = |v: u8| (u16::from(v) * 14 / 100 + 8).min(64) as u8;
+            let medium = |v: u8| (u16::from(v) * 58 / 100 + 44).min(215) as u8;
+            let bright = |v: u8| (u16::from(v) * 58 / 100 + 108).min(250) as u8;
+            let accent_rgb_tuple = (bright(ar), bright(ag), bright(ab));
+            let accent_hex = rgb(accent_rgb_tuple.0, accent_rgb_tuple.1, accent_rgb_tuple.2);
+            let accent_luma = u16::from(accent_rgb_tuple.0) * 3
+                + u16::from(accent_rgb_tuple.1) * 6
+                + u16::from(accent_rgb_tuple.2);
+            let muted_hex = rgb(
+                mix(220, accent_rgb_tuple.0, 24, 100),
+                mix(216, accent_rgb_tuple.1, 24, 100),
+                mix(232, accent_rgb_tuple.2, 24, 100),
+            );
+            glass.bg_solid = color::hex(rgb(dark(surf[0]), dark(surf[1]), dark(surf[2])), scale_a(236, 16));
+            glass.sidebar_bg = color::hex(rgb(deeper(surf[0]), deeper(surf[1]), deeper(surf[2])), scale_a(212, 16));
+            glass.header_bg = color::hex(rgb(dark(surf[0]), dark(surf[1]), dark(surf[2])), scale_a(212, 16));
+            glass.surface = color::hex(rgb(dark(surf[0]), dark(surf[1]), dark(surf[2])), scale_a(188, 16));
+            glass.surface_dim = color::hex(rgb(deeper(surf[0]), deeper(surf[1]), deeper(surf[2])), scale_a(168, 14));
+            glass.surface_bright = color::hex(rgb(medium(ar), medium(ag), medium(ab)), scale_a(185, 18));
+            glass.surface_selected = color::hex(rgb(medium(ar), medium(ag), medium(ab)), scale_a(175, 18));
+            glass.border = color::hex(accent_hex, scale_a(165, 24));
+            glass.border_strong = color::hex(accent_hex, scale_a(225, 42));
+            glass.accent = color::hex(accent_hex, fg_a);
+            glass.accent_soft = color::hex(rgb(medium(ar), medium(ag), medium(ab)), scale_a(145, 14));
+            glass.on_accent = color::hex(if accent_luma > 1350 { 0x14101C } else { 0xFFFFFF }, fg_a);
             glass.accent_text = glass.accent;
+            glass.text_muted = color::hex(muted_hex, fg_a);
         }
         horizon_client::ui_theme::set_active_theme(glass);
         let result = self.draw_pages_with(&mut r, &gui);
@@ -1480,12 +1499,18 @@ impl Launcher {
                 };
                 if let Some(bytes) = frame.as_ref() {
                     self.wallpaper_has_frame = true;
-                    if let Some(sample) = crate::wallpapers::sample_color(bytes) {
+                    if let Some((base, accent)) = crate::wallpapers::sample_theme_colors(bytes) {
                         self.wallpaper_color = Some(match self.wallpaper_color {
                             Some(old) => std::array::from_fn(|i| {
-                                ((u16::from(old[i]) * 15 + u16::from(sample[i])) / 16) as u8
+                                ((u16::from(old[i]) * 15 + u16::from(base[i])) / 16) as u8
                             }),
-                            None => sample,
+                            None => base,
+                        });
+                        self.wallpaper_accent = Some(match self.wallpaper_accent {
+                            Some(old) => std::array::from_fn(|i| {
+                                ((u16::from(old[i]) * 15 + u16::from(accent[i])) / 16) as u8
+                            }),
+                            None => accent,
                         });
                     }
                 }
@@ -1514,10 +1539,14 @@ impl Launcher {
                 let frame = if self.focused && expected > 0 { crate::native_ime::wallpaper_frame(expected, &mut self.wallpaper_buffer) } else { None };
                 if let Some(bytes) = frame.as_ref() {
                     self.wallpaper_has_frame = true;
-                    if let Some(sample) = crate::wallpapers::sample_color(bytes) {
+                    if let Some((base, accent)) = crate::wallpapers::sample_theme_colors(bytes) {
                         self.wallpaper_color = Some(match self.wallpaper_color {
-                            Some(old) => std::array::from_fn(|i| ((u16::from(old[i]) * 15 + u16::from(sample[i])) / 16) as u8),
-                            None => sample,
+                            Some(old) => std::array::from_fn(|i| ((u16::from(old[i]) * 15 + u16::from(base[i])) / 16) as u8),
+                            None => base,
+                        });
+                        self.wallpaper_accent = Some(match self.wallpaper_accent {
+                            Some(old) => std::array::from_fn(|i| ((u16::from(old[i]) * 15 + u16::from(accent[i])) / 16) as u8),
+                            None => accent,
                         });
                     }
                 }
@@ -1555,6 +1584,7 @@ impl Launcher {
                 .map_or(0.0, |t| (t.elapsed().as_secs_f32() / 1.6).min(1.0))
         };
         custom_background_poll(&self.home);
+        self.poll_wallpaper_previews();
         self.targets.clear();
         SLIDER_TRACK_TARGETS.with(|t| t.borrow_mut().clear());
         self.list_targets.clear();
@@ -2627,7 +2657,13 @@ impl Launcher {
                     self.custom_photo_loaded_path = Some(rel);
                     self.custom_photo_rgba = Some((pw, ph, rgba));
                     self.custom_photo_dirty = true;
-                    self.wallpaper_color = sample;
+                    if let Some((base, accent)) = sample {
+                        self.wallpaper_color = Some(base);
+                        self.wallpaper_accent = Some(accent);
+                    } else {
+                        self.wallpaper_color = None;
+                        self.wallpaper_accent = None;
+                    }
                     self.wallpaper_status = "Custom photo equipped".into();
                 }
                 Err(e) => {
@@ -2688,6 +2724,7 @@ impl Launcher {
                     self.catalog.config.custom_wallpaper_is_video = is_video;
                     self.wallpaper_has_frame = false;
                     self.wallpaper_color = None;
+                    self.wallpaper_accent = None;
                     self.custom_photo_rgba = None;
                     self.custom_photo_loaded_path = None;
                     self.custom_photo_dirty = false;
@@ -2708,21 +2745,40 @@ impl Launcher {
         }
         if let Some(result) = self.wallpaper_worker.as_ref().and_then(|worker| worker.try_recv().ok()) {
             self.wallpaper_worker = None;
+            self.wallpaper_downloading = None;
             match result {
                 Ok((idx, msg)) => {
-                    self.catalog.config.custom_wallpaper_path = None;
-                    self.catalog.config.custom_wallpaper_is_video = false;
-                    self.custom_photo_rgba = None;
-                    self.custom_photo_loaded_path = None;
-                    self.custom_photo_dirty = false;
-                    self.catalog.config.wallpaper_index = Some(idx);
-                    self.wallpaper_has_frame = false;
-                    self.wallpaper_color = None;
-                    let _ = self.catalog.config.save(&self.home);
+                    if idx < self.wallpaper_downloaded.len() {
+                        self.wallpaper_downloaded[idx] = true;
+                    }
+                    let _ = self.equip_wallpaper(idx);
                     self.wallpaper_status = msg;
-                    self.start_wallpaper();
+                    if idx < self.wallpaper_previews.len() && self.wallpaper_previews[idx].is_none() {
+                        let home = self.home.clone();
+                        let (tx, rx) = mpsc::channel();
+                        if self.wallpaper_preview_worker.is_none() {
+                            self.wallpaper_preview_worker = Some(rx);
+                            std::thread::spawn(move || {
+                                if let Some((w, h, rgba, palette)) =
+                                    crate::wallpapers::load_or_fetch_preview(&home, idx)
+                                {
+                                    let _ = tx.send((idx, w, h, rgba, palette));
+                                }
+                            });
+                        }
+                    }
+                    if let Some(next) = self.wallpaper_queued_download.take()
+                        && next != idx
+                    {
+                        if self.wallpaper_downloaded.get(next).copied().unwrap_or(false) {
+                            let _ = self.equip_wallpaper(next);
+                        } else {
+                            self.begin_wallpaper_download(next);
+                        }
+                    }
                 }
                 Err(e) => {
+                    self.wallpaper_queued_download = None;
                     self.wallpaper_status = format!("Download failed: {e}");
                 }
             }
@@ -2733,25 +2789,33 @@ impl Launcher {
             self.list_view = None;
             let modal_scrim_a = (220.0 * self.catalog.config.theme.ui_opacity.clamp(0.10, 1.0)).round() as u8;
             ui.fill(0.0, 0.0, w, full_h, horizon_client::hud::rgba(4, 5, 10, modal_scrim_a));
-            let mx = 16.0;
-            let mw = (w - 32.0).max(200.0);
-            let my = 12.0;
-            let mh = (full_h - 24.0).max(180.0);
+            let mx = 14.0;
+            let mw = (w - 28.0).max(240.0);
+            let my = 10.0;
+            let mh = (full_h - 20.0).max(200.0);
             ui.rounded(mx, my, mw, mh, 18.0, my3_surface());
             ui.border(mx, my, mw, mh, 18.0, my3_border());
-            ui.text(Face::SemiBold, 17.0, mx + 16.0, my + 12.0, my3_text(), "Background images");
-            let upload_w = if mw >= 480.0 { 150.0 } else { 116.0 };
-            let upload_lbl = if mw >= 480.0 { "Upload Photo/Video" } else { "Upload" };
+            ui.text(Face::SemiBold, 16.5, mx + 16.0, my + 10.0, my3_text(), "Background images");
+            let sub_hdr = format!(
+                "{} live wallpapers · 100% resolution",
+                crate::wallpapers::WALLPAPERS.len()
+            );
+            let upload_w = if mw >= 520.0 { 148.0 } else { 104.0 };
+            let upload_lbl = if mw >= 520.0 { "Upload Photo/Video" } else { "Upload" };
+            let hdr_btn_left = mx + mw - 160.0 - upload_w;
+            let sub_max_w = (hdr_btn_left - (mx + 22.0)).max(80.0);
+            let sub_fit = ui.fit_text(Face::Regular, 9.5, &sub_hdr, sub_max_w);
+            ui.text(Face::Regular, 9.5, mx + 16.0, my + 30.0, my3_muted(), &sub_fit);
             button(
                 &mut ui,
                 &mut self.targets,
-                [mx + mw - 164.0 - upload_w, my + 8.0, upload_w, 30.0],
+                [hdr_btn_left, my + 9.0, upload_w, 30.0],
                 upload_lbl,
                 Action::UploadCustomWallpaper,
                 self.catalog.config.custom_wallpaper_path.is_some(),
             );
-            button(&mut ui, &mut self.targets, [mx + mw - 156.0, my + 8.0, 74.0, 30.0], "Default", Action::ClearWallpaper, false);
-            button(&mut ui, &mut self.targets, [mx + mw - 76.0, my + 8.0, 64.0, 30.0], "Close", Action::CloseWallpapers, false);
+            button(&mut ui, &mut self.targets, [mx + mw - 154.0, my + 9.0, 74.0, 30.0], "Default", Action::ClearWallpaper, false);
+            button(&mut ui, &mut self.targets, [mx + mw - 74.0, my + 9.0, 62.0, 30.0], "Close", Action::CloseWallpapers, false);
             let custom_banner_h = if self.catalog.config.custom_wallpaper_path.is_some() { 24.0 } else { 0.0 };
             if let Some(custom_rel) = &self.catalog.config.custom_wallpaper_path {
                 let kind_lbl = if self.catalog.config.custom_wallpaper_is_video { "Video" } else { "Photo" };
@@ -2762,36 +2826,221 @@ impl Launcher {
                     &format!("Custom {kind_lbl} active: {fname}"),
                     mw - 36.0,
                 );
-                ui.text(Face::Medium, 10.5, mx + 16.0, my + 44.0, my3_accent(), &banner);
+                ui.text(Face::Medium, 10.5, mx + 16.0, my + 48.0, my3_accent(), &banner);
             }
-            let grid_y = my + 48.0 + custom_banner_h;
-            let footer_h = 84.0;
-            let row_h = ((mh - 48.0 - custom_banner_h - footer_h) / crate::wallpapers::WALLPAPERS.len() as f32).clamp(22.0, 40.0);
+            let grid_y = my + 50.0 + custom_banner_h;
+            let footer_h = 80.0;
+            let grid_h = (mh - 50.0 - custom_banner_h - footer_h).max(72.0);
+            let grid_bottom = grid_y + grid_h;
+            let grid_x = mx + 12.0;
+            let grid_w = (mw - 28.0).max(160.0);
+            let cols = if grid_w >= 560.0 { 3usize } else { 2usize };
+            let gap = 10.0;
+            let card_w = ((grid_w - gap * (cols as f32 - 1.0)) / cols as f32).max(96.0);
+            let img_pad = 6.0;
+            let img_w = (card_w - img_pad * 2.0).max(64.0);
+            let img_h = (img_w * 9.0 / 16.0).round();
+            let card_h = img_h + 44.0;
+            let total_rows = crate::wallpapers::WALLPAPERS.len().div_ceil(cols);
+            let total_h = if total_rows == 0 {
+                0.0
+            } else {
+                total_rows as f32 * card_h + (total_rows.saturating_sub(1)) as f32 * gap
+            };
+            let max_scroll = (total_h - grid_h).max(0.0);
+            self.wallpaper_scroll = self.wallpaper_scroll.clamp(0.0, max_scroll);
+            self.list_view = Some([grid_y, grid_bottom, max_scroll]);
+
             let (dl_done, dl_total) = if self.wallpaper_worker.is_some() {
                 crate::wallpapers::download_progress()
             } else {
                 (0, 0)
             };
-            let dl_pct_str = if self.wallpaper_worker.is_some() && dl_total > 0 {
-                format!("{:.0}%", (dl_done as f64 / dl_total as f64 * 100.0).clamp(0.0, 99.0))
+            let dl_frac = if dl_total > 0 {
+                (dl_done as f32 / dl_total as f32).clamp(0.0, 0.99)
             } else {
-                "Busy".to_owned()
+                0.0
             };
-            for (i, item) in crate::wallpapers::WALLPAPERS.iter().enumerate() {
-                let y = grid_y + i as f32 * row_h;
-                let label = format!("{}  ·  {}  ·  {:.1} MB", item.name, item.resolution, item.size as f64 / 1_000_000.0);
-                let fitted = ui.fit_text(Face::Regular, 11.0, &label, (mw - 132.0).max(50.0));
-                ui.text(Face::Regular, 11.0, mx + 16.0, y + 6.0, my3_text(), &fitted);
-                let downloaded = i == crate::wallpapers::DEFAULT_INDEX || crate::wallpapers::path(&self.home, i)
-                    .and_then(|p| std::fs::metadata(p).ok()).is_some_and(|m| m.len() == item.size);
-                let selected = self.catalog.config.custom_wallpaper_path.is_none()
-                    && crate::wallpapers::effective_index(self.catalog.config.wallpaper_index) == i;
-                let title = if self.wallpaper_worker.is_some() { dl_pct_str.as_str() } else if selected { "Equipped" } else if downloaded { "Equip" } else { "Download" };
-                let action = if downloaded { Action::EquipWallpaper(i) } else { Action::DownloadWallpaper(i) };
-                button(&mut ui, &mut self.targets, [mx + mw - 108.0, y, 92.0, row_h - 2.0], title, action, selected);
+            let dl_pct_str = if dl_total > 0 {
+                format!("{:.0}%", dl_frac * 100.0)
+            } else {
+                "...".to_owned()
+            };
+            let active_idx = crate::wallpapers::effective_index(self.catalog.config.wallpaper_index);
+            let custom_active = self.catalog.config.custom_wallpaper_path.is_some();
+
+            ui.clipped([mx + 8.0, grid_y, mw - 18.0, grid_h], |ui| {
+                for (i, item) in crate::wallpapers::WALLPAPERS.iter().enumerate() {
+                    let row = i / cols;
+                    let col = i % cols;
+                    let card_x = grid_x + col as f32 * (card_w + gap);
+                    let card_y = grid_y + row as f32 * (card_h + gap) - self.wallpaper_scroll;
+                    if card_y + card_h < grid_y || card_y > grid_bottom {
+                        continue;
+                    }
+                    let downloaded = self.wallpaper_downloaded.get(i).copied().unwrap_or(false);
+                    let selected = !custom_active && active_idx == i;
+                    let is_downloading = self.wallpaper_downloading == Some(i);
+                    let is_queued = self.wallpaper_queued_download == Some(i);
+
+                    let card_bg = if selected {
+                        my3_accent_soft()
+                    } else {
+                        my3_card_bg()
+                    };
+                    let card_border = if selected || is_downloading {
+                        my3_accent()
+                    } else {
+                        my3_card_border()
+                    };
+                    ui.rounded(card_x, card_y, card_w, card_h, 13.0, card_bg);
+                    ui.border(card_x, card_y, card_w, card_h, 13.0, card_border);
+
+                    let img_x = card_x + img_pad;
+                    let img_y = card_y + img_pad;
+                    ui.rounded(img_x, img_y, img_w, img_h, 9.0, my3_surface_high());
+                    if let Some((pw, ph, rgba)) = self.wallpaper_previews.get(i).and_then(|p| p.as_ref()) {
+                        let thumb_key = format!("wp-thumb-{i}");
+                        let _ = ui.image(&thumb_key, *pw, *ph, rgba, img_x, img_y, img_w, img_h);
+                    } else {
+                        let ph_lbl = ui.fit_text(Face::Medium, 9.5, item.name, img_w - 16.0);
+                        ui.centered_fit(
+                            Face::Medium,
+                            9.5,
+                            [img_x + 8.0, img_y, img_w - 16.0, img_h],
+                            my3_muted(),
+                            &ph_lbl,
+                        );
+                    }
+
+                    // Bottom gradient scrim on thumbnail for crisp badge legibility
+                    ui.rounded(
+                        img_x,
+                        img_y + img_h - 20.0,
+                        img_w,
+                        20.0,
+                        0.0,
+                        horizon_client::hud::rgba(6, 8, 14, 135),
+                    );
+
+                    // Top-left resolution pill
+                    let res_w = (item.resolution.len() as f32 * 6.5 + 12.0).max(32.0);
+                    ui.rounded(
+                        img_x + 5.0,
+                        img_y + 5.0,
+                        res_w,
+                        16.0,
+                        8.0,
+                        horizon_client::hud::rgba(8, 10, 18, 195),
+                    );
+                    ui.centered_fit(
+                        Face::SemiBold,
+                        8.5,
+                        [img_x + 5.0, img_y + 5.0, res_w, 16.0],
+                        horizon_client::hud::rgba(245, 245, 252, 245),
+                        item.resolution,
+                    );
+
+                    // Top-right status pill
+                    let (badge_txt, badge_bg, badge_fg) = if selected {
+                        ("Equipped".to_owned(), my3_accent(), my3_on_accent())
+                    } else if is_downloading {
+                        (dl_pct_str.clone(), my3_accent(), my3_on_accent())
+                    } else if is_queued {
+                        ("Queued".to_owned(), my3_surface_high(), my3_text())
+                    } else if downloaded {
+                        ("Saved".to_owned(), horizon_client::hud::rgba(14, 18, 28, 210), horizon_client::hud::rgba(235, 245, 255, 245))
+                    } else {
+                        (
+                            format!("{:.1} MB", item.size as f64 / 1_000_000.0),
+                            horizon_client::hud::rgba(10, 12, 20, 205),
+                            horizon_client::hud::rgba(240, 242, 255, 240),
+                        )
+                    };
+                    let badge_w = (badge_txt.len() as f32 * 5.8 + if !downloaded && !is_downloading && !is_queued && !selected { 22.0 } else { 14.0 }).clamp(42.0, img_w * 0.58);
+                    let badge_x = img_x + img_w - badge_w - 5.0;
+                    ui.rounded(badge_x, img_y + 5.0, badge_w, 16.0, 8.0, badge_bg);
+                    if !downloaded && !is_downloading && !is_queued && !selected {
+                        ui.icon(Icon::Download, badge_x + 5.0, img_y + 8.0, 10.0, badge_fg);
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            8.2,
+                            [badge_x + 15.0, img_y + 5.0, badge_w - 18.0, 16.0],
+                            badge_fg,
+                            &badge_txt,
+                        );
+                    } else {
+                        ui.centered_fit(
+                            Face::SemiBold,
+                            8.2,
+                            [badge_x + 3.0, img_y + 5.0, badge_w - 6.0, 16.0],
+                            badge_fg,
+                            &badge_txt,
+                        );
+                    }
+
+                    // Active download bar along bottom edge of thumbnail
+                    if is_downloading {
+                        ui.rounded(
+                            img_x + 4.0,
+                            img_y + img_h - 6.0,
+                            img_w - 8.0,
+                            4.0,
+                            2.0,
+                            horizon_client::hud::rgba(0, 0, 0, 160),
+                        );
+                        ui.rounded(
+                            img_x + 4.0,
+                            img_y + img_h - 6.0,
+                            ((img_w - 8.0) * dl_frac).max(6.0),
+                            4.0,
+                            2.0,
+                            my3_accent(),
+                        );
+                    }
+
+                    // Title + subtle status line
+                    let title_y = img_y + img_h + 5.0;
+                    let title = ui.fit_text(Face::SemiBold, 11.0, item.name, card_w - 14.0);
+                    ui.text(Face::SemiBold, 11.0, card_x + 7.0, title_y, my3_text(), &title);
+                    let sub_str = if selected {
+                        "Active theme & wallpaper".to_owned()
+                    } else if is_downloading {
+                        format!("Downloading {}...", dl_pct_str)
+                    } else if is_queued {
+                        "Queued to download...".to_owned()
+                    } else if downloaded {
+                        "Tap to use".to_owned()
+                    } else {
+                        format!("Tap to download · {:.1} MB", item.size as f64 / 1_000_000.0)
+                    };
+                    let sub_col = if selected || is_downloading { my3_accent() } else { my3_muted() };
+                    let sub_fit = ui.fit_text(Face::Regular, 9.0, &sub_str, card_w - 14.0);
+                    ui.text(Face::Regular, 9.0, card_x + 7.0, title_y + 16.0, sub_col, &sub_fit);
+
+                    let hit_y0 = card_y.max(grid_y);
+                    let hit_y1 = (card_y + card_h).min(grid_bottom);
+                    if hit_y1 > hit_y0 {
+                        let action = if downloaded {
+                            Action::EquipWallpaper(i)
+                        } else {
+                            Action::DownloadWallpaper(i)
+                        };
+                        self.targets.push(([card_x, hit_y0, card_w, hit_y1 - hit_y0], action));
+                    }
+                }
+            });
+
+            if max_scroll > 0.0 {
+                let thumb = (grid_h * grid_h / (grid_h + max_scroll)).max(24.0).min(grid_h);
+                let sb_y = grid_y + (grid_h - thumb) * (self.wallpaper_scroll / max_scroll).clamp(0.0, 1.0);
+                ui.rounded(mx + mw - 10.0, grid_y, 4.0, grid_h, 2.0, my3_border());
+                ui.rounded(mx + mw - 10.0, sb_y, 4.0, thumb, 2.0, my3_accent());
             }
+
             // Live UI Opacity slider right inside Background images modal
-            let op_y = my + mh - 78.0;
+            let op_y = my + mh - 74.0;
+            ui.fill(mx + 14.0, op_y - 4.0, mw - 28.0, 1.0, my3_border());
             let op_val = self.catalog.config.theme.ui_opacity.clamp(0.10, 1.0);
             let op_frac = ((op_val - 0.10) / 0.90).clamp(0.0, 1.0);
             let op_pct = format!("UI Opacity: {:.0}%", op_val * 100.0);
@@ -2843,7 +3092,7 @@ impl Launcher {
             };
             let line = ui.fit_text(Face::Regular, 10.0, message, mw - 32.0);
             ui.text(Face::Regular, 10.0, mx + 16.0, my + mh - 36.0, my3_muted(), &line);
-            ui.text(Face::Regular, 9.0, mx + 16.0, my + mh - 20.0, my3_muted(), "Upload any photo or video, or equip a preset below.");
+            ui.text(Face::Regular, 9.0, mx + 16.0, my + mh - 20.0, my3_muted(), "Launcher colors adapt to your active wallpaper. Tap any tile to download & use.");
         }
         if self.diagnostics_modal_open {
             self.draw_diagnostics_summary_modal(&mut ui, w, h);
@@ -9746,7 +9995,6 @@ impl Launcher {
                 let scale = crate::display::RenderScale::new(next_pct);
                 self.catalog.config.render_scale = scale;
                 let _ = self.catalog.config.save(&self.home);
-                crate::display::set_scale(scale);
                 self.modify_game_settings(|s| {
                     s.horizon.resolution_scale = next_pct;
                 });
@@ -10996,21 +11244,26 @@ impl Launcher {
                 }
             }
             Some(Action::EquipWallpaper(i)) => {
-                if self.wallpaper_worker.is_none() && let Some(item) = crate::wallpapers::WALLPAPERS.get(i)
-                    && let Some(path) = crate::wallpapers::path(&self.home, i)
-                    && (i == crate::wallpapers::DEFAULT_INDEX || std::fs::metadata(path).is_ok_and(|m| m.len() == item.size))
+                if self.wallpaper_downloaded.get(i).copied().unwrap_or(false)
+                    || crate::wallpapers::is_downloaded(&self.home, i)
                 {
-                    self.catalog.config.custom_wallpaper_path = None;
-                    self.catalog.config.custom_wallpaper_is_video = false;
-                    self.custom_photo_rgba = None;
-                    self.custom_photo_loaded_path = None;
-                    self.custom_photo_dirty = false;
-                    self.catalog.config.wallpaper_index = Some(i);
-                    self.wallpaper_has_frame = false;
-                    self.catalog.config.save(&self.home)?;
-                    self.wallpaper_color = None;
-                    self.wallpaper_status = format!("Equipped {}", item.name);
-                    self.start_wallpaper();
+                    if i < self.wallpaper_downloaded.len() {
+                        self.wallpaper_downloaded[i] = true;
+                    }
+                    self.equip_wallpaper(i)?;
+                } else {
+                    if i < self.wallpaper_downloaded.len() {
+                        self.wallpaper_downloaded[i] = false;
+                    }
+                    if self.wallpaper_worker.is_none() {
+                        self.begin_wallpaper_download(i);
+                    } else if self.wallpaper_downloading != Some(i) {
+                        self.wallpaper_queued_download = Some(i);
+                        self.wallpaper_status = format!(
+                            "Queued {} after current download...",
+                            crate::wallpapers::WALLPAPERS[i].name
+                        );
+                    }
                 }
             }
             Some(Action::ClearWallpaper) => {
@@ -11023,7 +11276,16 @@ impl Launcher {
                 self.catalog.config.wallpaper_index = None;
                 self.catalog.config.save(&self.home)?;
                 self.wallpaper_has_frame = false;
-                self.wallpaper_color = None;
+                self.wallpaper_queued_download = None;
+                if let Some((base, accent)) =
+                    self.wallpaper_preview_palettes[crate::wallpapers::DEFAULT_INDEX]
+                {
+                    self.wallpaper_color = Some(base);
+                    self.wallpaper_accent = Some(accent);
+                } else {
+                    self.wallpaper_color = None;
+                    self.wallpaper_accent = None;
+                }
                 self.wallpaper_status = "Peaceful greenhouse selected".into();
                 self.start_wallpaper();
             }
@@ -11060,17 +11322,28 @@ impl Launcher {
                 horizon_client::ui_theme::set_active_theme(resolved);
                 self.catalog.config.save(&self.home)?;
             }
-            Some(Action::OpenWallpapers) => { self.wallpapers_open = true; }
-            Some(Action::CloseWallpapers) => { self.wallpapers_open = false; }
+            Some(Action::OpenWallpapers) => {
+                self.wallpapers_open = true;
+                self.refresh_wallpaper_downloads();
+                self.ensure_wallpaper_previews();
+            }
+            Some(Action::CloseWallpapers) => {
+                self.wallpapers_open = false;
+            }
             Some(Action::DownloadWallpaper(i)) => {
-                if self.wallpaper_worker.is_none() && i < crate::wallpapers::WALLPAPERS.len() {
-                    let home = self.home.clone();
-                    let (sender, receiver) = std::sync::mpsc::channel();
-                    self.wallpaper_worker = Some(receiver);
-                    self.wallpaper_status = format!("Downloading {}...", crate::wallpapers::WALLPAPERS[i].name);
-                    std::thread::spawn(move || {
-                        let _ = sender.send(crate::wallpapers::download(&home, i).map(|msg| (i, msg)));
-                    });
+                if i < crate::wallpapers::WALLPAPERS.len() {
+                    if crate::wallpapers::is_downloaded(&self.home, i) {
+                        self.wallpaper_downloaded[i] = true;
+                        self.equip_wallpaper(i)?;
+                    } else if self.wallpaper_worker.is_none() {
+                        self.begin_wallpaper_download(i);
+                    } else if self.wallpaper_downloading != Some(i) {
+                        self.wallpaper_queued_download = Some(i);
+                        self.wallpaper_status = format!(
+                            "Queued {} after current download...",
+                            crate::wallpapers::WALLPAPERS[i].name
+                        );
+                    }
                 }
             }
             Some(Action::SceneGyro(direction)) => {
@@ -11086,7 +11359,6 @@ impl Launcher {
                 self.catalog.config.render_scale = scale;
                 self.catalog.config.save(&self.home)?;
                 self.chooser = None;
-                crate::display::set_scale(scale);
                 self.modify_game_settings(|s| {
                     s.horizon.resolution_scale = pct;
                 });
@@ -12150,7 +12422,6 @@ impl Launcher {
                 let scale = crate::display::RenderScale::new(next_pct);
                 self.catalog.config.render_scale = scale;
                 let _ = self.catalog.config.save(&self.home);
-                crate::display::set_scale(scale);
                 self.modify_game_settings(|s| {
                     s.horizon.resolution_scale = next_pct;
                 });
@@ -12360,6 +12631,13 @@ impl Launcher {
                         if drag.moved {
                             if let Some(chooser) = &mut self.chooser {
                                 chooser.scroll = (chooser.scroll + delta).max(0.0);
+                            } else if self.wallpapers_open {
+                                if self.list_view.is_some_and(|view| {
+                                    let oy = drag.origin_y() / density_f64;
+                                    oy >= view[0] as f64 && oy <= view[1] as f64
+                                }) {
+                                    self.wallpaper_scroll = (self.wallpaper_scroll + delta).max(0.0);
+                                }
                             } else if let Some(modal) = &mut self.catalog.project_modal {
                                 modal.scroll = (modal.scroll + delta).max(0.0);
                             } else if self.catalog.page == Page::SkinOnline {

@@ -1143,7 +1143,15 @@ impl Opt {
             Opt::TouchSwapJumpSneak => s.touch.swap_jump_sneak ^= true,
             Opt::TouchAutoSprint => s.touch.sprint_with_joystick ^= true,
             Opt::GuiScale => {
-                let max = crate::window::calculate_scale(framebuffer, 0, s.force_unicode) as u32;
+                let auto_max = crate::window::calculate_scale(framebuffer, 0, s.force_unicode) as u32;
+                #[cfg(target_os = "android")]
+                let max = auto_max.max(4).min(
+                    (framebuffer[0].max(1) / 80)
+                        .min(framebuffer[1].max(1) / 60)
+                        .max(1) as u32,
+                );
+                #[cfg(not(target_os = "android"))]
+                let max = auto_max;
                 let value = s.gui_scale.min(max);
                 s.gui_scale = if back {
                     if value == 0 { max } else { value - 1 }
@@ -5297,11 +5305,19 @@ impl OptionsUi {
         framebuffer: [i32; 2],
         amount: f32,
     ) -> Vec<Event> {
-        let max = i64::from(crate::window::calculate_scale(
+        let auto_max = i64::from(crate::window::calculate_scale(
             framebuffer,
             0,
             s.force_unicode,
         ));
+        #[cfg(target_os = "android")]
+        let max = auto_max.max(4).min(i64::from(
+            (framebuffer[0].max(1) / 80)
+                .min(framebuffer[1].max(1) / 60)
+                .max(1),
+        ));
+        #[cfg(not(target_os = "android"))]
+        let max = auto_max;
         let old = if s.gui_scale == 0 {
             max + 1
         } else {

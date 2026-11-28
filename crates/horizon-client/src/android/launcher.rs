@@ -65,18 +65,32 @@ pub(super) struct Launcher {
     error: Option<String>,
     catalog: Catalog,
     wallpapers_open: bool,
+    wallpaper_scroll: f32,
     wallpaper_worker: Option<mpsc::Receiver<std::result::Result<(usize, String), String>>>,
+    wallpaper_downloading: Option<usize>,
+    wallpaper_queued_download: Option<usize>,
+    wallpaper_downloaded: [bool; crate::wallpapers::WALLPAPERS.len()],
+    wallpaper_previews: [Option<(u32, u32, Vec<u8>)>; crate::wallpapers::WALLPAPERS.len()],
+    wallpaper_preview_palettes:
+        [Option<([u8; 3], [u8; 3])>; crate::wallpapers::WALLPAPERS.len()],
+    wallpaper_preview_worker: Option<
+        mpsc::Receiver<(usize, u32, u32, Vec<u8>, Option<([u8; 3], [u8; 3])>)>,
+    >,
+    wallpaper_previews_started: bool,
     wallpaper_status: String,
     wallpaper_has_frame: bool,
     wallpaper_frame_size: [u32; 2],
     wallpaper_buffer: Vec<u8>,
     wallpaper_color: Option<[u8; 3]>,
+    wallpaper_accent: Option<[u8; 3]>,
     custom_video_source_size: [u32; 2],
     custom_photo_rgba: Option<(u32, u32, Vec<u8>)>,
     custom_photo_dirty: bool,
     custom_photo_loaded_path: Option<String>,
     custom_photo_worker: Option<
-        mpsc::Receiver<std::result::Result<(String, u32, u32, Vec<u8>, Option<[u8; 3]>), String>>,
+        mpsc::Receiver<
+            std::result::Result<(String, u32, u32, Vec<u8>, Option<([u8; 3], [u8; 3])>), String>,
+        >,
     >,
     awaiting_custom_wallpaper: bool,
     custom_wallpaper_known: std::collections::HashSet<PathBuf>,
@@ -159,7 +173,7 @@ impl Launcher {
                                     let rgba = scaled.to_rgba8();
                                     let (w, h) = (rgba.width(), rgba.height());
                                     let raw = rgba.into_raw();
-                                    let sample = crate::wallpapers::sample_color(&raw);
+                                    let sample = crate::wallpapers::sample_theme_colors(&raw);
                                     (rel_bg, w, h, raw, sample)
                                 });
                             let _ = tx.send(res);
@@ -199,6 +213,116 @@ impl Launcher {
         if let Some(patch) = batch.patches.iter_mut().find(|p| p.x == u32::MAX && p.y == u32::MAX) {
             self.wallpaper_buffer = std::mem::take(&mut patch.rgba);
         }
+    }
+    pub(super) fn refresh_wallpaper_downloads(&mut self) {
+        for i in 0..crate::wallpapers::WALLPAPERS.len() {
+            self.wallpaper_downloaded[i] = crate::wallpapers::is_downloaded(&self.home, i);
+        }
+    }
+    pub(super) fn ensure_wallpaper_previews(&mut self) {
+        if self.wallpaper_previews_started {
+            return;
+        }
+        self.wallpaper_previews_started = true;
+        let home = self.home.clone();
+        let active = crate::wallpapers::effective_index(self.catalog.config.wallpaper_index);
+        let (tx, rx) = mpsc::channel();
+        self.wallpaper_preview_worker = Some(rx);
+        std::thread::spawn(move || {
+            // Decode the equipped wallpaper and first visible items first.
+            let mut order = Vec::with_capacity(crate::wallpapers::WALLPAPERS.len());
+            if active < crate::wallpapers::WALLPAPERS.len() {
+                order.push(active);
+            }
+            for i in 0..crate::wallpapers::WALLPAPERS.len() {
+                if i != active {
+                    order.push(i);
+                }
+            }
+            for i in order {
+                if let Some((w, h, rgba, palette)) =
+                    crate::wallpapers::load_or_fetch_preview(&home, i)
+                    && tx.send((i, w, h, rgba, palette)).is_err()
+                {
+                    break;
+                }
+            }
+        });
+    }
+    pub(super) fn poll_wallpaper_previews(&mut self) {
+        let Some(rx) = &self.wallpaper_preview_worker else {
+            return;
+        };
+        let mut disconnected = false;
+        // Drain at most 4 thumbnails per frame so atlas uploads stay silky smooth.
+        for _ in 0..4 {
+            match rx.try_recv() {
+                Ok((idx, w, h, rgba, palette)) => {
+                    if idx < self.wallpaper_previews.len() {
+                        self.wallpaper_previews[idx] = Some((w, h, rgba));
+                        self.wallpaper_preview_palettes[idx] = palette;
+                        if self.catalog.config.custom_wallpaper_path.is_none()
+                            && crate::wallpapers::effective_index(
+                                self.catalog.config.wallpaper_index,
+                            ) == idx
+                            && self.wallpaper_color.is_none()
+                            && let Some((base, accent)) = palette
+                        {
+                            self.wallpaper_color = Some(base);
+                            self.wallpaper_accent = Some(accent);
+                        }
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
+            }
+        }
+        if disconnected {
+            self.wallpaper_preview_worker = None;
+        }
+    }
+    pub(super) fn equip_wallpaper(&mut self, i: usize) -> Result<()> {
+        let Some(item) = crate::wallpapers::WALLPAPERS.get(i) else {
+            return Ok(());
+        };
+        self.catalog.config.custom_wallpaper_path = None;
+        self.catalog.config.custom_wallpaper_is_video = false;
+        self.custom_photo_rgba = None;
+        self.custom_photo_loaded_path = None;
+        self.custom_photo_dirty = false;
+        self.catalog.config.wallpaper_index = Some(i);
+        self.wallpaper_has_frame = false;
+        self.catalog.config.save(&self.home)?;
+        if let Some((base, accent)) = self.wallpaper_preview_palettes[i] {
+            self.wallpaper_color = Some(base);
+            self.wallpaper_accent = Some(accent);
+        } else {
+            self.wallpaper_color = None;
+            self.wallpaper_accent = None;
+        }
+        self.wallpaper_status = format!("Equipped {} ({})", item.name, item.resolution);
+        self.start_wallpaper();
+        Ok(())
+    }
+    pub(super) fn begin_wallpaper_download(&mut self, i: usize) {
+        if self.wallpaper_worker.is_some() || i >= crate::wallpapers::WALLPAPERS.len() {
+            return;
+        }
+        let home = self.home.clone();
+        let (sender, receiver) = mpsc::channel();
+        self.wallpaper_worker = Some(receiver);
+        self.wallpaper_downloading = Some(i);
+        self.wallpaper_status = format!(
+            "Downloading {} ({:.1} MB)...",
+            crate::wallpapers::WALLPAPERS[i].name,
+            crate::wallpapers::WALLPAPERS[i].size as f64 / 1_000_000.0
+        );
+        std::thread::spawn(move || {
+            let _ = sender.send(crate::wallpapers::download(&home, i).map(|msg| (i, msg)));
+        });
     }
     pub(super) fn refresh_wardrobe_account(&mut self) {
         if self.catalog.page == Page::Skins {
@@ -441,12 +565,21 @@ impl Launcher {
             error: None,
             catalog,
             wallpapers_open: false,
+            wallpaper_scroll: 0.0,
             wallpaper_worker: None,
-            wallpaper_status: "Select a video to download or equip it.".into(),
+            wallpaper_downloading: None,
+            wallpaper_queued_download: None,
+            wallpaper_downloaded: [false; crate::wallpapers::WALLPAPERS.len()],
+            wallpaper_previews: std::array::from_fn(|_| None),
+            wallpaper_preview_palettes: [None; crate::wallpapers::WALLPAPERS.len()],
+            wallpaper_preview_worker: None,
+            wallpaper_previews_started: false,
+            wallpaper_status: "Tap any wallpaper preview to download and apply it.".into(),
             wallpaper_has_frame: false,
             wallpaper_frame_size: [0, 0],
             wallpaper_buffer: Vec::new(),
             wallpaper_color: None,
+            wallpaper_accent: None,
             custom_video_source_size: [1280, 720],
             custom_photo_rgba: None,
             custom_photo_dirty: false,
@@ -531,6 +664,7 @@ impl Launcher {
         horizon_client::android_runtime::clear_gamepads();
         self.controller_edges = Default::default();
         self.controller_repeat = None;
+        self.catalog.config = crate::catalog::Config::load(&self.home);
         self.catalog.config.input_host = horizon_client::android_runtime::input_mode();
         self.catalog.refresh(&self.home);
         self.login.refresh_status();
@@ -540,8 +674,11 @@ impl Launcher {
             self.error = Some(message);
         }
         if let Err(error) = self.open(events) {
+            let had_window = self.window.is_some();
             self.fail(error);
-            events.exit();
+            if !had_window {
+                events.exit();
+            }
         } else {
             self.start_wallpaper();
         }
@@ -608,7 +745,9 @@ impl Launcher {
         self.configure_screen();
         horizon_client::ui_theme::set_android_dpi(crate::platform::display_density());
         horizon_client::ui_theme::set_ui_scale_percent(self.catalog.config.ui_scale_percent);
-        crate::display::set_scale(self.catalog.config.render_scale);
+        // Keep the native surface unscaled so 3D resolution scaling (`world_post.scale`)
+        // never compounds with whole-frame scaling, blurs the overlay, or traps GUI scale at 1.
+        crate::display::set_scale(crate::display::RenderScale::default());
         horizon_client::android_runtime::configure_gpu(false);
         if let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
             if let Some(size) = crate::display::prepare(window)? {
@@ -1155,6 +1294,8 @@ impl ApplicationHandler for Launcher {
                 };
                 if let Some(chooser) = &mut self.chooser {
                     chooser.scroll = (chooser.scroll - y).max(0.0);
+                } else if self.wallpapers_open {
+                    self.wallpaper_scroll = (self.wallpaper_scroll - y).max(0.0);
                 } else if self.catalog.page == Page::SkinOnline {
                     self.skin_online.scroll = (self.skin_online.scroll - y).max(0.0);
                 } else {
@@ -1407,7 +1548,12 @@ impl ApplicationHandler for Launcher {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
-        if (self.catalog.config.max_fps_mode || self.catalog.config.super_perf_mode)
+        let suspended = self.renderer.as_ref().is_some_and(|r| r.suspended);
+        if suspended || !self.focused {
+            events.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(50),
+            ));
+        } else if (self.catalog.config.max_fps_mode || self.catalog.config.super_perf_mode)
             && !self.catalog.config.battery_perf_mode
         {
             events.set_control_flow(ControlFlow::Poll);

@@ -14815,6 +14815,10 @@ impl Game<'_> {
     }
     fn render(&mut self) -> Result<bool> {
         #[cfg(target_os = "android")]
+        if self.renderer.as_ref().is_some_and(|r| r.suspended) {
+            return Ok(false);
+        }
+        #[cfg(target_os = "android")]
         let device_preferences = crate::device_runtime::preferences();
         #[cfg(target_os = "android")]
         let _native_frame = crate::device_runtime::frame(
@@ -19074,7 +19078,7 @@ impl Game<'_> {
             && let Err(error) = self.open_world(&folder, None, None, false, None)
         {
             self.error = Some(error);
-            event_loop.exit();
+            self.exit_on_error(event_loop);
             return;
         }
         self.tick_server_packs();
@@ -19089,6 +19093,13 @@ impl Game<'_> {
             crate::game::exit_app(event_loop);
             return;
         }
+        #[cfg(target_os = "android")]
+        if self.renderer.as_ref().is_some_and(|r| r.suspended) {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(50),
+            ));
+            return;
+        }
         if let Some(w) = &self.window {
             if self.options.offscreen {
                 // Offscreen frames don't wait for the window to be drawn: an
@@ -19096,18 +19107,6 @@ impl Game<'_> {
                 let id = w.id();
                 self.handle_window_event(event_loop, id, WindowEvent::RedrawRequested);
             } else {
-                #[cfg(target_os = "android")]
-                {
-                    let uncapped = (!self.settings.vsync || self.settings.max_fps >= 260)
-                        && !self.settings.horizon.battery;
-                    if uncapped {
-                        let id = w.id();
-                        self.handle_window_event(event_loop, id, WindowEvent::RedrawRequested);
-                    } else {
-                        w.request_redraw();
-                    }
-                }
-                #[cfg(not(target_os = "android"))]
                 w.request_redraw();
             }
         } else if self.options.headless {
@@ -21492,6 +21491,13 @@ impl Loading {
             );
             event_loop.set_control_flow(ControlFlow::WaitUntil(
                 Instant::now() + Duration::from_millis(16),
+            ));
+            return;
+        }
+        #[cfg(target_os = "android")]
+        if self.renderer.as_ref().is_some_and(|r| r.suspended) {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                Instant::now() + Duration::from_millis(50),
             ));
             return;
         }
