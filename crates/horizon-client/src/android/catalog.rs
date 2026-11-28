@@ -529,6 +529,7 @@ pub enum SettingsCategory {
     Mouse,
     Experimental,
     Diagnostics,
+    About,
     Account,
 }
 impl SettingsCategory {
@@ -542,6 +543,7 @@ impl SettingsCategory {
             Self::Mouse => "Mouse Customization",
             Self::Experimental => "Experimental Stuff",
             Self::Diagnostics => "Diagnostics & Logs",
+            Self::About => "About",
             Self::Account => "Account",
         }
     }
@@ -1043,6 +1045,7 @@ impl Catalog {
             local_icon_aliases: std::collections::HashMap::new(),
             searches: crate::search_queue::Queue::new(),
         };
+        crate::updater::init_home(home);
         crate::updater::check_in_background();
         result.refresh(home);
         result.refresh_replays(home);

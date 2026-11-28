@@ -2483,12 +2483,18 @@ impl Game<'_> {
     fn android_updater_modal_active() -> Option<crate::updater::UpdateStatus> {
         let status = crate::updater::get_status();
         match &status {
-            crate::updater::UpdateStatus::Available(info) if info.download_url.is_some() => {
+            crate::updater::UpdateStatus::Available(info)
+                if info.download_url.is_some() && crate::updater::should_auto_prompt() =>
+            {
                 Some(status)
             }
             crate::updater::UpdateStatus::Downloading { .. }
             | crate::updater::UpdateStatus::Downloaded { .. } => Some(status),
-            crate::updater::UpdateStatus::Error(_) if crate::updater::last_release_info().is_some() => {
+            crate::updater::UpdateStatus::Error(_)
+                if (crate::updater::last_release_info().is_some()
+                    || crate::updater::last_downloaded_path().is_some())
+                    && crate::updater::should_auto_prompt() =>
+            {
                 Some(status)
             }
             _ => None,
@@ -2503,6 +2509,9 @@ impl Game<'_> {
         if !self.pad_in_menu() || self.pad.touch_ui.floating_menu {
             return;
         }
+        if let Ok(home) = std::env::current_dir() {
+            crate::updater::init_home(&home);
+        }
         if !IN_GAME_CHECK.swap(true, std::sync::atomic::Ordering::Relaxed)
             && crate::updater::get_status() == crate::updater::UpdateStatus::Idle
         {
@@ -2511,6 +2520,7 @@ impl Game<'_> {
         let Some(status) = Self::android_updater_modal_active() else {
             return;
         };
+        crate::updater::mark_auto_prompt_shown();
         let mut ui = Ui::mobile(&self.gui.atlas, hud, (0.0, 0.0));
         let theme = active_theme();
         let (modal_r, later_r, action_r) = Self::android_updater_modal_rects(ui.w, ui.h);
@@ -2662,7 +2672,9 @@ impl Game<'_> {
                         crate::updater::trigger_install(&path);
                     }
                     crate::updater::UpdateStatus::Error(_) => {
-                        if let Some(info) = crate::updater::last_release_info() {
+                        if let Some(apk) = crate::updater::last_downloaded_path() {
+                            crate::updater::trigger_install(&apk);
+                        } else if let Some(info) = crate::updater::last_release_info() {
                             let home = std::env::current_dir()
                                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
                             crate::updater::download_and_install_in_background(info, home);

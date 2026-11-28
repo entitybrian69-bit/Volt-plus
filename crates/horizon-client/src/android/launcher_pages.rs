@@ -612,6 +612,7 @@ pub(super) enum Action {
     CloseUpdateScreen,
     TriggerUpdateInstall,
     CheckForUpdates,
+    OpenOwnerGitHub,
     OpenMusic,
     CloseMusic,
     MusicTab(bool),
@@ -6800,15 +6801,15 @@ impl Launcher {
         let (info, is_downloading, is_downloaded) = match &status {
             crate::updater::UpdateStatus::Available(info) => (Some(info.clone()), false, false),
             crate::updater::UpdateStatus::Downloading { .. } => {
-                let info = self.catalog.update_info.clone();
+                let info = self.catalog.update_info.clone().or_else(crate::updater::last_release_info);
                 (info, true, false)
             }
             crate::updater::UpdateStatus::Downloaded { .. } => {
-                let info = self.catalog.update_info.clone();
+                let info = self.catalog.update_info.clone().or_else(crate::updater::last_release_info);
                 (info, false, true)
             }
             crate::updater::UpdateStatus::Error(_) => {
-                let info = self.catalog.update_info.clone();
+                let info = self.catalog.update_info.clone().or_else(crate::updater::last_release_info);
                 (info, false, false)
             }
             _ => (None, false, false),
@@ -6816,14 +6817,20 @@ impl Launcher {
 
         if let Some(ref i) = info {
             self.catalog.update_info = Some(i.clone());
-            if !self.catalog.update_ui_open && status != crate::updater::UpdateStatus::Dismissed {
+            if !self.catalog.update_ui_open
+                && status != crate::updater::UpdateStatus::Dismissed
+                && crate::updater::should_auto_prompt()
+            {
                 self.catalog.update_ui_open = true;
+                crate::updater::mark_auto_prompt_shown();
             }
         }
 
         if !self.catalog.update_ui_open {
             return;
         }
+
+        crate::updater::mark_auto_prompt_shown();
 
         let Some(info) = self.catalog.update_info.clone() else {
             return;
@@ -6893,7 +6900,11 @@ impl Launcher {
             my3_text(),
             "Volt Plus Update",
         );
-        let badge_text = format!("v{}  →  v{}", crate::backend::VERSION, info.version);
+        let badge_text = format!(
+            "v{}  →  v{}",
+            crate::updater::installed_version_name(),
+            info.version
+        );
         let badge_w = ui.measure(Face::SemiBold, 11.0, &badge_text) + 16.0;
         let badge_r = [title_x, head_y + 24.0, badge_w, 20.0];
         ui.rounded(
@@ -7839,7 +7850,7 @@ impl Launcher {
                 "Settings",
             );
 
-            let cards: [(Icon, &str, &str, Action); 8] = [
+            let cards: [(Icon, &str, &str, Action); 9] = [
                 (
                     Icon::Monitor,
                     "Video Settings",
@@ -7888,30 +7899,62 @@ impl Launcher {
                     "Microsoft and Xbox sign-in",
                     Action::Account,
                 ),
+                (
+                    Icon::HorizonLogo,
+                    "About",
+                    "Check for updates, launcher owner & GitHub",
+                    Action::SettingsCat(SettingsCategory::About),
+                ),
             ];
 
             let grid_top = 98.0 + slide_y;
+            let list_bottom = h - 34.0;
             let gap_x = 14.0;
             let gap_y = 10.0;
+            let rows = if compact { 9 } else { 5 };
             let card_h = if compact {
-                ((h - grid_top - 44.0 - gap_y * 7.0) / 8.0).clamp(38.0, 60.0)
+                ((list_bottom - grid_top - gap_y * 8.0) / 9.0).clamp(48.0, 62.0)
             } else {
-                ((h - grid_top - 48.0 - gap_y * 3.0) / 4.0).clamp(52.0, 76.0)
+                ((list_bottom - grid_top - gap_y * 4.0) / 5.0).clamp(50.0, 68.0)
             };
+            let total_h = rows as f32 * card_h + (rows - 1) as f32 * gap_y;
+            let max_scroll = (total_h - (list_bottom - grid_top)).max(0.0);
+            self.catalog.scroll = self.catalog.scroll.clamp(0.0, max_scroll);
+            self.list_view = Some([grid_top, list_bottom, max_scroll]);
+
+            ui.set_clip(Some([
+                content_x - 2.0,
+                grid_top,
+                content_w + 4.0,
+                (list_bottom - grid_top).max(1.0),
+            ]));
 
             for (idx, (icon, title, subtitle, action)) in cards.into_iter().enumerate() {
                 let (cx, cy, card_w) = if compact {
-                    (content_x, grid_top + idx as f32 * (card_h + gap_y), content_w)
+                    (
+                        content_x,
+                        grid_top + idx as f32 * (card_h + gap_y) - self.catalog.scroll,
+                        content_w,
+                    )
+                } else if idx == 8 {
+                    (
+                        content_x,
+                        grid_top + 4.0 * (card_h + gap_y) - self.catalog.scroll,
+                        content_w,
+                    )
                 } else {
                     let col = idx % 2;
                     let row = idx / 2;
                     let w2 = (content_w - gap_x) * 0.5;
                     (
                         content_x + col as f32 * (w2 + gap_x),
-                        grid_top + row as f32 * (card_h + gap_y),
+                        grid_top + row as f32 * (card_h + gap_y) - self.catalog.scroll,
                         w2,
                     )
                 };
+                if cy + card_h < grid_top || cy > list_bottom {
+                    continue;
+                }
                 let rect = [cx, cy, card_w, card_h];
 
                 ui.rounded(cx, cy, card_w, card_h, 16.0, my3_card_bg());
@@ -7960,6 +8003,7 @@ impl Launcher {
                 self.list_targets.push((rect, action));
                 self.targets.push((rect, action));
             }
+            ui.set_clip(None);
             return;
         }
 
@@ -9815,6 +9859,258 @@ impl Launcher {
                     );
                 }
                 ui.set_clip(None);
+            }
+            SettingsCategory::About => {
+                static OWNER_AVATAR: std::sync::OnceLock<Option<(u32, u32, Vec<u8>)>> =
+                    std::sync::OnceLock::new();
+                let avatar = OWNER_AVATAR.get_or_init(|| {
+                    let img = image::load_from_memory(include_bytes!(
+                        "../../assets/owner_avatar.jpg"
+                    ))
+                    .ok()?
+                    .to_rgba8();
+                    Some((img.width(), img.height(), img.into_raw()))
+                });
+
+                self.catalog.scroll = 0.0;
+                self.list_view = None;
+
+                let installed_ver = crate::updater::installed_version_name();
+                let status = crate::updater::get_status();
+
+                // Option 1: Check for updates / Download & Install directly in the launcher
+                let update_card_h = if matches!(status, crate::updater::UpdateStatus::Downloading { .. }) {
+                    112.0
+                } else {
+                    94.0
+                };
+                let uc_y = list_top;
+                ui.rounded(content_x, uc_y, content_w, update_card_h, 16.0, my3_card_bg());
+                ui.border(content_x, uc_y, content_w, update_card_h, 16.0, my3_card_border());
+
+                ui.rounded(content_x + 18.0, uc_y + 18.0, 44.0, 44.0, 12.0, my3_accent_soft());
+                ui.icon(Icon::Download, content_x + 29.0, uc_y + 29.0, 22.0, my3_accent());
+
+                let (btn_lbl, btn_act, btn_enabled) = match &status {
+                    crate::updater::UpdateStatus::Checking => {
+                        ("Checking...", Action::CheckForUpdates, false)
+                    }
+                    crate::updater::UpdateStatus::Available(_) => {
+                        ("Download & Install", Action::TriggerUpdateInstall, true)
+                    }
+                    crate::updater::UpdateStatus::Downloading { .. } => {
+                        ("Downloading...", Action::TriggerUpdateInstall, false)
+                    }
+                    crate::updater::UpdateStatus::Downloaded { .. } => {
+                        ("Install Now", Action::TriggerUpdateInstall, true)
+                    }
+                    crate::updater::UpdateStatus::Error(_) => {
+                        if crate::updater::last_downloaded_path().is_some() {
+                            ("Install Now", Action::TriggerUpdateInstall, true)
+                        } else if crate::updater::last_release_info().is_some() {
+                            ("Retry", Action::TriggerUpdateInstall, true)
+                        } else {
+                            ("Retry", Action::CheckForUpdates, true)
+                        }
+                    }
+                    crate::updater::UpdateStatus::Idle | crate::updater::UpdateStatus::Dismissed => {
+                        if crate::updater::last_release_info().is_some() {
+                            ("Download & Install", Action::TriggerUpdateInstall, true)
+                        } else {
+                            ("Check for Updates", Action::CheckForUpdates, true)
+                        }
+                    }
+                };
+
+                let btn_w = if compact { 126.0 } else { 156.0 };
+                let btn_h = 36.0;
+                let btn_x = content_x + content_w - btn_w - 16.0;
+                let btn_y = uc_y + (update_card_h - btn_h) * 0.5;
+                let text_x = content_x + 74.0;
+                let text_max = (btn_x - text_x - 14.0).max(80.0);
+
+                ui.text(
+                    Face::SemiBold,
+                    15.5,
+                    text_x,
+                    uc_y + 18.0,
+                    my3_text(),
+                    &ui.fit_text(
+                        Face::SemiBold,
+                        15.5,
+                        &format!("Check for Updates  •  v{installed_ver}"),
+                        text_max,
+                    ),
+                );
+
+                let (sub_text, sub_color) = match &status {
+                    crate::updater::UpdateStatus::Checking => (
+                        "Checking GitHub Releases for the latest Volt Plus update...".to_owned(),
+                        my3_muted(),
+                    ),
+                    crate::updater::UpdateStatus::Available(info) => (
+                        format!(
+                            "Update available: v{} ({:.1} MB)",
+                            info.version,
+                            info.size_bytes as f64 / 1_048_576.0
+                        ),
+                        my3_accent(),
+                    ),
+                    crate::updater::UpdateStatus::Downloading {
+                        progress,
+                        downloaded,
+                        total,
+                    } => (
+                        if *total > 0 {
+                            format!(
+                                "Downloading update... {:.0}% ({:.1} / {:.1} MB)",
+                                progress * 100.0,
+                                *downloaded as f64 / 1_048_576.0,
+                                *total as f64 / 1_048_576.0
+                            )
+                        } else {
+                            format!(
+                                "Downloading update... {:.1} MB",
+                                *downloaded as f64 / 1_048_576.0
+                            )
+                        },
+                        my3_accent(),
+                    ),
+                    crate::updater::UpdateStatus::Downloaded { version, .. } => (
+                        format!("Volt Plus v{version} downloaded — tap Install Now"),
+                        my3_accent(),
+                    ),
+                    crate::updater::UpdateStatus::Error(err) => (
+                        err.clone(),
+                        horizon_client::hud::rgba(239, 68, 68, 255),
+                    ),
+                    crate::updater::UpdateStatus::Idle | crate::updater::UpdateStatus::Dismissed => {
+                        if let Some(info) = crate::updater::last_release_info() {
+                            (
+                                format!(
+                                    "Update available: v{} ({:.1} MB)",
+                                    info.version,
+                                    info.size_bytes as f64 / 1_048_576.0
+                                ),
+                                my3_accent(),
+                            )
+                        } else if crate::updater::last_check_up_to_date() {
+                            (
+                                format!("You're on the latest version (v{installed_ver})."),
+                                my3_accent(),
+                            )
+                        } else {
+                            (
+                                "Check for new releases and install updates directly here".to_owned(),
+                                my3_muted(),
+                            )
+                        }
+                    }
+                };
+                ui.text(
+                    Face::Regular,
+                    12.5,
+                    text_x,
+                    uc_y + 42.0,
+                    sub_color,
+                    &ui.fit_text(Face::Regular, 12.5, &sub_text, text_max),
+                );
+
+                if let crate::updater::UpdateStatus::Downloading { progress, .. } = &status {
+                    let bar_y = uc_y + 74.0;
+                    let bar_w = text_max;
+                    ui.rounded(text_x, bar_y, bar_w, 7.0, 3.5, my3_surface_high());
+                    ui.rounded(
+                        text_x,
+                        bar_y,
+                        (bar_w * progress.clamp(0.04, 1.0)).max(7.0),
+                        7.0,
+                        3.5,
+                        my3_accent(),
+                    );
+                }
+
+                button(
+                    ui,
+                    &mut self.targets,
+                    [btn_x, btn_y, btn_w, btn_h],
+                    btn_lbl,
+                    btn_act,
+                    btn_enabled,
+                );
+
+                // Option 2: Launcher Owner card with picture, bio line, and GitHub link beside it
+                let owner_y = uc_y + update_card_h + 14.0;
+                let owner_h = if compact { 122.0 } else { 112.0 };
+                ui.rounded(content_x, owner_y, content_w, owner_h, 16.0, my3_card_bg());
+                ui.border(content_x, owner_y, content_w, owner_h, 16.0, my3_card_border());
+
+                let pic_size = if compact { 68.0 } else { 76.0 };
+                let pic_x = content_x + 16.0;
+                let pic_y = owner_y + (owner_h - pic_size) * 0.5;
+                ui.rounded(pic_x, pic_y, pic_size, pic_size, 14.0, my3_surface_high());
+                if let Some((ow, oh, rgba)) = avatar.as_ref() {
+                    let _ = ui.image_smooth(
+                        "owner-avatar",
+                        *ow,
+                        *oh,
+                        rgba,
+                        pic_x,
+                        pic_y,
+                        pic_size,
+                        pic_size,
+                    );
+                }
+                ui.border(pic_x, pic_y, pic_size, pic_size, 14.0, my3_accent());
+
+                let gh_w = if compact { 114.0 } else { 142.0 };
+                let gh_h = 38.0;
+                let gh_x = content_x + content_w - gh_w - 16.0;
+                let gh_y = owner_y + (owner_h - gh_h) * 0.5;
+
+                let otext_x = pic_x + pic_size + 16.0;
+                let otext_max = (gh_x - otext_x - 14.0).max(80.0);
+                let oblock_y = owner_y + (owner_h - 62.0) * 0.5;
+
+                ui.text(
+                    Face::SemiBold,
+                    16.0,
+                    otext_x,
+                    oblock_y,
+                    my3_text(),
+                    &ui.fit_text(Face::SemiBold, 16.0, "Launcher Owner", otext_max),
+                );
+                ui.text(
+                    Face::Medium,
+                    13.0,
+                    otext_x,
+                    oblock_y + 22.0,
+                    my3_accent(),
+                    &ui.fit_text(
+                        Face::Medium,
+                        13.0,
+                        "Launcher owner who does it all",
+                        otext_max,
+                    ),
+                );
+                ui.text(
+                    Face::Regular,
+                    11.5,
+                    otext_x,
+                    oblock_y + 44.0,
+                    my3_muted(),
+                    &ui.fit_text(
+                        Face::Regular,
+                        11.5,
+                        crate::updater::OWNER_GITHUB_URL,
+                        otext_max,
+                    ),
+                );
+
+                let gh_rect = [gh_x, gh_y, gh_w, gh_h];
+                ui.rounded(gh_x, gh_y, gh_w, gh_h, 12.0, my3_accent());
+                ui.centered_fit(Face::SemiBold, 13.0, gh_rect, my3_on_accent(), "GitHub");
+                self.targets.push((gh_rect, Action::OpenOwnerGitHub));
             }
             // Not reachable from the category grid yet.
             SettingsCategory::Overview | SettingsCategory::Account => {}
@@ -11971,19 +12267,45 @@ impl Launcher {
                         crate::updater::trigger_install(&path);
                     }
                     crate::updater::UpdateStatus::Error(_) => {
-                        if let Some(info) = self.catalog.update_info.clone() {
+                        if let Some(apk) = crate::updater::last_downloaded_path() {
+                            crate::updater::trigger_install(&apk);
+                        } else if let Some(info) = self
+                            .catalog
+                            .update_info
+                            .clone()
+                            .or_else(crate::updater::last_release_info)
+                        {
+                            crate::updater::download_and_install_in_background(
+                                info,
+                                self.home.clone(),
+                            );
+                        } else {
+                            crate::updater::check_manual_in_background();
+                        }
+                    }
+                    _ => {
+                        if let Some(info) = self
+                            .catalog
+                            .update_info
+                            .clone()
+                            .or_else(crate::updater::last_release_info)
+                        {
                             crate::updater::download_and_install_in_background(
                                 info,
                                 self.home.clone(),
                             );
                         }
                     }
-                    _ => {}
                 }
             }
             Some(Action::CheckForUpdates) => {
                 self.catalog.status = "Checking for updates...".into();
-                crate::updater::check_in_background();
+                crate::updater::check_manual_in_background();
+            }
+            Some(Action::OpenOwnerGitHub) => {
+                if !crate::platform::open_url(crate::updater::OWNER_GITHUB_URL) {
+                    self.catalog.status = "Could not open GitHub link on this device.".into();
+                }
             }
             Some(Action::FmCloseModal) => {
                 self.catalog.fm_modal = None;

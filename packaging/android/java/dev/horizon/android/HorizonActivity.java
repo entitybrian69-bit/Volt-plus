@@ -734,6 +734,72 @@ public final class HorizonActivity extends android.app.NativeActivity {
         }
     }
 
+    public static String getUpdateCacheDir(android.content.Context context) {
+        if (context == null) return "";
+        return ApkUpdateProvider.updatesDir(context).getAbsolutePath();
+    }
+
+    public static String installUpdateApk(android.content.Context context, String apkPath) {
+        if (context == null || apkPath == null || apkPath.trim().isEmpty()) {
+            return "Invalid update APK path.";
+        }
+        try {
+            java.io.File updatesDir = ApkUpdateProvider.updatesDir(context);
+            java.io.File file = new java.io.File(apkPath.trim()).getCanonicalFile();
+            String dirCanon = updatesDir.getCanonicalPath() + java.io.File.separator;
+            if (!file.getPath().startsWith(dirCanon)
+                    || !file.isFile()
+                    || !file.getName().toLowerCase(java.util.Locale.US).endsWith(".apk")) {
+                return "Downloaded update APK could not be found.";
+            }
+
+            android.content.pm.PackageManager pm = context.getPackageManager();
+            String selfPkg = context.getPackageName();
+            android.content.pm.PackageInfo archive =
+                    pm.getPackageArchiveInfo(file.getAbsolutePath(), 0);
+            if (archive == null) {
+                return "Downloaded file is not a valid Android APK package.";
+            }
+            if (!selfPkg.equals(archive.packageName)) {
+                return "Update package (" + archive.packageName
+                        + ") does not match installed app (" + selfPkg + ").";
+            }
+
+            android.content.pm.PackageInfo installed = pm.getPackageInfo(selfPkg, 0);
+            long installedCode = android.os.Build.VERSION.SDK_INT >= 28
+                    ? installed.getLongVersionCode()
+                    : installed.versionCode;
+            long archiveCode = android.os.Build.VERSION.SDK_INT >= 28
+                    ? archive.getLongVersionCode()
+                    : archive.versionCode;
+            if (archiveCode < installedCode) {
+                return "Downloaded APK build (" + archiveCode
+                        + ") is older than installed build (" + installedCode + ").";
+            }
+
+            if (android.os.Build.VERSION.SDK_INT >= 26 && !pm.canRequestPackageInstalls()) {
+                android.content.Intent perm = new android.content.Intent(
+                        android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        android.net.Uri.parse("package:" + selfPkg));
+                perm.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(perm);
+                return "PERMISSION_REQUIRED";
+            }
+
+            android.net.Uri uri = ApkUpdateProvider.uriFor(context, file);
+            android.content.Intent install = new android.content.Intent(android.content.Intent.ACTION_VIEW);
+            install.setDataAndType(uri, "application/vnd.android.package-archive");
+            install.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    | android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            context.startActivity(install);
+            return "OK";
+        } catch (Throwable error) {
+            android.util.Log.e("HorizonActivity", "Failed to launch update installer", error);
+            String msg = error.getMessage();
+            return msg != null && !msg.isEmpty() ? msg : "Could not launch package installer.";
+        }
+    }
+
     public static void openUpdateUrl(android.content.Context context, String url) {
         if (context == null || url == null) return;
         String trimmed = url.trim();
