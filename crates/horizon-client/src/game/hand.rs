@@ -393,6 +393,25 @@ impl Game<'_> {
         }
         self.swing.tick();
         let main = self.inventory[self.selected].clone();
+        // Cancel a lingering spear STAB if the swinging hand no longer holds a spear
+        // (for instance after switching to a mace or swapping hands), so the new item
+        // never inherits the spear's slow 13..23 tick jab animation.
+        if let Some(c) = self.swing.current
+            && c.animation.kind == 2
+        {
+            let stack = match c.hand {
+                Hand::Main => main.as_ref(),
+                Hand::Off => self.offhand.as_ref(),
+            };
+            let holds_spear = stack
+                .is_some_and(|s| horizon_client::spear::Kinetic::of(&s.item).is_some());
+            if !holds_spear {
+                self.swing.current = None;
+                self.swing.ticks = 0;
+                self.swing.animation = 0.0;
+                self.swing.old_animation = 0.0;
+            }
+        }
         // Player.tick: a different item resets the attack strength, and
         // detectEquipmentUpdates gives the player its modifiers.
         if self.hand_strength.tick(main.as_ref().map(|s| HeldStack {

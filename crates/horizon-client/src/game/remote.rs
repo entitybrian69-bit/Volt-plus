@@ -4292,7 +4292,14 @@ impl Game<'_> {
                     duration: p.duration,
                 };
                 if self.remote.as_ref().is_some_and(|r| r.entity_id == p.id) {
-                    self.swing_hand(hand, animation);
+                    let hand_has_spear = match hand {
+                        Hand::Main => self.held(),
+                        Hand::Off => self.offhand.as_ref(),
+                    }
+                    .is_some_and(|s| horizon_client::spear::Kinetic::of(&s.item).is_some());
+                    if animation.kind != 2 || hand_has_spear {
+                        self.swing_hand(hand, animation);
+                    }
                 } else if let Some(m) = self.mobs.iter_mut().find(|m| m.id == p.id as u32) {
                     m.swing_hand_modified(hand == Hand::Off, animation);
                 }

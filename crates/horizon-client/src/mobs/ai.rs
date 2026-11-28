@@ -106,9 +106,19 @@ impl Mob {
         let dig_speed = amplifier("minecraft:haste").max(amplifier("minecraft:conduit_power"));
         let fatigue = amplifier("minecraft:mining_fatigue");
         let duration = crate::first_person::swing_duration(animation, dig_speed, fatigue);
+        let next_right = !off_hand != self.main_arm_left();
+        let next_stab = animation.kind == 2;
+        if self.ai.swinging
+            && (next_stab != self.extra.swing_stab
+                || self.extra.swing_right_arm.is_some_and(|r| r != next_right))
+        {
+            self.ai.swinging = false;
+            self.anim.attack_anim = 0.0;
+            self.anim.attack_anim_o = 0.0;
+        }
         if self.start_swing(duration) {
-            self.extra.swing_right_arm = Some(!off_hand != self.main_arm_left());
-            self.extra.swing_stab = animation.kind == 2;
+            self.extra.swing_right_arm = Some(next_right);
+            self.extra.swing_stab = next_stab;
         }
     }
 }

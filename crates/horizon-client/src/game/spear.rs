@@ -319,11 +319,14 @@ impl Game<'_> {
             self.play_at_feet(kinetic.hit_sound);
         }
         // swingAndResetAttackStrength (ServerPlayer): a swing that starts
-        // resets the attack strength.
+        // resets only the attack-strength ticker (`resetOnlyAttackStrengthTicker`),
+        // matching multiplayer piercingAttack so the spear does not drop with its
+        // swap displacement after every jab.
         let swings = self.swings_started;
         self.swing_hand(Hand::Main, kinetic.attack_animation());
         if self.swings_started != swings {
-            self.reset_attack_strength();
+            self.attack_ticks = 0;
+            self.hand_strength.reset_attack();
         }
         Some(kinetic.attack_sound)
     }

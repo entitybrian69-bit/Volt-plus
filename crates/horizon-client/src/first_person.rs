@@ -383,7 +383,10 @@ impl SwingState {
     /// `startIfAble`: a swing restarts unless the current one is in its
     /// first half (past its first tick).
     pub fn start_if_able(&mut self, hand: Hand, animation: SwingAnimation, duration: i32) -> bool {
+        let duration = duration.max(1);
         if let Some(c) = self.current
+            && c.hand == hand
+            && c.animation.kind == animation.kind
             && self.ticks <= c.duration_ticks / 2
             && self.ticks > 0
         {
@@ -408,12 +411,16 @@ impl SwingState {
         if let Some(c) = self.current {
             if c.duration_ticks > 0 {
                 self.animation = (self.ticks as f32 / c.duration_ticks as f32).min(1.0);
-            }
-            let ticks = self.ticks;
-            self.ticks += 1;
-            if ticks > c.duration_ticks {
+                let ticks = self.ticks;
+                self.ticks += 1;
+                if ticks > c.duration_ticks {
+                    self.current = None;
+                    self.animation = 0.0;
+                }
+            } else {
                 self.current = None;
                 self.animation = 0.0;
+                self.ticks = 0;
             }
         } else {
             self.animation = 0.0;
@@ -445,13 +452,14 @@ pub fn swing_duration(
     fatigue: Option<i32>,
 ) -> i32 {
     let duration = animation.duration;
-    if let Some(amplification) = dig_speed {
+    let modified = if let Some(amplification) = dig_speed {
         duration - (1 + amplification)
     } else if let Some(amplifier) = fatigue {
         duration + (1 + amplifier) * 2
     } else {
         duration
-    }
+    };
+    modified.max(1)
 }
 
 /// `FirstPersonHandsAndItems`' equip heights.
@@ -1075,6 +1083,27 @@ mod tests {
         assert_eq!(swing_duration(d, None, None), 6);
         assert_eq!(swing_duration(d, Some(1), Some(0)), 4);
         assert_eq!(swing_duration(d, None, Some(2)), 12);
+        assert_eq!(swing_duration(d, Some(10), None), 1);
+    }
+    #[test]
+    fn switching_hand_or_swing_kind_is_not_blocked_by_slow_spear_stab() {
+        let mut s = SwingState::default();
+        let stab = SwingAnimation {
+            kind: 2,
+            duration: 23,
+        };
+        assert!(s.start_if_able(Hand::Main, stab, 23));
+        s.tick();
+        s.tick();
+        // Same hand and kind stays blocked in the first half.
+        assert!(!s.start_if_able(Hand::Main, stab, 23));
+        // Switching to the offhand or a normal/mace swing interrupts immediately.
+        assert!(s.start_if_able(Hand::Main, SwingAnimation::DEFAULT, 6));
+        assert_eq!(s.current.unwrap().duration_ticks, 6);
+        assert!(s.start_if_able(Hand::Main, stab, 23));
+        s.tick();
+        assert!(s.start_if_able(Hand::Off, SwingAnimation::DEFAULT, 6));
+        assert_eq!(s.current.unwrap().hand, Hand::Off);
     }
 }
 
