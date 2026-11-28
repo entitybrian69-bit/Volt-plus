@@ -4464,7 +4464,7 @@ impl TouchUi {
 
             // Left Column: 2x2 Circular Telemetry Gauges OR Live FPS Sparkline Graph
             let t = &self.telemetry;
-            let target_hz = if self.booster_120hz { 120.0 } else { 60.0 };
+            let target_hz: f32 = if self.booster_120hz { 120.0 } else { 60.0 };
             if self.booster_graph_mode {
                 let g0 = bl.gauges[0];
                 let gw = bl.left_rect[2];
