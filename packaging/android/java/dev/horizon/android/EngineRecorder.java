@@ -580,7 +580,7 @@ final class EngineRecorder {
     }
 
     private static void openTarget(Context context) {
-        String name = "VoltPlus-" + timestamp() + ".mp4";
+        String name = "Nexora-" + timestamp() + ".mp4";
         displayName = name;
         target = null;
         legacyTarget = null;

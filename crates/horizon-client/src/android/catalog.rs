@@ -256,8 +256,10 @@ impl Config {
             if config.device.display_hz < 120 {
                 config.device.display_hz = 120;
             }
-            if config.theme.preset == horizon_client::ui_theme::ThemePreset::ObsidianViolet {
-                config.theme.apply_preset(horizon_client::ui_theme::ThemePreset::EmeraldForest);
+            if config.theme.preset == horizon_client::ui_theme::ThemePreset::ObsidianViolet
+                || config.theme.preset == horizon_client::ui_theme::ThemePreset::EmeraldForest
+            {
+                config.theme.apply_preset(horizon_client::ui_theme::ThemePreset::NexoraCrimson);
             }
             config.apply_experimental_to_game(home);
             let _ = config.save(home);

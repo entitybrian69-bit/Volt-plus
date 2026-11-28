@@ -820,14 +820,14 @@ impl VoltModsUi {
                 .as_deref()
                 .filter(|p| !p.is_empty())
                 .or_else(|| (!m.description.is_empty()).then_some(m.description.as_str()))
-                .unwrap_or("Installed Volt+ client modification.");
+                .unwrap_or("Installed Nexora client modification.");
             let desc_fit = fit_with_ellipsis(atlas, desc, (fc.w - 16.0).max(40.0));
             batch.text(atlas, &desc_fit, fc.x + 8.0, fc_y + 17.0, pal.text_muted, true);
         } else {
-            batch.text(atlas, "Volt+ Mods", fc.x + 8.0, fc_y + 5.0, pal.text_primary, true);
+            batch.text(atlas, "Nexora Mods", fc.x + 8.0, fc_y + 5.0, pal.text_primary, true);
             batch.text(
                 atlas,
-                "Open the Mods folder to add or manage Volt+ mods.",
+                "Open the Mods folder to add or manage Nexora mods.",
                 fc.x + 8.0,
                 fc_y + 17.0,
                 pal.text_muted,
@@ -1092,13 +1092,13 @@ fn horizon_tab_rows(tab: HorizonTab, s: &Settings) -> Vec<HorizonRow> {
     let mut rows = match tab {
         HorizonTab::General => {
             let mut v = vec![
-                HorizonRow::Header("Volt+ Screens"),
-                page_entry(Page::Graphics, "horizon.pages.open.graphics", "Volt+ graphics quality presets, anti-aliasing and rendering."),
+                HorizonRow::Header("Nexora Screens"),
+                page_entry(Page::Graphics, "horizon.pages.open.graphics", "Nexora graphics quality presets, anti-aliasing and rendering."),
                 page_entry(Page::GraphicsAdvanced, "horizon.pages.open.graphics_advanced", "Fine-grained rendering, culling, shadows and frame pacing."),
                 page_entry(Page::ShaderPacks, "horizon.pages.open.shader_packs", "Choose and configure installed shader packs."),
                 page_entry(Page::Controller, "horizon.pages.open.controller", "Gamepad sensitivity, deadzone, glyph style and button binds."),
                 page_entry(Page::Extras, "horizon.pages.open.extras", "Lighting, inventory tweaks, sorting and multiplayer helpers."),
-                page_entry(Page::Mods, "horizon.pages.open.mods", "Manage installed Volt+ client modifications and mod settings."),
+                page_entry(Page::Mods, "horizon.pages.open.mods", "Manage installed Nexora client modifications and mod settings."),
                 HorizonRow::Header("Quick Toggles"),
                 extra_entry(ExtraItem::DiscordPresence),
             ];
@@ -1110,7 +1110,7 @@ fn horizon_tab_rows(tab: HorizonTab, s: &Settings) -> Vec<HorizonRow> {
         }
         HorizonTab::Visuals => vec![
             HorizonRow::Header("Graphics & Shaders"),
-            page_entry(Page::Graphics, "horizon.pages.open.graphics", "Volt+ graphics quality presets, anti-aliasing and rendering."),
+            page_entry(Page::Graphics, "horizon.pages.open.graphics", "Nexora graphics quality presets, anti-aliasing and rendering."),
             page_entry(Page::GraphicsAdvanced, "horizon.pages.open.graphics_advanced", "Fine-grained rendering, culling, shadows and frame pacing."),
             page_entry(Page::GraphicsHdr, "horizon.pages.open.graphics_hdr", "HDR tone mapping, brightness and calibration."),
             page_entry(Page::ShaderPacks, "horizon.pages.open.shader_packs", "Choose and configure installed shader packs."),
@@ -1122,7 +1122,7 @@ fn horizon_tab_rows(tab: HorizonTab, s: &Settings) -> Vec<HorizonRow> {
         HorizonTab::Gameplay => vec![
             HorizonRow::Header("Input & Tweaks"),
             page_entry(Page::Controller, "horizon.pages.open.controller", "Gamepad sensitivity, deadzone, glyph style and button binds."),
-            page_entry(Page::Extras, "horizon.pages.open.extras", "Full list of Volt+ gameplay and utility extras."),
+            page_entry(Page::Extras, "horizon.pages.open.extras", "Full list of Nexora gameplay and utility extras."),
             HorizonRow::Header("Inventory & Multiplayer"),
             extra_entry(ExtraItem::MouseTweaks),
             extra_entry(ExtraItem::MouseTweaksWheel),
@@ -1133,7 +1133,7 @@ fn horizon_tab_rows(tab: HorizonTab, s: &Settings) -> Vec<HorizonRow> {
         HorizonTab::System => {
             let mut v = vec![
                 HorizonRow::Header("Mods & Integration"),
-                page_entry(Page::Mods, "horizon.pages.open.mods", "Manage installed Volt+ client modifications and mod settings."),
+                page_entry(Page::Mods, "horizon.pages.open.mods", "Manage installed Nexora client modifications and mod settings."),
                 extra_entry(ExtraItem::DiscordPresence),
                 HorizonRow::Header("AI & Automation"),
             ];
@@ -1377,7 +1377,7 @@ impl VoltHorizonUi {
                     HorizonRow::Entry(e) => out.push((hdr.take(), e)),
                 }
             }
-            return (format!("Volt+ / {}", self.tab.label()), out);
+            return (format!("Nexora / {}", self.tab.label()), out);
         }
         let mut seen = Vec::new();
         let mut out = Vec::new();
@@ -1396,7 +1396,7 @@ impl VoltHorizonUi {
                 }
             }
         }
-        (format!("Volt+ / Search: {}", query.trim()), out)
+        (format!("Nexora / Search: {}", query.trim()), out)
     }
 
     fn build_list_rows(
@@ -1499,10 +1499,10 @@ impl VoltHorizonUi {
         batch.fill(atlas, 0.0, 0.0, w, h, pal.scrim);
 
         // Brand mark
-        batch.text(atlas, "Volt+", geom.side_x + side_dx, geom.brand_y + 1.0, pal.text_primary, true);
-        let vw = HudBatch::text_width(atlas, "Volt+");
+        batch.text(atlas, "Nexora", geom.side_x + side_dx, geom.brand_y + 1.0, pal.text_primary, true);
+        let vw = HudBatch::text_width(atlas, "Nexora");
         batch.text(atlas, " Settings", geom.side_x + side_dx + vw, geom.brand_y + 1.0, pal.accent_hi, true);
-        batch.text(atlas, "Volt Launcher Plus", geom.side_x + side_dx, geom.brand_y + 12.0, pal.text_dim, true);
+        batch.text(atlas, "Nexora Client • MXInspire", geom.side_x + side_dx, geom.brand_y + 12.0, pal.text_dim, true);
 
         // Search box
         let sb = geom.search_box;

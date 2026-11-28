@@ -208,6 +208,41 @@ pub fn note_record_frame() {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct BoosterHooks {
+    pub battery_temp_c: fn() -> f32,
+    pub memory_used_total_mb: fn() -> (u32, u32),
+    pub set_sustained_performance: fn(bool),
+    pub purge_memory: fn(),
+    pub set_refresh_rate_hz: fn(u16),
+}
+
+static BOOSTER_HOOKS: std::sync::OnceLock<BoosterHooks> = std::sync::OnceLock::new();
+pub fn install_booster(hooks: BoosterHooks) {
+    let _ = BOOSTER_HOOKS.set(hooks);
+}
+pub fn booster_battery_temp_c() -> Option<f32> {
+    BOOSTER_HOOKS.get().map(|h| (h.battery_temp_c)())
+}
+pub fn booster_memory_used_total_mb() -> Option<(u32, u32)> {
+    BOOSTER_HOOKS.get().map(|h| (h.memory_used_total_mb)())
+}
+pub fn booster_set_sustained_performance(enable: bool) {
+    if let Some(h) = BOOSTER_HOOKS.get() {
+        (h.set_sustained_performance)(enable);
+    }
+}
+pub fn booster_purge_memory() {
+    if let Some(h) = BOOSTER_HOOKS.get() {
+        (h.purge_memory)();
+    }
+}
+pub fn booster_set_refresh_rate_hz(hz: u16) {
+    if let Some(h) = BOOSTER_HOOKS.get() {
+        (h.set_refresh_rate_hz)(hz);
+    }
+}
+
 #[cfg(test)]
 mod input_tests {
     use super::*;

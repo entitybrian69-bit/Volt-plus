@@ -15447,6 +15447,16 @@ impl Game<'_> {
                     self.pad_in_menu(),
                     horizon_client::recorder::hiding_controls(),
                 ) {
+                    let frame_ms = self.frame_stats.frame_millis().last().copied().unwrap_or(16.6);
+                    let cpu_ms = self.frame_stats.cpu_millis().last().copied().unwrap_or(6.2);
+                    let gpu_ms = self.frame_stats.gpu_millis().last().copied().unwrap_or(5.4);
+                    self.pad.touch_ui.push_telemetry(
+                        self.fps,
+                        frame_ms,
+                        cpu_ms,
+                        gpu_ms,
+                        self.settings.vsync,
+                    );
                     self.pad
                         .touch_ui
                         .sync_volt_extras(&self.settings.extras.volt);
@@ -16644,7 +16654,7 @@ impl ApplicationHandler for Game<'_> {
         let size = self.options.window_size.map(f64::from);
         self.fullscreen = horizon_client::window::FullscreenState::new(fullscreen);
         let attributes = Window::default_attributes()
-            .with_title("Volt Plus")
+            .with_title("Nexora")
             .with_window_icon(horizon_client::window::icon());
         // Wayland names the window by its app id, which the horizon.desktop entry matches.
         #[cfg(target_os = "linux")]
@@ -21310,7 +21320,7 @@ impl Loading {
             .map(f64::from);
         self.fullscreen = horizon_client::window::FullscreenState::new(fullscreen);
         let attributes = Window::default_attributes()
-            .with_title("Volt Plus")
+            .with_title("Nexora")
             .with_window_icon(horizon_client::window::icon());
         // Wayland names the window by its app id, which the horizon.desktop entry matches.
         #[cfg(target_os = "linux")]

@@ -13,7 +13,7 @@ android {
     compileSdk 35
     defaultConfig {
         applicationId providers.gradleProperty('appId').getOrElse('vp.net.voltplus')
-        manifestPlaceholders = [appLabel: providers.gradleProperty('appLabel').getOrElse('Volt Plus')]
+        manifestPlaceholders = [appLabel: providers.gradleProperty('appLabel').getOrElse('Nexora')]
         minSdk providers.gradleProperty('minSdk').getOrElse('26').toInteger()
         targetSdk 35
         versionCode providers.gradleProperty('releaseVersionCode').orElse(providers.gradleProperty('devVersionCode')).getOrElse('30').toInteger()

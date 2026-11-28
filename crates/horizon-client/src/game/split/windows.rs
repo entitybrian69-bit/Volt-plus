@@ -293,7 +293,7 @@ impl<'a> Split<'a> {
                 // Its own title for a moment: `above_menu_bar` finds it by it.
                 Some((at, size)) => {
                     let attributes = attributes
-                        .with_title(format!("Volt Plus {key}"))
+                        .with_title(format!("Nexora {key}"))
                         .with_decorations(false)
                         .with_position(at)
                         .with_inner_size(size);
@@ -321,7 +321,7 @@ impl<'a> Split<'a> {
                             }
                         }
                     }
-                    .with_title("Volt Plus")
+                    .with_title("Nexora")
                 }
             };
             let made = event_loop

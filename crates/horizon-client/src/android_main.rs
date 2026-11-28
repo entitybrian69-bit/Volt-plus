@@ -265,6 +265,15 @@ fn android_main(app: AndroidApp) {
             set: platform::clipboard_set,
         },
     );
+    horizon_client::android_runtime::install_booster(
+        horizon_client::android_runtime::BoosterHooks {
+            battery_temp_c: platform::battery_temp_c,
+            memory_used_total_mb: platform::memory_used_total_mb,
+            set_sustained_performance: platform::set_sustained_performance,
+            purge_memory: platform::purge_memory,
+            set_refresh_rate_hz: platform::apply_high_refresh_rate,
+        },
+    );
     if let Err(error) =
         std::fs::create_dir_all(&home).and_then(|()| std::env::set_current_dir(&home))
     {

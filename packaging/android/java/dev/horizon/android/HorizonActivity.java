@@ -744,4 +744,56 @@ public final class HorizonActivity extends android.app.NativeActivity {
             android.util.Log.e("HorizonActivity", "Failed to open release download page", error);
         }
     }
+
+    public float batteryTempCelsius() {
+        try {
+            android.content.Intent intent = registerReceiver(
+                    null,
+                    new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED));
+            if (intent != null) {
+                int tenths = intent.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 365);
+                if (tenths > 0 && tenths < 1200) {
+                    return tenths / 10.0f;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return 36.5f;
+    }
+
+    public int[] memoryStatsMb() {
+        try {
+            android.app.ActivityManager am =
+                    (android.app.ActivityManager) getSystemService(android.content.Context.ACTIVITY_SERVICE);
+            if (am != null) {
+                android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+                am.getMemoryInfo(mi);
+                long totalMb = mi.totalMem / (1024L * 1024L);
+                long availMb = mi.availMem / (1024L * 1024L);
+                long usedMb = Math.max(0L, totalMb - availMb);
+                return new int[]{(int) usedMb, (int) totalMb};
+            }
+        } catch (Throwable ignored) {}
+        return new int[]{2400, 6144};
+    }
+
+    public void setSustainedPerformance(final boolean enable) {
+        if (android.os.Build.VERSION.SDK_INT < 24) return;
+        runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try {
+                    android.view.Window w = getWindow();
+                    if (w != null) {
+                        w.setSustainedPerformanceMode(enable);
+                    }
+                } catch (Throwable ignored) {}
+            }
+        });
+    }
+
+    public void purgeMemory() {
+        try {
+            System.gc();
+            System.runFinalization();
+        } catch (Throwable ignored) {}
+    }
 }

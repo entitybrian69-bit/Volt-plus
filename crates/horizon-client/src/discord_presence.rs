@@ -18,10 +18,10 @@ use serde_json::{Value, json};
 
 use crate::command::args::GameMode;
 
-/// The "Volt+" application on Discord's developer portal (public: it names the game).
+/// The "Nexora" application on Discord's developer portal (public: it names the game).
 pub const DISCORD_APP_ID: &str = "1574331637087469588";
 /// What the card calls the product.
-pub const PRODUCT: &str = "Volt+";
+pub const PRODUCT: &str = "Nexora";
 /// The launcher's own version, the one Settings shows (mirrors `android_main`'s).
 #[cfg(target_os = "android")]
 const VERSION: &str = "1.0";
@@ -511,12 +511,12 @@ fn card_lines_with_details(
                 LauncherSection::Play => format!("In the {PRODUCT} Launcher"),
                 LauncherSection::Worlds => "Browsing Worlds & Servers".to_owned(),
                 LauncherSection::Mods => "Browsing Modrinth Mods".to_owned(),
-                LauncherSection::Shaders => "Configuring Volt+ Shaders".to_owned(),
+                LauncherSection::Shaders => "Configuring Nexora Shaders".to_owned(),
                 LauncherSection::Resources => "Browsing Resource Packs".to_owned(),
                 LauncherSection::Replays => "Browsing Replay Archive".to_owned(),
                 LauncherSection::Account => "Managing Accounts".to_owned(),
                 LauncherSection::Performance => "Checking Performance Telemetry".to_owned(),
-                LauncherSection::Settings => "Configuring Volt+ Settings".to_owned(),
+                LauncherSection::Settings => "Configuring Nexora Settings".to_owned(),
                 LauncherSection::Music => "Browsing & Playing Music".to_owned(),
             };
             let state = match extra
@@ -551,7 +551,7 @@ fn card_lines_with_details(
                 state.push_str(" • Paused");
             }
             if extra.shaders_active {
-                state.push_str(" • Volt+ Shaders");
+                state.push_str(" • Nexora Shaders");
             }
             if let Some(track) = extra
                 .music_now_playing
@@ -602,7 +602,7 @@ fn card_lines_with_details(
                 state.push_str(&format!(" • {hearts}♥"));
             }
             if extra.shaders_active {
-                state.push_str(" • Volt+ Shaders");
+                state.push_str(" • Nexora Shaders");
             }
             if let Some(track) = extra
                 .music_now_playing
@@ -908,13 +908,13 @@ mod tests {
 
         // The menus card: the launcher, its version, the system, and the download button.
         let menus = activity(Status::Menus, None, 900).unwrap();
-        assert_eq!(menus["details"], "In the Volt+ launcher");
+        assert_eq!(menus["details"], "In the Nexora launcher");
         let state = menus["state"].as_str().unwrap();
-        assert!(state.starts_with("Volt+ "), "{state}");
+        assert!(state.starts_with("Nexora "), "{state}");
         assert!(state.ends_with(std::env::consts::OS), "{state}");
         assert_eq!(menus["timestamps"]["start"], 900, "time played counts in menus");
         assert_eq!(menus["assets"]["large_image"], "volt");
-        assert_eq!(menus["assets"]["large_text"], format!("Volt+ {VERSION}"));
+        assert_eq!(menus["assets"]["large_text"], format!("Nexora {VERSION}"));
         assert_eq!(menus["buttons"][0]["url"], DOWNLOAD_URL);
         assert!(menus.get("party").is_none());
 
@@ -955,14 +955,14 @@ mod tests {
             900,
         )
         .unwrap();
-        assert_eq!(card["name"], "Volt+");
+        assert_eq!(card["name"], "Nexora");
         assert_eq!(card["details"], "Survival • LAN world");
         assert_eq!(card["state"], "In the Nether • 2 of 8 players");
         assert_eq!(card["timestamps"]["start"], 40);
         assert_eq!(card["party"]["size"], json!([2, 8]));
         let logo = card["assets"]["large_image"].as_str().unwrap();
         assert!(logo.starts_with("https://"), "{logo}");
-        assert_eq!(card["assets"]["large_text"], format!("Volt+ {VERSION}"));
+        assert_eq!(card["assets"]["large_text"], format!("Nexora {VERSION}"));
         assert_eq!(card["assets"]["large_url"], DOWNLOAD_URL);
         assert_eq!(card["details_url"], DOWNLOAD_URL);
         assert_eq!(card["state_url"], DOWNLOAD_URL);
@@ -997,7 +997,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(replay["details"], "Watching Replay • Boss Fight");
-        assert_eq!(replay["state"], "Free-Cam • Volt+ Shaders");
+        assert_eq!(replay["state"], "Free-Cam • Nexora Shaders");
 
         let rich_world = activity_with_details(
             world(Play::Singleplayer, Dimension::Overworld),
@@ -1014,7 +1014,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rich_world["details"], "Survival • Survival Island • REC");
-        assert_eq!(rich_world["state"], "In the Overworld • Day 12 • 10♥ • Volt+ Shaders");
+        assert_eq!(rich_world["state"], "In the Overworld • Day 12 • 10♥ • Nexora Shaders");
     }
 
     #[test]

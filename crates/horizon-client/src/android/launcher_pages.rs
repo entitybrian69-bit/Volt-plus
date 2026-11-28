@@ -393,6 +393,9 @@ pub(super) enum Action {
     ReplayToggleRecordSelf,
     // Inventory (World / Server / Screenshot) & CurseForge Worlds
     SetInventorySubTab(crate::catalog::InventorySubTab),
+    OpenMultiplayer,
+    OpenScreenshots,
+    RequestExit,
     RefreshWorlds,
     PlayWorld(usize),
     InspectWorld(usize),
@@ -1274,7 +1277,7 @@ impl Launcher {
             self.renderer = Some(r);
             return Ok(());
         };
-        // Scope the glass palette to the launcher; game screens keep the user's theme.
+        // Scope the Nexora crimson obsidian glass palette to the launcher; game screens keep the user's theme.
         let saved_theme = horizon_client::ui_theme::active_theme();
         let ui_opacity = self.catalog.config.theme.ui_opacity.clamp(0.10, 1.0);
         let scale_a = |base: u8, min_a: u8| -> u8 {
@@ -1285,38 +1288,33 @@ impl Launcher {
         let mut glass = saved_theme;
         glass.is_light = false;
         glass.ui_opacity = ui_opacity;
-        glass.bg_solid = color::hex(0x151922, scale_a(235, 16));
-        glass.sidebar_bg = color::hex(0x10151c, scale_a(205, 16));
-        glass.header_bg = color::hex(0x151922, scale_a(205, 16));
-        glass.surface = color::hex(0x151922, scale_a(175, 16));
-        glass.surface_dim = color::hex(0x10151c, scale_a(155, 14));
-        glass.surface_bright = color::hex(0x3a4251, scale_a(185, 18));
-        glass.surface_selected = color::hex(0xaaa0c8, scale_a(155, 18));
-        glass.border = color::hex(0xe5dbf5, scale_a(155, 24));
-        glass.border_strong = color::hex(0xfaf5ff, scale_a(205, 42));
-        glass.accent = color::hex(0xc7b9df, fg_a);
-        glass.accent_soft = color::hex(0xaaa0c8, scale_a(130, 14));
-        glass.on_accent = color::hex(0x181321, fg_a);
-        glass.accent_text = color::hex(0xeee6ff, fg_a);
-        glass.text_primary = color::hex(0xffffff, fg_a);
-        glass.text_muted = color::hex(0xd9d3e5, fg_a);
+        glass.bg_solid = color::hex(0x0B0305, scale_a(238, 18));
+        glass.sidebar_bg = color::hex(0x110408, scale_a(222, 24));
+        glass.header_bg = color::hex(0x140509, scale_a(212, 20));
+        glass.surface = color::hex(0x16060B, scale_a(194, 18));
+        glass.surface_dim = color::hex(0x100407, scale_a(172, 14));
+        glass.surface_bright = color::hex(0x2D0B14, scale_a(200, 22));
+        glass.surface_selected = color::hex(0xB91C28, scale_a(212, 26));
+        glass.border = color::hex(0x8F202D, scale_a(170, 28));
+        glass.border_strong = color::hex(0xF24452, scale_a(225, 46));
+        glass.accent = color::hex(0xE11D2E, fg_a);
+        glass.accent_soft = color::hex(0x7F101B, scale_a(160, 18));
+        glass.on_accent = color::hex(0xFFF5F6, fg_a);
+        glass.accent_text = color::hex(0xFF6B75, fg_a);
+        glass.text_primary = color::hex(0xFFF4F6, fg_a);
+        glass.text_muted = color::hex(0xCCA3AA, fg_a);
         if let Some([r, g, b]) = self.wallpaper_color {
+            // Subtle warm-crimson blend with custom wallpaper tint while preserving Nexora's dark crimson identity.
+            let mix = |base: u8, sample: u8| -> u8 {
+                ((u16::from(base) * 3 + u16::from(sample)) / 4) as u8
+            };
             let rgb = |r: u8, g: u8, b: u8| (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b);
-            let dark = |v: u8| (u16::from(v) * 18 / 100 + 12).min(90) as u8;
-            let medium = |v: u8| (u16::from(v) * 55 / 100 + 50).min(215) as u8;
-            let light = |v: u8| (u16::from(v) * 50 / 100 + 128).min(245) as u8;
-            glass.bg_solid = color::hex(rgb(dark(r), dark(g), dark(b)), scale_a(235, 16));
-            glass.sidebar_bg = color::hex(rgb(dark(r), dark(g), dark(b)), scale_a(205, 16));
-            glass.header_bg = color::hex(rgb(dark(r), dark(g), dark(b)), scale_a(205, 16));
-            glass.surface = color::hex(rgb(dark(r), dark(g), dark(b)), scale_a(185, 16));
-            glass.surface_dim = color::hex(rgb(dark(r), dark(g), dark(b)), scale_a(165, 14));
-            glass.surface_bright = color::hex(rgb(medium(r), medium(g), medium(b)), scale_a(185, 18));
-            glass.surface_selected = color::hex(rgb(medium(r), medium(g), medium(b)), scale_a(165, 18));
-            glass.border = color::hex(rgb(light(r), light(g), light(b)), scale_a(165, 24));
-            glass.border_strong = color::hex(rgb(light(r), light(g), light(b)), scale_a(220, 42));
-            glass.accent = color::hex(rgb(light(r), light(g), light(b)), fg_a);
-            glass.accent_soft = color::hex(rgb(medium(r), medium(g), medium(b)), scale_a(145, 14));
-            glass.accent_text = glass.accent;
+            let dark_r = mix(17, (u16::from(r) * 18 / 100 + 14).min(64) as u8);
+            let dark_g = mix(4, (u16::from(g) * 12 / 100 + 4).min(42) as u8);
+            let dark_b = mix(8, (u16::from(b) * 14 / 100 + 6).min(48) as u8);
+            glass.bg_solid = color::hex(rgb(dark_r, dark_g, dark_b), scale_a(236, 18));
+            glass.sidebar_bg = color::hex(rgb(dark_r, dark_g, dark_b), scale_a(220, 24));
+            glass.surface = color::hex(rgb(dark_r.saturating_add(6), dark_g, dark_b), scale_a(194, 18));
         }
         horizon_client::ui_theme::set_active_theme(glass);
         let result = self.draw_pages_with(&mut r, &gui);
@@ -1435,10 +1433,9 @@ impl Launcher {
                 }
             }
         }
-        // A restrained veil keeps the landscape visible and the white controls readable,
-        // scaling with UI Opacity so transparent UI shows the background vividly.
-        let veil_a = (42.0 * self.catalog.config.theme.ui_opacity.clamp(0.10, 1.0)).round() as u8;
-        ui.fill(0.0, 0.0, w, full_h, color::hex(0x10111d, veil_a));
+        // Warm-crimson atmospheric veil over the scene background so Nexora's branding pops cleanly.
+        let veil_a = (64.0 * self.catalog.config.theme.ui_opacity.clamp(0.10, 1.0)).round() as u8;
+        ui.fill(0.0, 0.0, w, full_h, color::hex(0x140408, veil_a));
 
     }
 
@@ -1512,8 +1509,8 @@ impl Launcher {
             None
         };
         let (w, full_h) = (ui.w, ui.h);
-        // Leave room for the navigation dock in all page layouts and scroll calculations.
-        let h = (full_h - 54.0).max(210.0);
+        // Full-height Nexora sidebar leaves almost the entire vertical viewport for content.
+        let h = (full_h - 14.0).max(240.0);
         ui.h = h;
         self.draw_scene_background(&mut ui, w, full_h);
 
@@ -1534,145 +1531,334 @@ impl Launcher {
             );
         } else {
         let account_name = self.login.profile.clone().unwrap_or_else(|| self.catalog.config.name.clone());
-        // Brand and account enter first, followed by the avatar and navigation.
+        let page = self.catalog.page;
+
+        // ---- Left Crimson-Dark Glass Sidebar (Concept 1: design/nexora_ui_layout_concept.png) ----
+        let sb_x = 12.0;
+        let sb_y = 10.0;
+        let sb_w = (w * 0.215).clamp(156.0, 206.0);
+        let sb_h = (full_h - 20.0).max(220.0);
+
         ui.set_stagger_transition((reveal * 3.0).min(1.0), 0.0, 0.0);
-        ui.rounded(12.0, 8.0, 198.0, 40.0, 20.0, my3_surface());
-        ui.border(12.0, 8.0, 198.0, 40.0, 20.0, my3_border());
-        ui.text(Face::SemiBold, 19.0, 24.0, 14.0, my3_text(), "V+");
-        ui.text(Face::SemiBold, 12.5, 55.0, 11.0, my3_text(), "Volt launcher plus");
-        ui.text(Face::Regular, 9.0, 55.0, 28.0, my3_muted(), &format!("Android {}", crate::backend::VERSION));
-        let account_rect = [12.0, 54.0, 100.0, 36.0];
-        ui.rounded(account_rect[0], account_rect[1], account_rect[2], account_rect[3], 18.0, my3_surface());
-        ui.border(account_rect[0], account_rect[1], account_rect[2], account_rect[3], 18.0, my3_border());
-        self.wardrobe.draw_head(&mut ui, 18.0, 57.0, 30.0);
-        let label = ui.fit_text(Face::Medium, 11.0, &account_name, 45.0);
-        ui.text(Face::Medium, 11.0, 49.0, 63.0, my3_text(), &label);
-        self.targets.push((account_rect, Action::Account));
-        let discord_space = w - 378.0 - 8.0 - 218.0;
-        let top_compact = w < 596.0;
-        let discord_rect = if discord_space >= 104.0 {
-            [218.0, 11.0, discord_space.min(148.0), 34.0]
-        } else {
-            let max_disc = (w - 234.0).clamp(84.0, 136.0);
-            [118.0, 55.0, max_disc, 34.0]
-        };
-        button(&mut ui, &mut self.targets, discord_rect,
-            if top_compact { "Discord" } else { "Join our Discord" }, Action::Discord, false);
-        if top_compact {
-            let bg_w = 72.0;
-            let inv_w = 72.0;
-            let mus_w = 62.0;
-            let rx0 = (w - 12.0 - bg_w).max(216.0);
-            let rx1 = (rx0 - 6.0 - inv_w).max(140.0);
-            let rx2 = (rx1 - 6.0 - mus_w).max(74.0);
-            button(&mut ui, &mut self.targets, [rx2, 12.0, mus_w, 34.0],
-                "Music", Action::OpenMusic, false);
-            button(&mut ui, &mut self.targets, [rx1, 12.0, inv_w, 34.0],
-                "Items", Action::Page(Page::Inventory), self.catalog.page == Page::Inventory);
-            button(&mut ui, &mut self.targets, [rx0, 12.0, bg_w, 34.0],
-                "Theme", Action::OpenWallpapers, false);
-        } else {
-            button(&mut ui, &mut self.targets, [w - 378.0, 12.0, 88.0, 34.0],
-                "Musics", Action::OpenMusic, false);
-            button(&mut ui, &mut self.targets, [w - 282.0, 12.0, 100.0, 34.0],
-                "Inventory", Action::Page(Page::Inventory), self.catalog.page == Page::Inventory);
-            button(&mut ui, &mut self.targets, [w - 174.0, 12.0, 162.0, 34.0],
-                "Background images", Action::OpenWallpapers, false);
+        ui.rounded(sb_x, sb_y, sb_w, sb_h, 16.0, horizon_client::ui_theme::active_theme().sidebar_bg);
+        ui.stroke_rounded(sb_x, sb_y, sb_w, sb_h, 16.0, 1.2, my3_border());
+
+        // Sidebar Header: Nexora Feather + "NEXORA" + "OWN BY MXINSPIRE"
+        horizon_client::nexora_art::draw_feather(&mut ui, sb_x + 11.0, sb_y + 11.0, 28.0, 1.0);
+        ui.text(Face::SemiBold, 15.5, sb_x + 43.0, sb_y + 9.0, my3_text(), "NEXORA");
+        ui.text(
+            Face::Medium,
+            8.0,
+            sb_x + 44.0,
+            sb_y + 28.0,
+            horizon_client::ui_theme::active_theme().accent_text,
+            "OWN BY MXINSPIRE",
+        );
+        ui.fill(sb_x + 12.0, sb_y + 47.0, sb_w - 24.0, 1.0, my3_border());
+
+        let is_multiplayer = page == Page::Inventory
+            && self.catalog.inventory_sub_tab == crate::catalog::InventorySubTab::Server;
+        let is_screenshots = (page == Page::Inventory
+            && self.catalog.inventory_sub_tab == crate::catalog::InventorySubTab::Screenshot)
+            || page == Page::Replays;
+        let is_store = matches!(
+            page,
+            Page::Packs | Page::Shaders | Page::Installed | Page::Compiler
+        );
+        let is_cosmetics = page == Page::Skins;
+        let is_options = matches!(page, Page::Settings | Page::ControlsStudio);
+
+        let nav_items: [(Icon, &str, Action, bool); 8] = [
+            (Icon::Home, "HOME", Action::Page(Page::Play), page == Page::Play),
+            (Icon::Globe, "SINGLEPLAYER", Action::Page(Page::Worlds), page == Page::Worlds),
+            (Icon::Gamepad, "MULTIPLAYER", Action::OpenMultiplayer, is_multiplayer),
+            (Icon::Mods, "MODS", Action::Page(Page::Mods), page == Page::Mods),
+            (Icon::Skins, "COSMETICS", Action::Page(Page::Skins), is_cosmetics),
+            (Icon::Camera, "SCREENSHOTS", Action::OpenScreenshots, is_screenshots),
+            (Icon::Store, "STORE", Action::Page(Page::Packs), is_store),
+            (Icon::Settings, "OPTIONS", Action::Page(Page::Settings), is_options),
+        ];
+
+        let nav_top = sb_y + 55.0;
+        let quit_h = 34.0;
+        let nav_avail = (sb_h - 55.0 - quit_h - 18.0).max(120.0);
+        let row_step = (nav_avail / nav_items.len() as f32).clamp(24.0, 38.0);
+        let row_h = (row_step - 4.0).clamp(22.0, 34.0);
+        let selected_idx = nav_items.iter().position(|(_, _, _, active)| *active).unwrap_or(0);
+        let target_nav_y = nav_top + selected_idx as f32 * row_step;
+
+        let has_any_modal = self.catalog.project_modal.is_some()
+            || self.catalog.fm_modal.is_some()
+            || self.chooser.is_some()
+            || self.login.visible
+            || self.exit_confirmation;
+        self.anim.step(
+            page,
+            self.catalog.settings_category,
+            target_nav_y,
+            has_any_modal,
+            self.catalog.sections,
+        );
+
+        let item_x = sb_x + 10.0;
+        let item_w = sb_w - 20.0;
+        let pill_y = self.anim.nav_pill_y.clamp(nav_top - 4.0, nav_top + 7.5 * row_step);
+        ui.rounded(item_x, pill_y, item_w, row_h, 9.0, my3_nav_active());
+        ui.stroke_rounded(
+            item_x,
+            pill_y,
+            item_w,
+            row_h,
+            9.0,
+            1.2,
+            horizon_client::ui_theme::active_theme().border_strong,
+        );
+
+        for (i, (ic, lbl, act, active)) in nav_items.iter().enumerate() {
+            let iy = nav_top + i as f32 * row_step;
+            let item_progress = ((reveal - 0.12 - i as f32 * 0.04) * 5.0).clamp(0.0, 1.0);
+            if item_progress <= 0.0 {
+                continue;
+            }
+            ui.set_stagger_transition(item_progress, item_x, iy);
+            if !*active {
+                ui.rounded(
+                    item_x,
+                    iy,
+                    item_w,
+                    row_h,
+                    9.0,
+                    horizon_client::hud::rgba(255, 255, 255, 10),
+                );
+                ui.border(
+                    item_x,
+                    iy,
+                    item_w,
+                    row_h,
+                    9.0,
+                    color::with_alpha(my3_border(), 0.45),
+                );
+            }
+            let ic_col = if *active {
+                my3_on_accent()
+            } else {
+                horizon_client::ui_theme::active_theme().accent_text
+            };
+            let txt_col = if *active { my3_on_accent() } else { my3_text() };
+            ui.icon(*ic, item_x + 10.0, iy + (row_h - 14.0) * 0.5, 14.0, ic_col);
+            let fitted = ui.fit_text(
+                if *active { Face::SemiBold } else { Face::Medium },
+                10.6,
+                lbl,
+                item_w - 34.0,
+            );
+            ui.text(
+                if *active { Face::SemiBold } else { Face::Medium },
+                10.6,
+                item_x + 30.0,
+                iy + (row_h - 14.5) * 0.5,
+                txt_col,
+                &fitted,
+            );
+            self.targets.push(([item_x, iy, item_w, row_h], act.clone()));
         }
 
+        // Bottom-pinned QUIT GAME button
         ui.set_stagger_transition(1.0, 0.0, 0.0);
-        let page = self.catalog.page;
+        let quit_y = sb_y + sb_h - quit_h - 10.0;
+        let quit_rect = [item_x, quit_y, item_w, quit_h];
+        ui.rounded(
+            quit_rect[0],
+            quit_rect[1],
+            quit_rect[2],
+            quit_rect[3],
+            9.0,
+            color::with_alpha(my3_cancel_bg(), 0.90),
+        );
+        ui.border(
+            quit_rect[0],
+            quit_rect[1],
+            quit_rect[2],
+            quit_rect[3],
+            9.0,
+            my3_border(),
+        );
+        ui.icon(
+            Icon::Power,
+            quit_rect[0] + 10.0,
+            quit_rect[1] + (quit_h - 14.0) * 0.5,
+            14.0,
+            horizon_client::ui_theme::active_theme().accent_text,
+        );
+        ui.text(
+            Face::SemiBold,
+            10.5,
+            quit_rect[0] + 30.0,
+            quit_rect[1] + (quit_h - 14.5) * 0.5,
+            my3_text(),
+            "QUIT GAME",
+        );
+        self.targets.push((quit_rect, Action::RequestExit));
+
+        // ---- Top Utility Bar (Right of Sidebar) ----
+        let main_x = sb_x + sb_w + 14.0;
+        let main_w = (w - main_x - 14.0).max(200.0);
+        let top_compact = main_w < 460.0;
+        let mut rx = w - 14.0;
+        let theme_w = if top_compact { 78.0 } else { 132.0 };
+        rx -= theme_w;
+        button(
+            &mut ui,
+            &mut self.targets,
+            [rx, 10.0, theme_w, 32.0],
+            if top_compact { "Theme" } else { "Wallpapers" },
+            Action::OpenWallpapers,
+            false,
+        );
+        let mus_w = if top_compact { 62.0 } else { 76.0 };
+        rx -= mus_w + 6.0;
+        button(
+            &mut ui,
+            &mut self.targets,
+            [rx, 10.0, mus_w, 32.0],
+            "Music",
+            Action::OpenMusic,
+            false,
+        );
+        let disc_w = if top_compact { 68.0 } else { 88.0 };
+        rx -= disc_w + 6.0;
+        button(
+            &mut ui,
+            &mut self.targets,
+            [rx, 10.0, disc_w, 32.0],
+            "Discord",
+            Action::Discord,
+            false,
+        );
         if page == Page::Play {
-            let so_rect = if discord_space >= 104.0 {
-                [118.0, 55.0, 106.0, 34.0]
-            } else {
-                let x0 = discord_rect[0] + discord_rect[2] + 6.0;
-                let avail = (w - x0 - 12.0).max(86.0);
-                [x0.min(w - avail - 12.0), 55.0, avail.min(106.0), 34.0]
-            };
+            let so_w = if top_compact { 84.0 } else { 104.0 };
+            rx -= so_w + 6.0;
             button(
                 &mut ui,
                 &mut self.targets,
-                so_rect,
+                [rx, 10.0, so_w, 32.0],
                 "Skin Online",
                 Action::OpenSkinOnline,
                 true,
             );
-        }
-        let target_shift = if page == Page::Play { 0.0 } else { 1.0 };
-        if horizon_client::ui_theme::motion::reduced_motion() {
-            self.anim.scene_shift = target_shift;
-        } else {
-            let dt = self.anim.last_tick.elapsed().as_secs_f32().clamp(0.001, 0.05);
-            self.anim.scene_shift += (target_shift - self.anim.scene_shift) * (dt * 10.0).min(1.0);
-        }
-        let t = self.anim.scene_shift;
-        // The marked left corner, below the account badge and above controls.
-        let from = [12.0, 98.0, (w * 0.19).clamp(100.0, 200.0), (h - 180.0).max(90.0)];
-        let to = [12.0, 98.0, (w * 0.23 - 18.0).clamp(100.0, 210.0), (h - 114.0).max(90.0)];
-        let scene_rect = std::array::from_fn(|i| from[i] + (to[i] - from[i]) * t);
-        if reveal >= 0.14 {
-            self.wardrobe.draw_scene(&mut ui, scene_rect);
+        } else if is_store {
+            // Sub-navigation strip inside STORE: Resource Packs | Shaders | Installed | Compiler
+            let sub_items = [
+                ("Packs", Page::Packs),
+                ("Shaders", Page::Shaders),
+                ("Installed", Page::Installed),
+                ("Compiler", Page::Compiler),
+            ];
+            let seg_w = if top_compact { 62.0 } else { 78.0 };
+            for (idx, (lbl, target_page)) in sub_items.into_iter().enumerate() {
+                let sx = main_x + idx as f32 * (seg_w + 4.0);
+                if sx + seg_w < rx - 6.0 {
+                    let r_rect = [sx, 10.0, seg_w, 32.0];
+                    ui.m3_connected_segment(r_rect, idx, 4, lbl, page == target_page, None);
+                    self.targets.push((r_rect, Action::Page(target_page)));
+                }
+            }
+        } else if is_screenshots {
+            let sub_items = [
+                ("Screenshots", Action::OpenScreenshots, page == Page::Inventory),
+                ("Replays", Action::Page(Page::Replays), page == Page::Replays),
+                ("Worlds", Action::Page(Page::Worlds), false),
+            ];
+            let seg_w = if top_compact { 72.0 } else { 88.0 };
+            for (idx, (lbl, act, active)) in sub_items.into_iter().enumerate() {
+                let sx = main_x + idx as f32 * (seg_w + 4.0);
+                if sx + seg_w < rx - 6.0 {
+                    let r_rect = [sx, 10.0, seg_w, 32.0];
+                    ui.m3_connected_segment(r_rect, idx, 3, lbl, active, None);
+                    self.targets.push((r_rect, act));
+                }
+            }
+        } else if is_cosmetics {
+            let sub_items = [
+                ("Wardrobe", Action::Page(Page::Skins), true),
+                ("Skin Online", Action::OpenSkinOnline, false),
+            ];
+            let seg_w = if top_compact { 78.0 } else { 92.0 };
+            for (idx, (lbl, act, active)) in sub_items.into_iter().enumerate() {
+                let sx = main_x + idx as f32 * (seg_w + 4.0);
+                if sx + seg_w < rx - 6.0 {
+                    let r_rect = [sx, 10.0, seg_w, 32.0];
+                    ui.m3_connected_segment(r_rect, idx, 2, lbl, active, None);
+                    self.targets.push((r_rect, act));
+                }
+            }
+        } else if is_options {
+            let sub_items = [
+                ("Settings", Page::Settings),
+                ("HUD Studio", Page::ControlsStudio),
+            ];
+            let seg_w = if top_compact { 78.0 } else { 94.0 };
+            for (idx, (lbl, target_page)) in sub_items.into_iter().enumerate() {
+                let sx = main_x + idx as f32 * (seg_w + 4.0);
+                if sx + seg_w < rx - 6.0 {
+                    let r_rect = [sx, 10.0, seg_w, 32.0];
+                    ui.m3_connected_segment(r_rect, idx, 2, lbl, page == target_page, None);
+                    self.targets.push((r_rect, Action::Page(target_page)));
+                }
+            }
         }
 
-        let nav_pages = [
-            Page::Play,
-            Page::Worlds,
-            Page::Mods,
-            Page::Packs,
-            Page::ControlsStudio,
-            Page::Shaders,
-            Page::Installed,
-            Page::Replays,
-            Page::Skins,
-            Page::Settings,
-        ];
-        let nav_w = (w - 24.0).min(760.0);
-        let nav_x = (w - nav_w) * 0.5;
-        let nav_y = full_h - 49.0;
-        let nav_h = 42.0;
-        let nav_step = nav_w / nav_pages.len() as f32;
-        let selected_idx = nav_pages.iter().position(|p| *p == page).unwrap_or(0);
-        let has_any_modal = self.catalog.project_modal.is_some() || self.catalog.fm_modal.is_some()
-            || self.chooser.is_some() || self.login.visible || self.exit_confirmation;
-        self.anim.step(page, self.catalog.settings_category,
-            nav_x + selected_idx as f32 * nav_step, has_any_modal, self.catalog.sections);
-        ui.set_stagger_transition(((reveal - 0.16) * 4.0).clamp(0.0, 1.0), 0.0, 0.0);
-        ui.rounded(nav_x, nav_y, nav_w, nav_h, 21.0, my3_surface());
-        ui.stroke_rounded(nav_x, nav_y, nav_w, nav_h, 21.0, 1.0, my3_border());
-        ui.rounded(self.anim.nav_pill_y + 3.0, nav_y + 3.0, nav_step - 6.0, nav_h - 6.0,
-            18.0, my3_nav_active());
-        for (i, item) in nav_pages.iter().enumerate() {
-            let x = nav_x + i as f32 * nav_step;
-            let item_progress = ((reveal - 0.24 - i as f32 * 0.045) * 5.0).clamp(0.0, 1.0);
-            if item_progress <= 0.0 { continue; }
-            ui.set_stagger_transition(item_progress, x, nav_y);
-            let selected = *item == page;
-            let label = match item {
-                Page::Packs => "Packs",
-                Page::ControlsStudio => "Studio",
-                _ => item.name(),
-            };
-            let icon_x = x + if nav_step < 62.0 { (nav_step - 15.0) * 0.5 } else { 10.0 };
-            ui.icon(page_icon(*item), icon_x, nav_y + 13.0, 15.0, my3_text());
-            if nav_step >= 62.0 {
-                let text = ui.fit_text(if selected { Face::SemiBold } else { Face::Medium }, 11.5, label, nav_step - 31.0);
-                ui.text(if selected { Face::SemiBold } else { Face::Medium }, 11.5,
-                    x + 29.0, nav_y + 12.0, my3_text(), &text);
+        // ---- Right 3D Character + Cape Showcase on Home Screen ----
+        let scene_w = (main_w * 0.34).clamp(124.0, 214.0);
+        let scene_x = w - scene_w - 16.0;
+        let scene_y = 54.0;
+        let scene_h = (full_h - 118.0).max(100.0);
+        if page == Page::Play && reveal >= 0.14 {
+            let scene_rect = [scene_x, scene_y, scene_w, scene_h];
+            self.wardrobe.draw_scene(&mut ui, scene_rect);
+
+            // Floating Account Pill right beneath the 3D skin: "[Head] NAME | CHANGE ACCOUNT"
+            let pill_w = (scene_w + 26.0).min(main_w * 0.48).max(156.0);
+            let pill_x = (w - pill_w - 14.0).max(main_x);
+            let pill_y = (scene_y + scene_h + 8.0).min(full_h - 48.0);
+            let account_rect = [pill_x, pill_y, pill_w, 36.0];
+            ui.rounded(account_rect[0], account_rect[1], account_rect[2], account_rect[3], 18.0, my3_surface());
+            ui.stroke_rounded(account_rect[0], account_rect[1], account_rect[2], account_rect[3], 18.0, 1.1, my3_border());
+            self.wardrobe.draw_head(&mut ui, pill_x + 7.0, pill_y + 5.0, 26.0);
+            let change_lbl = "CHANGE ACCOUNT";
+            let change_w = ui.measure(Face::SemiBold, 8.8, change_lbl) + 6.0;
+            let name_max = (pill_w - 46.0 - change_w).max(34.0);
+            let fitted_name = ui.fit_text(Face::SemiBold, 10.5, &account_name, name_max);
+            ui.text(Face::SemiBold, 10.5, pill_x + 38.0, pill_y + 10.5, my3_text(), &fitted_name);
+            let sep_x = pill_x + pill_w - change_w - 10.0;
+            if sep_x > pill_x + 56.0 {
+                ui.fill(sep_x, pill_y + 9.0, 1.0, 18.0, my3_border());
+                ui.text(
+                    Face::SemiBold,
+                    8.5,
+                    sep_x + 6.0,
+                    pill_y + 11.5,
+                    horizon_client::ui_theme::active_theme().accent_text,
+                    change_lbl,
+                );
             }
-            self.targets.push(([x, nav_y, nav_step, nav_h], Action::Page(*item)));
+            self.targets.push((account_rect, Action::Account));
         }
 
         ui.set_stagger_transition(1.0, 0.0, 0.0);
-        let content_x = (w * 0.25).max(176.0);
-        let content_w = (w - content_x - 22.0).max(160.0);
+        let content_x = main_x + 12.0;
+        let content_w = if page == Page::Play {
+            (scene_x - main_x - 16.0).max(200.0)
+        } else {
+            (main_w - 24.0).max(180.0)
+        };
         let compact = content_w < 430.0;
         let slide_y = self.anim.page_slide * 0.35;
         if page != Page::Play {
-            ui.rounded(content_x - 12.0, 54.0, content_w + 22.0, (h - 58.0).max(100.0), 20.0, my3_surface());
-            ui.stroke_rounded(content_x - 12.0, 54.0, content_w + 22.0, (h - 58.0).max(100.0), 20.0, 1.0, my3_border());
+            ui.rounded(main_x, 50.0, main_w, (full_h - 60.0).max(120.0), 18.0, my3_surface());
+            ui.stroke_rounded(main_x, 50.0, main_w, (full_h - 60.0).max(120.0), 18.0, 1.0, my3_border());
         }
-        let content_reveal = ((reveal - 0.38) / 0.62).clamp(0.0, 1.0);
+        let content_reveal = ((reveal - 0.28) / 0.72).clamp(0.0, 1.0);
         ui.set_stagger_transition(self.anim.page_fade.min(content_reveal), 0.0, 52.0);
 
         // When any catalog item (Mod, Pack, Shader) is downloading/installing, take the entire
@@ -1797,50 +1983,158 @@ impl Launcher {
                 let game_button = [content_x + 16.0, h - 36.0, 150.0, 29.0];
                 button(&mut ui, &mut self.targets, game_button, "Play Cross the Road", Action::OpenRoadGame, true);
             } else {
+                // ---- Nexora Home Screen Hero Branding (Concept 1) ----
+                let hero_cx = content_x + content_w * 0.5;
+                let hero_top = (full_h * 0.19).clamp(62.0, 128.0);
+                let feather_s = (full_h * 0.14).clamp(40.0, 58.0);
+                horizon_client::nexora_art::draw_feather(
+                    &mut ui,
+                    hero_cx - feather_s * 0.5,
+                    hero_top,
+                    feather_s,
+                    1.0,
+                );
+                let word_y = hero_top + feather_s + 4.0;
+                let word_sz = (content_w * 0.11).clamp(24.0, 38.0);
+                ui.text_centered(
+                    Face::SemiBold,
+                    word_sz,
+                    hero_cx + 1.5,
+                    word_y + 1.5,
+                    color::hex(0x6E0B14, 210),
+                    "NEXORA",
+                );
+                ui.text_centered(
+                    Face::SemiBold,
+                    word_sz,
+                    hero_cx,
+                    word_y,
+                    my3_text(),
+                    "NEXORA",
+                );
+
+                let rule_y = word_y + word_sz * 1.24;
+                let rule_w = (content_w * 0.52).clamp(130.0, 220.0);
+                ui.fill(
+                    hero_cx - rule_w * 0.5,
+                    rule_y,
+                    rule_w,
+                    1.2,
+                    my3_border(),
+                );
+                ui.polygon(
+                    &[
+                        [hero_cx, rule_y - 4.0],
+                        [hero_cx + 4.5, rule_y + 0.5],
+                        [hero_cx, rule_y + 5.0],
+                        [hero_cx - 4.5, rule_y + 0.5],
+                    ],
+                    [hero_cx, rule_y + 0.5],
+                    my3_accent(),
+                    0.0,
+                    0,
+                );
+
+                let studio_y = rule_y + 10.0;
+                let studio_lbl = ui.fit_text(
+                    Face::Medium,
+                    10.2,
+                    "MXINSPIRE  X  AERIX STUDIO",
+                    content_w - 16.0,
+                );
+                ui.text_centered(
+                    Face::Medium,
+                    10.2,
+                    hero_cx,
+                    studio_y,
+                    horizon_client::ui_theme::active_theme().accent_text,
+                    &studio_lbl,
+                );
+
                 let is_launching = self.launching || self.session_worker.is_some();
-                let label = if is_launching { "Launching..." } else if installed {
-                    "Play Minecraft 26.3"
-                } else if self.error.is_some() { "Retry installation" } else { "Download Minecraft 26.3" };
-                let play_w = (w * 0.34).clamp(210.0, 310.0);
-                let play_rect = [(w - play_w) * 0.5, h - 46.0, play_w, 40.0];
-                ui.rounded(play_rect[0], play_rect[1], play_rect[2], play_rect[3], 20.0, my3_surface_high());
-                ui.stroke_rounded(play_rect[0], play_rect[1], play_rect[2], play_rect[3], 20.0, 1.2, my3_border());
-                ui.icon(Icon::Play, play_rect[0] + 16.0, play_rect[1] + 12.0, 16.0, my3_text());
-                ui.centered_fit(Face::SemiBold, 14.0, [play_rect[0] + 28.0, play_rect[1], play_rect[2] - 36.0, play_rect[3]], my3_text(), label);
-                if !is_launching { self.targets.push((play_rect, Action::Play)); }
-                button(&mut ui, &mut self.targets, [12.0, h - 82.0, 118.0, 32.0], "Touch layout", Action::OpenControlEditor, false);
-                button(&mut ui, &mut self.targets, [136.0, h - 82.0, 108.0, 32.0],
-                    &format!("Profile {}", self.catalog.config.profile + 1), Action::Profile, false);
-                button(&mut ui, &mut self.targets, [12.0, h - 44.0, 232.0, 32.0],
-                    &format!("Renderer: {}", self.catalog.config.renderer.label()), Action::Renderer, false);
-                // A compact control within the open lower-right portion of the home scene.
-                let gyro_w = 218.0_f32.min((w * 0.26).max(150.0));
-                let gx = w - gyro_w - 12.0;
-                let gy = h - 44.0;
-                ui.rounded(gx, gy, gyro_w, 32.0, 10.0, my3_surface());
-                ui.border(gx, gy, gyro_w, 32.0, 10.0, my3_border());
-                button(&mut ui, &mut self.targets, [gx + 4.0, gy + 3.0, 30.0, 26.0], "−", Action::SceneGyro(-1), false);
-                button(&mut ui, &mut self.targets, [gx + gyro_w - 34.0, gy + 3.0, 30.0, 26.0], "+", Action::SceneGyro(1), false);
-                let value = if self.catalog.config.scene_gyro_sensitivity == 0 { "Off".to_owned() }
-                    else { format!("{}%", self.catalog.config.scene_gyro_sensitivity) };
-                ui.centered_fit(Face::Medium, 11.0, [gx + 35.0, gy, gyro_w - 70.0, 32.0], my3_text(), &format!("Gyroscope {value}"));
-                let nav_right = (w + nav_w) * 0.5;
-                let right_space = w - nav_right - 20.0;
-                let keep_on = self.catalog.config.screen.keep_screen_on;
-                let keep_label = if keep_on {
-                    "Keep screen on: ON"
+                let label = if is_launching {
+                    "LAUNCHING..."
+                } else if installed {
+                    "PLAY MINECRAFT 26.3"
+                } else if self.error.is_some() {
+                    "RETRY INSTALLATION"
                 } else {
-                    "Keep screen on"
+                    "DOWNLOAD MINECRAFT 26.3"
                 };
-                let keep_rect = if right_space >= 92.0 {
-                    [nav_right + 8.0, full_h - 45.0, right_space.min(180.0), 34.0]
-                } else {
-                    [gx, h - 82.0, gyro_w, 32.0]
-                };
+                let play_w = (content_w * 0.72).clamp(186.0, 290.0);
+                let play_h = 42.0;
+                let play_y = (studio_y + 30.0).min(full_h - 118.0);
+                let play_rect = [hero_cx - play_w * 0.5, play_y, play_w, play_h];
+                ui.rounded(
+                    play_rect[0],
+                    play_rect[1],
+                    play_rect[2],
+                    play_rect[3],
+                    14.0,
+                    my3_accent(),
+                );
+                ui.stroke_rounded(
+                    play_rect[0],
+                    play_rect[1],
+                    play_rect[2],
+                    play_rect[3],
+                    14.0,
+                    1.3,
+                    horizon_client::ui_theme::active_theme().border_strong,
+                );
+                ui.icon(
+                    Icon::Play,
+                    play_rect[0] + 16.0,
+                    play_rect[1] + (play_h - 16.0) * 0.5,
+                    16.0,
+                    my3_on_accent(),
+                );
+                ui.centered_fit(
+                    Face::SemiBold,
+                    13.0,
+                    [play_rect[0] + 28.0, play_rect[1], play_rect[2] - 36.0, play_rect[3]],
+                    my3_on_accent(),
+                    label,
+                );
+                if !is_launching {
+                    self.targets.push((play_rect, Action::Play));
+                }
+
+                // Clean two-row quick controls in the lower center area (zero overlap with sidebar or 3D avatar)
+                let row2_y = full_h - 46.0;
+                let row1_y = row2_y - 38.0;
+                let half_w = ((content_w - 8.0) * 0.5).clamp(88.0, 168.0);
+                let row_x = hero_cx - half_w - 4.0;
                 button(
                     &mut ui,
                     &mut self.targets,
-                    keep_rect,
+                    [row_x, row1_y, half_w, 32.0],
+                    "Touch layout",
+                    Action::OpenControlEditor,
+                    false,
+                );
+                button(
+                    &mut ui,
+                    &mut self.targets,
+                    [row_x + half_w + 8.0, row1_y, half_w, 32.0],
+                    &format!("Profile {}", self.catalog.config.profile + 1),
+                    Action::Profile,
+                    false,
+                );
+                button(
+                    &mut ui,
+                    &mut self.targets,
+                    [row_x, row2_y, half_w, 32.0],
+                    &format!("Renderer: {}", self.catalog.config.renderer.label()),
+                    Action::Renderer,
+                    false,
+                );
+                let keep_on = self.catalog.config.screen.keep_screen_on;
+                let keep_label = if keep_on { "Keep Screen: ON" } else { "Keep Screen" };
+                button(
+                    &mut ui,
+                    &mut self.targets,
+                    [row_x + half_w + 8.0, row2_y, half_w, 32.0],
                     keep_label,
                     Action::KeepScreenOn,
                     keep_on,
@@ -2731,7 +3025,7 @@ impl Launcher {
                 x + 22.0,
                 y + 24.0,
                 my3_text(),
-                "Exit volt plus?",
+                "Exit Nexora?",
             );
             let bw = (width - 52.0) * 0.5;
             button(
@@ -3395,7 +3689,7 @@ impl Launcher {
                     Face::Regular,
                     10.4,
                     &format!(
-                        "{} rendered MP4(s)  •  replays/rendered/ & Movies/VoltPlus Replays",
+                        "{} rendered MP4(s)  •  replays/rendered/ & Movies/Nexora Replays",
                         self.catalog.rendered_replays.len()
                     ),
                     content_w - 116.0,
@@ -6498,7 +6792,7 @@ impl Launcher {
             title_x,
             head_y + 2.0,
             my3_text(),
-            "Volt Plus Update",
+            "Nexora Update",
         );
         let badge_text = format!("v{}  →  v{}", crate::backend::VERSION, info.version);
         let badge_w = ui.measure(Face::SemiBold, 11.0, &badge_text) + 16.0;
@@ -7709,7 +8003,7 @@ impl Launcher {
                     ),
                     (
                         "Keep screen from turning off",
-                        "Prevent the display from sleeping while Volt Plus is open",
+                        "Prevent the display from sleeping while Nexora is open",
                         SettingControl::Toggle(c.screen.keep_screen_on, Action::KeepScreenOn),
                     ),
                     (
@@ -10183,19 +10477,19 @@ impl Launcher {
             Some(Action::GameFiles) => {
                 self.catalog.status = if crate::platform::open_documents(crate::document_store::ROOT) {
                     "Game files opened. Worlds, mods, packs, shaders, screenshots and reports are available here."
-                } else { "Open system Files > Volt Plus." }.into();
+                } else { "Open system Files > Nexora." }.into();
             }
             Some(Action::ScreenshotFiles) => {
                 let id = crate::document_store::folder_id(self.catalog.config.profile, "screenshots");
                 self.catalog.status = if crate::platform::open_documents(&id) {
                     "Screenshots directory opened in Android Files."
-                } else { "Open system Files > Volt Plus > Screenshots." }.into();
+                } else { "Open system Files > Nexora > Screenshots." }.into();
             }
             Some(Action::WorldFiles) => {
                 let id = crate::document_store::folder_id(self.catalog.config.profile, "worlds");
                 self.catalog.status = if crate::platform::open_documents(&id) {
                     "Copy a complete world folder to back up or import. Finish copying before Play; never replace an existing world silently."
-                } else { "Open system Files > Volt Plus > Worlds. Copy complete world folders while the game is closed." }.into();
+                } else { "Open system Files > Nexora > Worlds. Copy complete world folders while the game is closed." }.into();
             }
             Some(Action::WorkerLimit) => self.open_chooser(chooser::Kind::WorkerLimit),
             Some(Action::ChooseWorkerLimit(limit)) => {
@@ -10473,6 +10767,27 @@ impl Launcher {
                 } else if tab == crate::catalog::InventorySubTab::Screenshot {
                     self.catalog.refresh_screenshots(&self.home);
                 }
+            }
+            Some(Action::OpenMultiplayer) => {
+                self.catalog.page = Page::Inventory;
+                self.catalog.inventory_sub_tab = crate::catalog::InventorySubTab::Server;
+                self.catalog.scroll = 0.0;
+                self.catalog.world_inspection = None;
+                self.catalog.refresh_worlds(&self.home);
+                self.anim.trigger_page_transition();
+                self.sync_discord_presence();
+            }
+            Some(Action::OpenScreenshots) => {
+                self.catalog.page = Page::Inventory;
+                self.catalog.inventory_sub_tab = crate::catalog::InventorySubTab::Screenshot;
+                self.catalog.scroll = 0.0;
+                self.catalog.world_inspection = None;
+                self.catalog.refresh_screenshots(&self.home);
+                self.anim.trigger_page_transition();
+                self.sync_discord_presence();
+            }
+            Some(Action::RequestExit) => {
+                self.exit_confirmation = true;
             }
             Some(Action::RefreshScreenshots) => {
                 self.catalog.refresh_screenshots(&self.home);
@@ -11003,7 +11318,7 @@ impl Launcher {
                 self.catalog.status = if crate::platform::open_documents("reports") {
                     "Opened Reports folder in system Files.".into()
                 } else {
-                    "Reports are saved under Volt Plus > Reports.".into()
+                    "Reports are saved under Nexora > Reports.".into()
                 };
             }
             Some(Action::ToggleLauncherAnimations) => {
@@ -11081,7 +11396,7 @@ impl Launcher {
                     && appearance == horizon_client::ui_theme::ThemeAppearance::Dark
                 {
                     self.catalog.config.theme.preset =
-                        horizon_client::ui_theme::ThemePreset::EmeraldForest;
+                        horizon_client::ui_theme::ThemePreset::NexoraCrimson;
                 }
                 horizon_client::ui_theme::set_active_theme(self.catalog.config.theme.resolve());
                 self.anim.trigger_theme_pulse();

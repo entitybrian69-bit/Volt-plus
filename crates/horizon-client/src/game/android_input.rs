@@ -1706,6 +1706,96 @@ impl Game<'_> {
                     self.pad.touch_ui.volt_extras_search_focused = true;
                     crate::platform::show(&self.pad.touch_ui.volt_extras_search);
                 }
+                InGameMenuAction::BoosterSetProfile(profile) => {
+                    let (hz, adpf, scale, cull, anim_off, vsync_off) = match profile {
+                        0 => (60u16, false, 75u32, true, true, false),
+                        1 => (90u16, false, 90u32, true, false, false),
+                        2 => (120u16, true, 100u32, true, false, true),
+                        _ => (120u16, true, 100u32, true, false, true),
+                    };
+                    horizon_client::android_runtime::booster_set_refresh_rate_hz(hz);
+                    horizon_client::android_runtime::booster_set_sustained_performance(adpf);
+                    if profile >= 3 {
+                        horizon_client::android_runtime::booster_purge_memory();
+                    }
+                    self.pad.touch.settings.resolution_scale_percent = scale;
+                    self.settings.horizon.resolution_scale = scale;
+                    self.pad.touch.settings.disable_game_animations = anim_off;
+                    horizon_client::ui_theme::motion::set_game_animations_disabled(anim_off);
+                    self.settings.extras.volt.entity_culling.enabled = cull;
+                    if vsync_off {
+                        self.settings.vsync = false;
+                        self.pad.touch.settings.zero_latency_touch = true;
+                    }
+                    self.settings.touch = self.pad.touch.settings.clone();
+                    if let Some(r) = self.renderer.as_mut() {
+                        r.set_world_post(
+                            scale as f32 / 100.0,
+                            self.settings.horizon.fxaa,
+                            self.settings.horizon.taa,
+                            self.settings.horizon.upscaling.ratio(),
+                        );
+                        r.set_present_mode(self.settings.vsync, self.settings.horizon.present_mode);
+                        r.invalidate_menu_blur();
+                    }
+                    let _ = self.pad.touch.settings.save();
+                    self.settings.extras.save(std::path::Path::new("."));
+                    self.settings.save(&Self::options_path());
+                    self.apply_ui_settings();
+                    self.sync_volt_touch_ui();
+                }
+                InGameMenuAction::BoosterToggle120Hz => {
+                    let hz = if self.pad.touch_ui.booster_120hz { 120 } else { 60 };
+                    horizon_client::android_runtime::booster_set_refresh_rate_hz(hz);
+                }
+                InGameMenuAction::BoosterRamPurge => {
+                    horizon_client::android_runtime::booster_purge_memory();
+                }
+                InGameMenuAction::BoosterToggleTouchLock => {}
+                InGameMenuAction::BoosterToggleEntityCulling => {
+                    self.settings.extras.volt.entity_culling.enabled =
+                        self.pad.touch_ui.volt_extras.entity_culling.enabled;
+                    self.settings.extras.save(std::path::Path::new("."));
+                    self.apply_ui_settings();
+                }
+                InGameMenuAction::BoosterToggleZeroLatency => {
+                    self.pad.touch.settings.zero_latency_touch =
+                        !self.pad.touch.settings.zero_latency_touch;
+                    let _ = self.pad.touch.settings.save();
+                    self.settings.touch = self.pad.touch.settings.clone();
+                }
+                InGameMenuAction::BoosterToggleFpsHud => {
+                    self.settings.extras.volt.telemetry_hud.show_fps =
+                        self.pad.touch_ui.volt_extras.telemetry_hud.show_fps;
+                    self.settings.extras.save(std::path::Path::new("."));
+                    self.apply_ui_settings();
+                }
+                InGameMenuAction::BoosterToggleDnd => {}
+                InGameMenuAction::BoosterToggleVsync => {
+                    self.settings.vsync = self.pad.touch_ui.telemetry.vsync;
+                    if let Some(r) = self.renderer.as_mut() {
+                        r.set_present_mode(self.settings.vsync, self.settings.horizon.present_mode);
+                    }
+                    self.settings.save(&Self::options_path());
+                }
+                InGameMenuAction::BoosterIgnite => {
+                    horizon_client::android_runtime::booster_set_refresh_rate_hz(120);
+                    horizon_client::android_runtime::booster_set_sustained_performance(true);
+                    horizon_client::android_runtime::booster_purge_memory();
+                    self.settings.vsync = false;
+                    self.pad.touch.settings.zero_latency_touch = true;
+                    self.settings.extras.volt.entity_culling.enabled = true;
+                    self.settings.extras.volt.telemetry_hud.show_fps = true;
+                    self.settings.touch = self.pad.touch.settings.clone();
+                    if let Some(r) = self.renderer.as_mut() {
+                        r.set_present_mode(false, self.settings.horizon.present_mode);
+                    }
+                    let _ = self.pad.touch.settings.save();
+                    self.settings.extras.save(std::path::Path::new("."));
+                    self.settings.save(&Self::options_path());
+                    self.apply_ui_settings();
+                    self.sync_volt_touch_ui();
+                }
             }
             return Ok(true);
         }
@@ -2528,7 +2618,7 @@ impl Game<'_> {
             mx + 68.0,
             my + 19.0,
             theme.text_primary,
-            "Volt Plus Update",
+            "Nexora Update",
         );
 
         let info = crate::updater::last_release_info();
@@ -2592,7 +2682,7 @@ impl Game<'_> {
                     mx + 22.0,
                     my + 86.0,
                     theme.text_primary,
-                    &format!("Volt Plus v{version} is ready to install."),
+                    &format!("Nexora v{version} is ready to install."),
                 );
             }
             crate::updater::UpdateStatus::Error(err) => {
