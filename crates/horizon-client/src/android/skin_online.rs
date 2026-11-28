@@ -656,6 +656,7 @@ impl SkinOnlineState {
             "Skin Online",
         );
 
+        let compact_header = inner_w < 640.0;
         if inner_w >= 680.0 {
             let status_fit =
                 ui.fit_text(Face::Regular, 10.0, &self.status, (inner_w - 580.0).max(80.0));
@@ -673,68 +674,127 @@ impl SkinOnlineState {
             );
         }
 
-        // Top-right Controls: Skins | Capes | Wavey Capes | FPS (when Capes)
-        let mut rx = w - pad - 4.0;
-        if self.tab == Tab::Capes {
-            let fps_w = 72.0;
-            rx -= fps_w;
+        // Top-right Controls (or Row 2 when compact): Skins | Capes | Wavey Capes | FPS (when Capes)
+        let ctrl_row_y = if compact_header { 54.0 } else { 16.0 };
+        let ctrl_h = if compact_header { 28.0 } else { 32.0 };
+        if compact_header {
+            let mut lx = pad + 4.0;
+            let count_btns = if self.tab == Tab::Capes { 4.0 } else { 3.0 };
+            let gap = 6.0;
+            let unit_w = ((inner_w - 8.0 - gap * (count_btns - 1.0)) / count_btns).max(58.0);
+            let skins_w = unit_w * 0.85;
+            let capes_w = unit_w * 0.85;
+            let wavey_w = if self.tab == Tab::Capes {
+                unit_w * 1.35
+            } else {
+                inner_w - 8.0 - skins_w - capes_w - gap * 2.0
+            };
             button(
                 ui,
                 targets,
-                [rx, 16.0, fps_w, 32.0],
-                &format!("{} FPS", wardrobe.cape_fps()),
-                Action::SkinOnlineCycleFps,
-                false,
+                [lx, ctrl_row_y, skins_w, ctrl_h],
+                "Skins",
+                Action::SkinOnlineTab(false),
+                self.tab == Tab::Skins,
+            );
+            lx += skins_w + gap;
+            button(
+                ui,
+                targets,
+                [lx, ctrl_row_y, capes_w, ctrl_h],
+                "Capes",
+                Action::SkinOnlineTab(true),
+                self.tab == Tab::Capes,
+            );
+            lx += capes_w + gap;
+            button(
+                ui,
+                targets,
+                [lx, ctrl_row_y, wavey_w, ctrl_h],
+                if wardrobe.wavey_capes() {
+                    "Wavey: ON"
+                } else {
+                    "Wavey: OFF"
+                },
+                Action::SkinOnlineToggleWavey,
+                wardrobe.wavey_capes(),
+            );
+            if self.tab == Tab::Capes {
+                lx += wavey_w + gap;
+                let fps_w = (w - pad - 4.0 - lx).max(54.0);
+                button(
+                    ui,
+                    targets,
+                    [lx, ctrl_row_y, fps_w, ctrl_h],
+                    &format!("{} FPS", wardrobe.cape_fps()),
+                    Action::SkinOnlineCycleFps,
+                    false,
+                );
+            }
+        } else {
+            let mut rx = w - pad - 4.0;
+            if self.tab == Tab::Capes {
+                let fps_w = 72.0;
+                rx -= fps_w;
+                button(
+                    ui,
+                    targets,
+                    [rx, ctrl_row_y, fps_w, ctrl_h],
+                    &format!("{} FPS", wardrobe.cape_fps()),
+                    Action::SkinOnlineCycleFps,
+                    false,
+                );
+                rx -= 8.0;
+            }
+            let wavey_w = 122.0;
+            rx -= wavey_w;
+            button(
+                ui,
+                targets,
+                [rx, ctrl_row_y, wavey_w, ctrl_h],
+                if wardrobe.wavey_capes() {
+                    "Wavey: ON"
+                } else {
+                    "Wavey: OFF"
+                },
+                Action::SkinOnlineToggleWavey,
+                wardrobe.wavey_capes(),
             );
             rx -= 8.0;
+
+            let capes_w = 88.0;
+            rx -= capes_w;
+            button(
+                ui,
+                targets,
+                [rx, ctrl_row_y, capes_w, ctrl_h],
+                "Capes",
+                Action::SkinOnlineTab(true),
+                self.tab == Tab::Capes,
+            );
+            rx -= 6.0;
+
+            let skins_w = 88.0;
+            rx -= skins_w;
+            button(
+                ui,
+                targets,
+                [rx, ctrl_row_y, skins_w, ctrl_h],
+                "Skins",
+                Action::SkinOnlineTab(false),
+                self.tab == Tab::Skins,
+            );
         }
-        let wavey_w = 122.0;
-        rx -= wavey_w;
-        button(
-            ui,
-            targets,
-            [rx, 16.0, wavey_w, 32.0],
-            if wardrobe.wavey_capes() {
-                "Wavey: ON"
-            } else {
-                "Wavey: OFF"
-            },
-            Action::SkinOnlineToggleWavey,
-            wardrobe.wavey_capes(),
-        );
-        rx -= 8.0;
 
-        let capes_w = 88.0;
-        rx -= capes_w;
-        button(
-            ui,
-            targets,
-            [rx, 16.0, capes_w, 32.0],
-            "Capes",
-            Action::SkinOnlineTab(true),
-            self.tab == Tab::Capes,
-        );
-        rx -= 6.0;
+        let div_y = if compact_header { 88.0 } else { 56.0 };
+        ui.rounded(pad, div_y, inner_w, 1.0, 0.5, theme.border);
 
-        let skins_w = 88.0;
-        rx -= skins_w;
-        button(
-            ui,
-            targets,
-            [rx, 16.0, skins_w, 32.0],
-            "Skins",
-            Action::SkinOnlineTab(false),
-            self.tab == Tab::Skins,
-        );
-
-        ui.rounded(pad, 56.0, inner_w, 1.0, 0.5, theme.border);
-
-        let body_top = 64.0;
+        let body_top = div_y + 8.0;
         let body_bottom = ime_top_dp.unwrap_or(full_h - 14.0).min(full_h - 14.0);
         let body_h = (body_bottom - body_top).max(150.0);
 
         // Left Column: Live 3D Character Preview + Model / Rotate / Cape Visibility
-        let left_w = (inner_w * 0.27).clamp(155.0, 235.0);
+        let left_w = (inner_w * 0.27).clamp(112.0, 235.0);
         let left_x = pad;
         ui.rounded(left_x, body_top, left_w, body_h, 14.0, theme.surface_dim);
         ui.border(left_x, body_top, left_w, body_h, 14.0, theme.border);

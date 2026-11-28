@@ -1549,22 +1549,56 @@ impl Launcher {
         ui.text(Face::Medium, 11.0, 49.0, 63.0, my3_text(), &label);
         self.targets.push((account_rect, Action::Account));
         let discord_space = w - 378.0 - 8.0 - 218.0;
+        let top_compact = w < 596.0;
         let discord_rect = if discord_space >= 104.0 {
             [218.0, 11.0, discord_space.min(148.0), 34.0]
         } else {
-            [118.0, 55.0, (w - 130.0).clamp(96.0, 148.0), 34.0]
+            let max_disc = (w - 234.0).clamp(84.0, 136.0);
+            [118.0, 55.0, max_disc, 34.0]
         };
         button(&mut ui, &mut self.targets, discord_rect,
-            "Join our Discord", Action::Discord, false);
-        button(&mut ui, &mut self.targets, [w - 378.0, 12.0, 88.0, 34.0],
-            "Musics", Action::OpenMusic, false);
-        button(&mut ui, &mut self.targets, [w - 282.0, 12.0, 100.0, 34.0],
-            "Inventory", Action::Page(Page::Inventory), self.catalog.page == Page::Inventory);
-        button(&mut ui, &mut self.targets, [w - 174.0, 12.0, 162.0, 34.0],
-            "Background images", Action::OpenWallpapers, false);
+            if top_compact { "Discord" } else { "Join our Discord" }, Action::Discord, false);
+        if top_compact {
+            let bg_w = 72.0;
+            let inv_w = 72.0;
+            let mus_w = 62.0;
+            let rx0 = (w - 12.0 - bg_w).max(216.0);
+            let rx1 = (rx0 - 6.0 - inv_w).max(140.0);
+            let rx2 = (rx1 - 6.0 - mus_w).max(74.0);
+            button(&mut ui, &mut self.targets, [rx2, 12.0, mus_w, 34.0],
+                "Music", Action::OpenMusic, false);
+            button(&mut ui, &mut self.targets, [rx1, 12.0, inv_w, 34.0],
+                "Items", Action::Page(Page::Inventory), self.catalog.page == Page::Inventory);
+            button(&mut ui, &mut self.targets, [rx0, 12.0, bg_w, 34.0],
+                "Theme", Action::OpenWallpapers, false);
+        } else {
+            button(&mut ui, &mut self.targets, [w - 378.0, 12.0, 88.0, 34.0],
+                "Musics", Action::OpenMusic, false);
+            button(&mut ui, &mut self.targets, [w - 282.0, 12.0, 100.0, 34.0],
+                "Inventory", Action::Page(Page::Inventory), self.catalog.page == Page::Inventory);
+            button(&mut ui, &mut self.targets, [w - 174.0, 12.0, 162.0, 34.0],
+                "Background images", Action::OpenWallpapers, false);
+        }
 
         ui.set_stagger_transition(1.0, 0.0, 0.0);
         let page = self.catalog.page;
+        if page == Page::Play {
+            let so_rect = if discord_space >= 104.0 {
+                [118.0, 55.0, 106.0, 34.0]
+            } else {
+                let x0 = discord_rect[0] + discord_rect[2] + 6.0;
+                let avail = (w - x0 - 12.0).max(86.0);
+                [x0.min(w - avail - 12.0), 55.0, avail.min(106.0), 34.0]
+            };
+            button(
+                &mut ui,
+                &mut self.targets,
+                so_rect,
+                "Skin Online",
+                Action::OpenSkinOnline,
+                true,
+            );
+        }
         let target_shift = if page == Page::Play { 0.0 } else { 1.0 };
         if horizon_client::ui_theme::motion::reduced_motion() {
             self.anim.scene_shift = target_shift;

@@ -224,13 +224,13 @@ impl Default for JoystickStyle {
     fn default() -> Self {
         Self {
             stick_stroke: 2.0,
-            stick_stroke_color: 0xFF9A7BFF,
-            stick_color: 0xFFD8CEFF,
+            stick_stroke_color: 0xFFFFFFFF,
+            stick_color: 0xFF000000,
             stick_opacity: 0.90,
             stick_size: 0.42,
             base_stroke: 2.0,
-            base_stroke_color: 0xFF6B5B95,
-            base_color: 0xFF1A1726,
+            base_stroke_color: 0xFF404040,
+            base_color: 0xFF000000,
             base_opacity: 0.72,
             base_roundness: 50.0,
             move_area: JoystickMoveArea::FollowFinger,
@@ -239,6 +239,18 @@ impl Default for JoystickStyle {
 }
 impl JoystickStyle {
     pub fn sanitize(&mut self) {
+        if self.stick_stroke_color == 0xFF9A7BFF {
+            self.stick_stroke_color = 0xFFFFFFFF;
+        }
+        if self.stick_color == 0xFFD8CEFF {
+            self.stick_color = 0xFF000000;
+        }
+        if self.base_stroke_color == 0xFF6B5B95 {
+            self.base_stroke_color = 0xFF404040;
+        }
+        if self.base_color == 0xFF1A1726 {
+            self.base_color = 0xFF000000;
+        }
         self.stick_stroke = if self.stick_stroke.is_finite() {
             self.stick_stroke.clamp(0.0, 8.0)
         } else {
@@ -285,10 +297,10 @@ fn default_roundness() -> f32 {
     10.0
 }
 fn default_stroke_color() -> u32 {
-    0xFF8A7AE6
+    0xFF404040
 }
 fn default_button_color() -> u32 {
-    0xFF1E1B2E
+    0xFF000000
 }
 fn default_shadow_size() -> f32 {
     0.0
@@ -297,16 +309,16 @@ fn default_shadow_color() -> u32 {
     0x96000000
 }
 fn default_click_color() -> u32 {
-    0xFF423675
+    0xFF1A1A1A
 }
 fn default_click_stroke() -> u32 {
-    0xFFD0BCFF
+    0xFFFFFFFF
 }
 fn default_toggle_color() -> u32 {
-    0xFF543B94
+    0xFF121212
 }
 fn default_toggle_stroke() -> u32 {
-    0xFFEADDFF
+    0xFFFFFFFF
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -390,15 +402,15 @@ impl Placement {
             stroke_size: 1.6,
             stroke_margin: 0.0,
             stroke_roundness: 10.0,
-            stroke_color: 0xFF8A7AE6,
-            button_color: 0xFF1E1B2E,
+            stroke_color: 0xFF404040,
+            button_color: 0xFF000000,
             shadow_size: 0.0,
             shadow_color: 0x96000000,
             roundness: 10.0,
-            on_click_color: 0xFF423675,
-            on_click_stroke_color: 0xFFD0BCFF,
-            on_toggle_color: 0xFF543B94,
-            on_toggle_stroke_color: 0xFFEADDFF,
+            on_click_color: 0xFF1A1A1A,
+            on_click_stroke_color: 0xFFFFFFFF,
+            on_toggle_color: 0xFF121212,
+            on_toggle_stroke_color: 0xFFFFFFFF,
             visible_in_game: true,
             visible_in_menu: false,
             ref_aspect: 0.0,
@@ -475,6 +487,24 @@ impl Placement {
         } else {
             10.0
         };
+        if self.stroke_color == 0xFF8A7AE6 {
+            self.stroke_color = 0xFF404040;
+        }
+        if self.button_color == 0xFF1E1B2E {
+            self.button_color = 0xFF000000;
+        }
+        if self.on_click_color == 0xFF423675 {
+            self.on_click_color = 0xFF1A1A1A;
+        }
+        if self.on_click_stroke_color == 0xFFD0BCFF {
+            self.on_click_stroke_color = 0xFFFFFFFF;
+        }
+        if self.on_toggle_color == 0xFF543B94 {
+            self.on_toggle_color = 0xFF121212;
+        }
+        if self.on_toggle_stroke_color == 0xFFEADDFF {
+            self.on_toggle_stroke_color = 0xFFFFFFFF;
+        }
         for c in &mut self.center {
             *c = if c.is_finite() {
                 c.clamp(0.0, 1.0)
@@ -1842,6 +1872,7 @@ impl Settings {
         let has_goy_features = parsed.custom_buttons.iter().any(|b| {
             !b.second_key.is_empty()
                 || !b.third_key.is_empty()
+                || !b.fourth_key.is_empty()
                 || b.layouts.iter().any(|p| p.use_goy_style)
         }) || parsed.button_visibility[Control::Jump as usize] == 2;
         if has_goy_features {

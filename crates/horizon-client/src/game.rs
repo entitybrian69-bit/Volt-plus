@@ -6388,7 +6388,7 @@ impl Game<'_> {
             }
         }
     }
-    fn tick_using(&mut self) {
+    pub(super) fn tick_using(&mut self) {
         let Some(hand) = self.used_hand() else {
             return;
         };
@@ -7339,6 +7339,8 @@ impl Game<'_> {
         // items, popped crops) moves on the tick it appears, as in vanilla.
         // On the server thread the window is a hub guest: drain its packets
         // here too, before falling-block schedules run (#4510).
+        #[cfg(target_os = "android")]
+        self.android_flush_late_custom_releases();
         horizon_client::spans::time("tick_local_hand", || self.tick_local_hand())?;
         #[cfg(target_os = "android")]
         self.android_drain_deferred_custom_events();
@@ -15108,7 +15110,7 @@ impl Game<'_> {
         let g = self.debug_gizmos(alpha as f32, camera.to_array());
         lines.extend(g.lines);
         lines.extend(self.replay_gizmos());
-        let on_top = g.on_top;
+        let mut on_top = g.on_top;
         let colored_lights = if self.title.is_none() {
             self.native_frame_visuals(camera, &mut lines)
         } else {
@@ -15139,9 +15141,6 @@ impl Game<'_> {
             let scale = HudBatch::new(size).scale;
             crosshair.debug_crosshair(at, view_pitch, view_yaw, scale);
         }
-        let debug_lines = horizon_client::gizmos::camera_relative(&lines, at, view);
-        let debug_lines_on_top = horizon_client::gizmos::camera_relative(&on_top, at, view);
-        let debug_crosshair = horizon_client::gizmos::camera_relative(&crosshair.on_top, at, view);
         // LevelExtractor.extractBlockOutline: model translucency controls draw order.
         let mut outline_after_terrain = false;
         let touch_target_visible = self.interaction_crosshair() || {
@@ -15160,7 +15159,8 @@ impl Game<'_> {
         // does not open menus for spectators, so those never show it. An open
         // screen does not hide it: vanilla checks the HUD and the game mode, not the screen.
         let adventure = self.mode == horizon_client::command::args::GameMode::Adventure;
-        let outline = if !skip_world_for_blur
+        let mut outline_fill_box: Option<([f64; 6], u32, bool)> = None;
+        let mut outline = if !skip_world_for_blur
             && self.replay.is_none()
             && touch_target_visible
             && !self.ui.hide_gui
@@ -15201,8 +15201,20 @@ impl Game<'_> {
                         [0.0; 3]
                     };
                     let p = h.pos.map(f64::from);
-                    if let Some(b) = self.context_outline(h.pos, state) {
-                        return horizon_client::blocks::cube_edges()
+                    let mut segs: Vec<[f64; 6]> = if let Some(b) = self.context_outline(h.pos, state) {
+                        outline_fill_box = Some((
+                            [
+                                p[0] + b[0],
+                                p[1] + b[1],
+                                p[2] + b[2],
+                                p[0] + b[3],
+                                p[1] + b[4],
+                                p[2] + b[5],
+                            ],
+                            0,
+                            false,
+                        ));
+                        horizon_client::blocks::cube_edges()
                             .iter()
                             .map(|e| {
                                 std::array::from_fn(|i| {
@@ -15210,17 +15222,121 @@ impl Game<'_> {
                                     p[k] + b[k] + e[i] * (b[k + 3] - b[k])
                                 })
                             })
-                            .collect();
+                            .collect()
+                    } else {
+                        outline_fill_box = Some((
+                            [
+                                p[0] + o[0],
+                                p[1] + o[1],
+                                p[2] + o[2],
+                                p[0] + o[0] + 1.0,
+                                p[1] + o[1] + 1.0,
+                                p[2] + o[2] + 1.0,
+                            ],
+                            0,
+                            false,
+                        ));
+                        f.outline_edges
+                            .iter()
+                            .map(|e| std::array::from_fn(|i| p[i % 3] + o[i % 3] + e[i]))
+                            .collect()
+                    };
+                    let bo = &self.settings.extras.volt.blocks_outline;
+                    if bo.enabled && bo.inflate_pct > 0 && !segs.is_empty() {
+                        let expand = f64::from(bo.inflate_pct.min(6)) * 0.001;
+                        let center = if let Some((b, _, _)) = outline_fill_box {
+                            [
+                                (b[0] + b[3]) * 0.5,
+                                (b[1] + b[4]) * 0.5,
+                                (b[2] + b[5]) * 0.5,
+                            ]
+                        } else {
+                            [p[0] + 0.5, p[1] + 0.5, p[2] + 0.5]
+                        };
+                        for seg in &mut segs {
+                            for i in 0..6 {
+                                let k = i % 3;
+                                let dir = seg[i] - center[k];
+                                if dir.abs() > 1e-4 {
+                                    seg[i] += dir.signum() * expand;
+                                }
+                            }
+                        }
                     }
-                    f.outline_edges
-                        .iter()
-                        .map(|e| std::array::from_fn(|i| p[i % 3] + o[i % 3] + e[i]))
-                        .collect()
+                    segs
                 })
                 .unwrap_or_default()
         } else {
             Vec::new()
         };
+        let bo = &self.settings.extras.volt.blocks_outline;
+        let outline_style = if bo.enabled && !outline.is_empty() {
+            let t = self.world.game_time as f32 / 20.0 + alpha as f32 / 20.0;
+            let rgb = bo.active_rgb(t);
+            let pulse_mul = if bo.pulse {
+                0.62 + 0.38 * (t * 3.8).sin().abs()
+            } else {
+                1.0
+            };
+            let alpha_u8 = (f32::from(bo.alpha_pct.clamp(10, 100)) / 100.0 * pulse_mul * 255.0)
+                .round()
+                .clamp(16.0, 255.0) as u8;
+            let width = f32::from(bo.line_width.clamp(1, 10))
+                * if bo.pulse {
+                    0.85 + 0.25 * (t * 3.8).sin().abs()
+                } else {
+                    1.0
+                };
+            let argb = horizon_client::extras::BlocksOutlineConfig::to_argb(rgb, alpha_u8);
+            if bo.fill_overlay {
+                if let Some((bounds, ref mut fill_col, ref mut fill_on_top)) = outline_fill_box {
+                    let _ = bounds;
+                    let fill_rgb = bo.active_fill_rgb(t);
+                    let fill_a = (f32::from(bo.fill_alpha_pct.clamp(5, 80)) / 100.0 * pulse_mul * 255.0)
+                        .round()
+                        .clamp(10.0, 230.0) as u8;
+                    *fill_col = horizon_client::extras::BlocksOutlineConfig::to_argb(fill_rgb, fill_a);
+                    *fill_on_top = bo.see_through;
+                }
+            } else {
+                outline_fill_box = None;
+            }
+            if bo.see_through {
+                if bo.high_contrast_backing {
+                    let back_w = (width + 4.0).max(6.0);
+                    for seg in &outline {
+                        on_top.push(horizon_client::gizmos::Line {
+                            start: [seg[0], seg[1], seg[2]],
+                            end: [seg[3], seg[4], seg[5]],
+                            color: 0xFF00_0000,
+                            width: back_w,
+                        });
+                    }
+                }
+                for seg in outline.drain(..) {
+                    on_top.push(horizon_client::gizmos::Line {
+                        start: [seg[0], seg[1], seg[2]],
+                        end: [seg[3], seg[4], seg[5]],
+                        color: argb,
+                        width,
+                    });
+                }
+                None
+            } else {
+                Some(horizon_client::gfx::OutlineStyle {
+                    color: argb,
+                    width,
+                    high_contrast: bo.high_contrast_backing
+                        || self.settings.file.bool("highContrastBlockOutline"),
+                })
+            }
+        } else {
+            outline_fill_box = None;
+            None
+        };
+        let debug_lines = horizon_client::gizmos::camera_relative(&lines, at, view);
+        let debug_lines_on_top = horizon_client::gizmos::camera_relative(&on_top, at, view);
+        let debug_crosshair = horizon_client::gizmos::camera_relative(&crosshair.on_top, at, view);
         let mut hud = horizon_client::spans::time("hud", || self.hud(size));
         hud.controls_at = Some(hud.vertices.len() as u32);
         #[cfg(target_os = "android")]
@@ -15486,7 +15602,76 @@ impl Game<'_> {
         let border = (!skip_world)
             .then(|| self.border_draw(camera.to_array(), alpha as f32))
             .flatten();
-        let see_through = std::mem::take(&mut self.see_through_vertices);
+        let mut see_through = std::mem::take(&mut self.see_through_vertices);
+        if let Some((b, fill_argb, fill_on_top)) = outline_fill_box {
+            let eps = 0.0012;
+            let x0 = b[0] - eps;
+            let y0 = b[1] - eps;
+            let z0 = b[2] - eps;
+            let x1 = b[3] + eps;
+            let y1 = b[4] + eps;
+            let z1 = b[5] + eps;
+            let faces: [[[f64; 3]; 4]; 6] = [
+                // Top (+Y)
+                [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]],
+                // Bottom (-Y)
+                [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]],
+                // North (-Z)
+                [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]],
+                // South (+Z)
+                [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]],
+                // West (-X)
+                [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]],
+                // East (+X)
+                [[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]],
+            ];
+            let mut white = HudBatch::new([1, 1]);
+            white.fill(
+                &self.gui.atlas,
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                horizon_client::hud_layout::abgr(fill_argb),
+            );
+            if let Some(v) = white.vertices.first().copied() {
+                let light = horizon_client::block_entity_render::vertex_light(0xFF);
+                if fill_on_top {
+                    for quad in faces {
+                        for corner in quad {
+                            see_through.push(Vertex {
+                                normal: [0; 4],
+                                pos: (glam::DVec3::from_array(corner) - camera)
+                                    .as_vec3()
+                                    .to_array(),
+                                uv: v.uv,
+                                layer: 0,
+                                color: v.color,
+                                light,
+                                glint_uv: [0.0, 0.0],
+                            });
+                        }
+                    }
+                } else {
+                    self.mark_translucent_entity(entities.len(), "");
+                    for quad in faces {
+                        for corner in quad {
+                            entities.push(Vertex {
+                                normal: [0; 4],
+                                pos: (glam::DVec3::from_array(corner) - camera)
+                                    .as_vec3()
+                                    .to_array(),
+                                uv: v.uv,
+                                layer: 0,
+                                color: v.color,
+                                light,
+                                glint_uv: [0.0, 0.0],
+                            });
+                        }
+                    }
+                }
+            }
+        }
         if skip_world {
             self.dynamic_lights.clear();
         } else {
@@ -15564,6 +15749,7 @@ impl Game<'_> {
             outline,
             outline_after_terrain,
             outline_high_contrast: self.settings.file.bool("highContrastBlockOutline"),
+            outline_style,
             debug_lines: &debug_lines,
             debug_lines_on_top: &debug_lines_on_top,
             debug_crosshair: &debug_crosshair,
@@ -20699,6 +20885,7 @@ pub(crate) fn loading_frame(hud: &HudBatch) -> Frame<'_> {
         outline: Vec::new(),
         outline_after_terrain: false,
         outline_high_contrast: false,
+        outline_style: None,
         debug_lines: &[],
         debug_lines_on_top: &[],
         debug_crosshair: &[],

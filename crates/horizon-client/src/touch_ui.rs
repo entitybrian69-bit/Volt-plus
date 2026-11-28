@@ -92,6 +92,12 @@ pub struct TouchUi {
     pub volt_waypoints_page: usize,
     /// Live waypoint rows synced from `Game` for Waypoint Manager UI.
     pub volt_waypoints_snapshot: Vec<VoltWaypointUiRow>,
+    /// Whether the Block Outline Color customization window is open.
+    pub volt_block_outline_color_modal: bool,
+    /// When true, the Block Outline Color window edits Fill Overlay color instead of Outline color.
+    pub volt_block_outline_edit_fill: bool,
+    /// Active slider drag `(touch_id, channel 0=R,1=G,2=B,3=Alpha)` inside Block Outline Color window.
+    pub volt_block_outline_slider_drag: Option<(u64, u8)>,
     /// Step state for the Floating Menu "Send Custom Input" picker modal.
     pub custom_input_picker: crate::touch::PickerStep,
     /// Horizontal scroll offset for the Floating Menu custom keyboard picker.
@@ -172,6 +178,9 @@ impl Default for TouchUi {
             volt_waypoint_manager: false,
             volt_waypoints_page: 0,
             volt_waypoints_snapshot: Vec::new(),
+            volt_block_outline_color_modal: false,
+            volt_block_outline_edit_fill: false,
+            volt_block_outline_slider_drag: None,
             custom_input_picker: crate::touch::PickerStep::None,
             custom_kb_scroll_x: 0.0,
             custom_kb_drag: None,
@@ -788,6 +797,7 @@ impl TouchUi {
                 || self.custom_input_picker != crate::touch::PickerStep::None
                 || self.volt_key_picker.is_some()
                 || self.volt_waypoint_manager
+                || self.volt_block_outline_color_modal
             {
                 return false;
             }
@@ -799,6 +809,7 @@ impl TouchUi {
             || self.custom_input_picker != crate::touch::PickerStep::None
             || self.volt_key_picker.is_some()
             || self.volt_waypoint_manager
+            || self.volt_block_outline_color_modal
         {
             return false;
         }
@@ -1277,8 +1288,23 @@ pub fn aux_mouse_phase(pressed: bool, owned: bool, touched: bool) -> Option<Touc
     })
 }
 
+const BLOCK_OUTLINE_SWATCHES: [(u32, &str); 12] = [
+    (0x00E5FF, "Cyan"),
+    (0xFFFFFF, "White"),
+    (0x000000, "Black"),
+    (0xFF3B30, "Red"),
+    (0xFF9500, "Orange"),
+    (0xFFD60A, "Gold"),
+    (0x32D74B, "Lime"),
+    (0x38BDF8, "Sky"),
+    (0x0A84FF, "Blue"),
+    (0xBF5AF2, "Purple"),
+    (0xFF375F, "Pink"),
+    (0xDC2626, "Crimson"),
+];
+
 const COLOR_SWATCHES: [(u32, &str); 8] = [
-    (crate::ui_theme::color::hex(0x1E1B2E, 184), "Obsidian"),
+    (crate::ui_theme::color::hex(0x000000, 215), "Black"),
     (crate::ui_theme::color::hex(0x9A7BFF, 235), "Violet"),
     (crate::ui_theme::color::hex(0xD0BCFF, 235), "Lavender"),
     (crate::ui_theme::color::hex(0x38BDF8, 235), "Cyan"),
@@ -2612,6 +2638,137 @@ impl TouchUi {
             return Some(InGameMenuAction::Close);
         }
 
+        // 0c. If Block Outline Color Window is open:
+        if self.volt_block_outline_color_modal {
+            let mdw = (w - 20.0).clamp(310.0, 560.0);
+            let mdh = (h - 20.0).clamp(250.0, 360.0);
+            let mdx = (w - mdw) * 0.5;
+            let mdy = (h - mdh) * 0.5;
+            let lx = mdx + 14.0;
+            let lw = (mdw * 0.34).clamp(112.0, 174.0);
+            let ly = mdy + 44.0;
+            let rx = lx + lw + 12.0;
+            let rw = (mdx + mdw - 14.0 - rx).max(150.0);
+            let ry = mdy + 44.0;
+            let sl_y0 = ry + 68.0;
+
+            let apply_slider = |this: &mut Self, ch: u8, px: f32| {
+                let t = ((px - rx) / rw).clamp(0.0, 1.0);
+                let bo = &mut this.volt_extras.blocks_outline;
+                if ch < 3 {
+                    let cur_rgb = if this.volt_block_outline_edit_fill {
+                        bo.fill_color_rgb
+                    } else {
+                        bo.color_rgb
+                    };
+                    let [mut r, mut g, mut b] = crate::extras::BlocksOutlineConfig::rgb_bytes(cur_rgb);
+                    let v = (t * 255.0).round().clamp(0.0, 255.0) as u8;
+                    match ch {
+                        0 => r = v,
+                        1 => g = v,
+                        _ => b = v,
+                    }
+                    let new_rgb = crate::extras::BlocksOutlineConfig::from_rgb(r, g, b);
+                    if this.volt_block_outline_edit_fill {
+                        bo.fill_match_outline = false;
+                        bo.fill_color_rgb = new_rgb;
+                    } else {
+                        bo.rainbow = false;
+                        bo.color_rgb = new_rgb;
+                    }
+                } else if this.volt_block_outline_edit_fill {
+                    bo.fill_alpha_pct = (5.0 + t * 75.0).round().clamp(5.0, 80.0) as u8;
+                } else {
+                    bo.alpha_pct = (10.0 + t * 90.0).round().clamp(10.0, 100.0) as u8;
+                }
+            };
+
+            if let Some((drag_id, ch)) = self.volt_block_outline_slider_drag
+                && drag_id == id
+            {
+                match phase {
+                    TouchPhase::Moved => {
+                        apply_slider(self, ch, p[0]);
+                        return Some(InGameMenuAction::UpdateVoltExtras(self.volt_extras.clone()));
+                    }
+                    TouchPhase::Ended | TouchPhase::Cancelled => {
+                        apply_slider(self, ch, p[0]);
+                        self.volt_block_outline_slider_drag = None;
+                        return Some(InGameMenuAction::UpdateVoltExtras(self.volt_extras.clone()));
+                    }
+                    TouchPhase::Started => {}
+                }
+            }
+            if phase != TouchPhase::Started {
+                return Some(InGameMenuAction::Close);
+            }
+            let done_r = [mdx + mdw - 72.0, mdy + 10.0, 58.0, 26.0];
+            let reset_r = [mdx + mdw - 134.0, mdy + 10.0, 56.0, 26.0];
+            if inside(done_r) || !inside([mdx, mdy, mdw, mdh]) {
+                self.volt_block_outline_color_modal = false;
+                self.volt_block_outline_slider_drag = None;
+                return Some(InGameMenuAction::Close);
+            }
+            if inside(reset_r) {
+                let was_enabled = self.volt_extras.blocks_outline.enabled;
+                self.volt_extras.blocks_outline = crate::extras::BlocksOutlineConfig::default();
+                self.volt_extras.blocks_outline.enabled = was_enabled;
+                return Some(InGameMenuAction::UpdateVoltExtras(self.volt_extras.clone()));
+            }
+            let tab_w = (lw - 6.0) * 0.5;
+            if inside([lx, ly + 116.0, tab_w, 26.0]) {
+                self.volt_block_outline_edit_fill = false;
+                return Some(InGameMenuAction::Close);
+            }
+            if inside([lx + tab_w + 6.0, ly + 116.0, tab_w, 26.0]) {
+                self.volt_block_outline_edit_fill = true;
+                return Some(InGameMenuAction::Close);
+            }
+            if inside([lx, ly + 148.0, lw, 26.0]) {
+                if self.volt_block_outline_edit_fill {
+                    self.volt_extras.blocks_outline.fill_match_outline =
+                        !self.volt_extras.blocks_outline.fill_match_outline;
+                } else {
+                    self.volt_extras.blocks_outline.rainbow =
+                        !self.volt_extras.blocks_outline.rainbow;
+                }
+                return Some(InGameMenuAction::UpdateVoltExtras(self.volt_extras.clone()));
+            }
+            if inside([lx, ly + 178.0, lw, 26.0]) {
+                self.volt_extras.blocks_outline.fill_overlay =
+                    !self.volt_extras.blocks_outline.fill_overlay;
+                return Some(InGameMenuAction::UpdateVoltExtras(self.volt_extras.clone()));
+            }
+            let sw_gap = 5.0;
+            let sw_w = (rw - sw_gap * 5.0) / 6.0;
+            let sw_h = 26.0;
+            for (i, &(rgb, _name)) in BLOCK_OUTLINE_SWATCHES.iter().enumerate() {
+                let col = (i % 6) as f32;
+                let row = (i / 6) as f32;
+                let sx = rx + col * (sw_w + sw_gap);
+                let sy = ry + row * (sw_h + 5.0);
+                if inside([sx, sy, sw_w, sw_h]) {
+                    if self.volt_block_outline_edit_fill {
+                        self.volt_extras.blocks_outline.fill_match_outline = false;
+                        self.volt_extras.blocks_outline.fill_color_rgb = rgb;
+                    } else {
+                        self.volt_extras.blocks_outline.rainbow = false;
+                        self.volt_extras.blocks_outline.color_rgb = rgb;
+                    }
+                    return Some(InGameMenuAction::UpdateVoltExtras(self.volt_extras.clone()));
+                }
+            }
+            for ch in 0..4u8 {
+                let sy = sl_y0 + f32::from(ch) * 34.0;
+                if inside([rx - 4.0, sy + 4.0, rw + 8.0, 28.0]) {
+                    self.volt_block_outline_slider_drag = Some((id, ch));
+                    apply_slider(self, ch, p[0]);
+                    return Some(InGameMenuAction::UpdateVoltExtras(self.volt_extras.clone()));
+                }
+            }
+            return Some(InGameMenuAction::Close);
+        }
+
         // 0. If "Send Custom Input" Picker Modal is open:
         if self.custom_input_picker != crate::touch::PickerStep::None {
             use crate::touch::PickerStep;
@@ -3643,6 +3800,12 @@ impl TouchUi {
                                     crate::extras::VoltQuickAction::OpenWaypointManager => {
                                         self.volt_waypoint_manager = true;
                                         self.volt_waypoints_page = 0;
+                                        return Some(InGameMenuAction::Close);
+                                    }
+                                    crate::extras::VoltQuickAction::OpenBlockOutlineColor => {
+                                        self.volt_block_outline_color_modal = true;
+                                        self.volt_block_outline_edit_fill = false;
+                                        self.volt_block_outline_slider_drag = None;
                                         return Some(InGameMenuAction::Close);
                                     }
                                     other => return Some(InGameMenuAction::VoltQuickAction(other)),
@@ -6779,6 +6942,263 @@ impl TouchUi {
                 if page + 1 < pages { text_c } else { muted_c },
                 "Next >",
             );
+        }
+
+        // Volt+ Extras Block Outline Color Customizer Sub-Modal
+        if self.volt_block_outline_color_modal {
+            ui.fill(0.0, 0.0, w, h, rgba(0, 0, 0, 205));
+            let mdw = (w - 20.0).clamp(310.0, 560.0);
+            let mdh = (h - 20.0).clamp(250.0, 360.0);
+            let mdx = (w - mdw) * 0.5;
+            let mdy = (h - mdh) * 0.5;
+            ui.rounded(mdx, mdy, mdw, mdh, 16.0, rgba(0, 0, 0, 248));
+            ui.border(mdx, mdy, mdw, mdh, 16.0, accent);
+
+            ui.text(
+                Face::SemiBold,
+                12.5,
+                mdx + 14.0,
+                mdy + 12.0,
+                text_c,
+                "Block Outline Color",
+            );
+            let done_r = [mdx + mdw - 72.0, mdy + 10.0, 58.0, 26.0];
+            let reset_r = [mdx + mdw - 134.0, mdy + 10.0, 56.0, 26.0];
+            ui.rounded(reset_r[0], reset_r[1], reset_r[2], reset_r[3], 8.0, card_bg);
+            ui.border(reset_r[0], reset_r[1], reset_r[2], reset_r[3], 8.0, border_c);
+            ui.centered_fit(Face::Medium, 9.2, reset_r, text_c, "Reset");
+            ui.rounded(done_r[0], done_r[1], done_r[2], done_r[3], 8.0, accent);
+            ui.border(done_r[0], done_r[1], done_r[2], done_r[3], 8.0, accent_hi);
+            ui.centered_fit(Face::SemiBold, 9.5, done_r, accent_fg, "Done");
+
+            let lx = mdx + 14.0;
+            let lw = (mdw * 0.34).clamp(112.0, 174.0);
+            let ly = mdy + 44.0;
+            let rx = lx + lw + 12.0;
+            let rw = (mdx + mdw - 14.0 - rx).max(150.0);
+            let ry = mdy + 44.0;
+            let bo = &self.volt_extras.blocks_outline;
+
+            // Left column: live block outline + fill preview box
+            ui.rounded(lx, ly, lw, 108.0, 12.0, well_bg);
+            ui.border(lx, ly, lw, 108.0, 12.0, border_c);
+            let box_sz = 56.0;
+            let bx = lx + (lw - box_sz) * 0.5;
+            let by = ly + 12.0;
+            // Textured grass/stone-like block preview tile
+            ui.rounded(bx, by, box_sz, box_sz, 4.0, rgba(72, 76, 84, 255));
+            ui.rounded(bx, by, box_sz, 16.0, 4.0, rgba(76, 138, 66, 255));
+            let live_rgb = bo.active_rgb(0.8);
+            let live_a = (f32::from(bo.alpha_pct) * 2.55).round().clamp(24.0, 255.0) as u8;
+            let live_abgr = crate::extras::BlocksOutlineConfig::to_abgr(live_rgb, live_a);
+            if bo.fill_overlay {
+                let fill_rgb = bo.active_fill_rgb(0.8);
+                let fill_a = (f32::from(bo.fill_alpha_pct) * 2.55)
+                    .round()
+                    .clamp(12.0, 220.0) as u8;
+                let fill_abgr = crate::extras::BlocksOutlineConfig::to_abgr(fill_rgb, fill_a);
+                ui.rounded(bx, by, box_sz, box_sz, 4.0, fill_abgr);
+            }
+            if bo.high_contrast_backing {
+                ui.stroke_rounded(
+                    bx - 1.5,
+                    by - 1.5,
+                    box_sz + 3.0,
+                    box_sz + 3.0,
+                    4.0,
+                    (f32::from(bo.line_width) * 0.6).clamp(1.5, 5.0) + 2.0,
+                    rgba(0, 0, 0, 255),
+                );
+            }
+            ui.stroke_rounded(
+                bx,
+                by,
+                box_sz,
+                box_sz,
+                4.0,
+                (f32::from(bo.line_width) * 0.6).clamp(1.2, 5.5),
+                live_abgr,
+            );
+
+            let active_rgb = if self.volt_block_outline_edit_fill {
+                bo.active_fill_rgb(0.8)
+            } else {
+                bo.active_rgb(0.8)
+            };
+            let [cr, cg, cb] = crate::extras::BlocksOutlineConfig::rgb_bytes(active_rgb);
+            let active_a = if self.volt_block_outline_edit_fill {
+                bo.fill_alpha_pct
+            } else {
+                bo.alpha_pct
+            };
+            let hex_lbl = if !self.volt_block_outline_edit_fill && bo.rainbow {
+                format!("RAINBOW • {active_a}%")
+            } else {
+                format!(
+                    "{} • {cr},{cg},{cb}",
+                    crate::extras::BlocksOutlineConfig::hex_string(active_rgb)
+                )
+            };
+            ui.centered_fit(
+                Face::SemiBold,
+                9.0,
+                [lx + 4.0, ly + 76.0, lw - 8.0, 24.0],
+                text_c,
+                &hex_lbl,
+            );
+
+            // Target selector pills: Outline vs Fill
+            let tab_w = (lw - 6.0) * 0.5;
+            for (ti, (lbl, is_fill)) in [("Outline", false), ("Fill", true)].into_iter().enumerate()
+            {
+                let tr = [lx + ti as f32 * (tab_w + 6.0), ly + 116.0, tab_w, 26.0];
+                let active = self.volt_block_outline_edit_fill == is_fill;
+                ui.rounded(
+                    tr[0],
+                    tr[1],
+                    tr[2],
+                    tr[3],
+                    8.0,
+                    if active { accent } else { card_bg },
+                );
+                ui.border(
+                    tr[0],
+                    tr[1],
+                    tr[2],
+                    tr[3],
+                    8.0,
+                    if active { accent_hi } else { border_c },
+                );
+                ui.centered_fit(
+                    Face::SemiBold,
+                    9.0,
+                    tr,
+                    if active { accent_fg } else { text_c },
+                    lbl,
+                );
+            }
+            let opt1_r = [lx, ly + 148.0, lw, 26.0];
+            let opt1_on = if self.volt_block_outline_edit_fill {
+                bo.fill_match_outline
+            } else {
+                bo.rainbow
+            };
+            let opt1_lbl = if self.volt_block_outline_edit_fill {
+                if opt1_on { "Match Outline: ON" } else { "Match Outline: OFF" }
+            } else if opt1_on {
+                "Rainbow: ON"
+            } else {
+                "Rainbow: OFF"
+            };
+            ui.rounded(
+                opt1_r[0],
+                opt1_r[1],
+                opt1_r[2],
+                opt1_r[3],
+                8.0,
+                if opt1_on { card_sel } else { card_bg },
+            );
+            ui.border(
+                opt1_r[0],
+                opt1_r[1],
+                opt1_r[2],
+                opt1_r[3],
+                8.0,
+                if opt1_on { accent } else { border_c },
+            );
+            ui.centered_fit(Face::Medium, 8.8, opt1_r, text_c, opt1_lbl);
+
+            let opt2_r = [lx, ly + 178.0, lw, 26.0];
+            ui.rounded(
+                opt2_r[0],
+                opt2_r[1],
+                opt2_r[2],
+                opt2_r[3],
+                8.0,
+                if bo.fill_overlay { card_sel } else { card_bg },
+            );
+            ui.border(
+                opt2_r[0],
+                opt2_r[1],
+                opt2_r[2],
+                opt2_r[3],
+                8.0,
+                if bo.fill_overlay { accent } else { border_c },
+            );
+            ui.centered_fit(
+                Face::Medium,
+                8.8,
+                opt2_r,
+                text_c,
+                if bo.fill_overlay {
+                    "Fill Overlay: ON"
+                } else {
+                    "Fill Overlay: OFF"
+                },
+            );
+
+            // Right column: 12 Quick Color Swatches + R / G / B / Opacity sliders
+            let sw_gap = 5.0;
+            let sw_w = (rw - sw_gap * 5.0) / 6.0;
+            let sw_h = 26.0;
+            let selected_rgb = if self.volt_block_outline_edit_fill {
+                bo.fill_color_rgb & 0x00FF_FFFF
+            } else {
+                bo.color_rgb & 0x00FF_FFFF
+            };
+            for (i, &(rgb, _name)) in BLOCK_OUTLINE_SWATCHES.iter().enumerate() {
+                let col = (i % 6) as f32;
+                let row = (i / 6) as f32;
+                let sx = rx + col * (sw_w + sw_gap);
+                let sy = ry + row * (sw_h + 5.0);
+                let sw_abgr = crate::extras::BlocksOutlineConfig::to_abgr(rgb, 255);
+                ui.rounded(sx, sy, sw_w, sw_h, 7.0, sw_abgr);
+                let is_sel = selected_rgb == rgb
+                    && (!self.volt_block_outline_edit_fill || !bo.fill_match_outline)
+                    && (self.volt_block_outline_edit_fill || !bo.rainbow);
+                ui.stroke_rounded(
+                    sx,
+                    sy,
+                    sw_w,
+                    sw_h,
+                    7.0,
+                    if is_sel { 2.4 } else { 1.0 },
+                    if is_sel {
+                        rgba(255, 255, 255, 255)
+                    } else {
+                        border_c
+                    },
+                );
+            }
+
+            let sl_y0 = ry + 68.0;
+            let sliders: [(&str, f32, u32, String); 4] = [
+                ("Red", f32::from(cr) / 255.0, rgba(235, 72, 72, 255), format!("{cr}")),
+                ("Green", f32::from(cg) / 255.0, rgba(64, 210, 108, 255), format!("{cg}")),
+                ("Blue", f32::from(cb) / 255.0, rgba(66, 152, 250, 255), format!("{cb}")),
+                (
+                    "Opacity",
+                    if self.volt_block_outline_edit_fill {
+                        (f32::from(bo.fill_alpha_pct) - 5.0) / 75.0
+                    } else {
+                        (f32::from(bo.alpha_pct) - 10.0) / 90.0
+                    },
+                    accent,
+                    format!("{active_a}%"),
+                ),
+            ];
+            for (ch, (lbl, frac, bar_c, val_txt)) in sliders.into_iter().enumerate() {
+                let sy = sl_y0 + ch as f32 * 34.0;
+                ui.text(Face::Medium, 9.0, rx, sy, text_c, lbl);
+                ui.text_right(Face::SemiBold, 9.0, rx + rw, sy, muted_c, &val_txt);
+                let bar_y = sy + 13.0;
+                ui.rounded(rx, bar_y, rw, 12.0, 6.0, well_bg);
+                let fill_w = (rw * frac.clamp(0.0, 1.0)).max(10.0);
+                ui.rounded(rx, bar_y, fill_w, 12.0, 6.0, bar_c);
+                ui.border(rx, bar_y, rw, 12.0, 6.0, border_c);
+                let knob_x = (rx + rw * frac.clamp(0.0, 1.0) - 6.0).clamp(rx, rx + rw - 12.0);
+                ui.rounded(knob_x, bar_y - 2.0, 12.0, 16.0, 6.0, rgba(255, 255, 255, 255));
+            }
         }
 
         // Volt+ Extras Mod Keybind Picker Sub-Modal (same picker UI as Controls)

@@ -127,49 +127,77 @@ impl Game<'_> {
         true
     }
 
-    pub(super) fn android_custom_key_held(&self, key: KeyCode) -> bool {
-        self.pad
-            .touch
-            .held_custom_tokens()
-            .chain(self.pad.late_custom_releases.iter().map(String::as_str))
-            .any(|token| {
-                if let Some(mapping) = token.strip_prefix("action:") {
-                    horizon_client::keybinds::key_code(
-                        horizon_client::keybinds::KeyBinds::default_of(mapping),
-                    ) == Some(key)
-                } else {
-                    horizon_client::keybinds::key_code(token).is_some_and(|physical| {
-                        physical == key
-                            || self
-                                .settings
-                                .keys
-                                .translate_all(physical)
-                                .contains(&Ok(key))
-                    })
-                }
+    fn token_maps_to_key(&self, token: &str, key: KeyCode) -> bool {
+        if let Some(mapping) = token.strip_prefix("action:") {
+            horizon_client::keybinds::key_code(
+                horizon_client::keybinds::KeyBinds::default_of(mapping),
+            ) == Some(key)
+        } else {
+            horizon_client::keybinds::key_code(token).is_some_and(|physical| {
+                physical == key
+                    || self
+                        .settings
+                        .keys
+                        .translate_all(physical)
+                        .contains(&Ok(key))
             })
+        }
+    }
+
+    fn token_maps_to_mouse(&self, token: &str, button: MouseButton) -> bool {
+        if let Some(mapping) = token.strip_prefix("action:") {
+            horizon_client::keybinds::mouse_button(
+                horizon_client::keybinds::KeyBinds::default_of(mapping),
+            ) == Some(button)
+        } else if horizon_client::keybinds::mouse_button(token) == Some(button) {
+            true
+        } else {
+            horizon_client::keybinds::key_code(token).is_some_and(|physical| {
+                self.settings
+                    .keys
+                    .translate_all(physical)
+                    .contains(&Err(button))
+            })
+        }
+    }
+
+    pub(super) fn android_custom_key_held(&self, key: KeyCode) -> bool {
+        let count = self
+            .pad
+            .touch
+            .custom_hold_count_for(|tok| self.token_maps_to_key(tok, key));
+        let skip = usize::from(
+            self.pad
+                .releasing_step_token
+                .as_deref()
+                .is_some_and(|tok| self.token_maps_to_key(tok, key)),
+        );
+        count > skip
+            || (self.pad.releasing_step_token.is_none()
+                && self
+                    .pad
+                    .late_custom_releases
+                    .iter()
+                    .any(|tok| self.token_maps_to_key(tok, key)))
     }
     pub(super) fn android_custom_mouse_held(&self, button: MouseButton) -> bool {
-        self.pad
+        let count = self
+            .pad
             .touch
-            .held_custom_tokens()
-            .chain(self.pad.late_custom_releases.iter().map(String::as_str))
-            .any(|token| {
-                if let Some(mapping) = token.strip_prefix("action:") {
-                    horizon_client::keybinds::mouse_button(
-                        horizon_client::keybinds::KeyBinds::default_of(mapping),
-                    ) == Some(button)
-                } else if horizon_client::keybinds::mouse_button(token) == Some(button) {
-                    true
-                } else {
-                    horizon_client::keybinds::key_code(token).is_some_and(|physical| {
-                        self.settings
-                            .keys
-                            .translate_all(physical)
-                            .contains(&Err(button))
-                    })
-                }
-            })
+            .custom_hold_count_for(|tok| self.token_maps_to_mouse(tok, button));
+        let skip = usize::from(
+            self.pad
+                .releasing_step_token
+                .as_deref()
+                .is_some_and(|tok| self.token_maps_to_mouse(tok, button)),
+        );
+        count > skip
+            || (self.pad.releasing_step_token.is_none()
+                && self
+                    .pad
+                    .late_custom_releases
+                    .iter()
+                    .any(|tok| self.token_maps_to_mouse(tok, button)))
     }
     fn is_hotbar_switch_token(token: &str) -> bool {
         matches!(
@@ -298,6 +326,54 @@ impl Game<'_> {
         }
     }
 
+    fn enqueue_deferred_custom_release(&mut self, name: String) {
+        if let Some(idx) = self
+            .pad
+            .deferred_custom_events
+            .iter()
+            .rposition(|(tok, d)| *d && tok == &name)
+        {
+            self.pad.deferred_custom_events.insert(idx + 1, (name, false));
+        } else {
+            self.pad.deferred_custom_events.push_back((name, false));
+        }
+    }
+
+    pub(super) fn android_flush_late_custom_releases(&mut self) {
+        if self.pad.late_custom_releases.is_empty() {
+            return;
+        }
+        let ticking = self.title.is_none() && self.screen == Screen::Playing && !self.pause;
+        for token in std::mem::take(&mut self.pad.late_custom_releases) {
+            if !ticking || self.pad.custom_pressed_at.get(&token) != Some(&self.ticks) {
+                self.android_dispatch_custom_token(&token, false);
+            } else {
+                self.pad.late_custom_releases.push(token);
+            }
+        }
+    }
+
+    fn android_release_step_hand_tokens(&mut self) {
+        let tokens = std::mem::take(&mut self.pad.step_hand_tokens);
+        if tokens.is_empty() {
+            return;
+        }
+        self.android_flush_late_custom_releases();
+        for token in tokens {
+            self.pad.late_custom_releases.retain(|t| t != &token);
+            self.pad.releasing_step_token = Some(token.clone());
+            self.android_dispatch_custom_token(&token, false);
+            self.pad.releasing_step_token = None;
+        }
+        if !self.right && self.using.is_some() {
+            if self.remote.is_some() {
+                self.release_remote_use();
+            } else {
+                self.tick_using();
+            }
+        }
+    }
+
     pub(super) fn android_process_custom_events(
         &mut self,
         events: impl IntoIterator<Item = (String, bool)>,
@@ -315,13 +391,18 @@ impl Game<'_> {
                     .is_some_and(|r| r.input.has_pending() || !r.pending_keys.is_empty()));
         let mut hotbar_switched_this_tick = false;
         let mut deferring = false;
+        let mut immediate_hand_tokens: Vec<String> = Vec::new();
         for (name, down) in events {
             if !in_gameplay {
                 self.android_custom_token_edge(&name, down);
                 continue;
             }
             if deferring {
-                self.pad.deferred_custom_events.push_back((name, down));
+                if down {
+                    self.pad.deferred_custom_events.push_back((name, true));
+                } else {
+                    self.enqueue_deferred_custom_release(name);
+                }
                 continue;
             }
             if down {
@@ -333,12 +414,15 @@ impl Game<'_> {
                         && (is_hotbar || is_hand));
                 if needs_next_tick {
                     deferring = true;
-                    self.pad.deferred_custom_events.push_back((name, down));
+                    self.pad.deferred_custom_events.push_back((name, true));
                     continue;
                 }
-                self.android_custom_token_edge(&name, down);
+                self.android_custom_token_edge(&name, true);
                 if is_hand {
                     hand_action_queued = true;
+                    if !immediate_hand_tokens.iter().any(|t| t == &name) {
+                        immediate_hand_tokens.push(name);
+                    }
                 }
                 if is_hotbar {
                     hotbar_switched_this_tick = true;
@@ -350,10 +434,17 @@ impl Game<'_> {
                     .iter()
                     .any(|(tok, d)| *d && tok == &name)
                 {
-                    self.pad.deferred_custom_events.push_back((name, down));
+                    self.enqueue_deferred_custom_release(name);
                     continue;
                 }
-                self.android_custom_token_edge(&name, down);
+                self.android_custom_token_edge(&name, false);
+            }
+        }
+        if self.pad.deferred_custom_events.iter().any(|(_, d)| *d) {
+            for tok in immediate_hand_tokens {
+                if !self.pad.step_hand_tokens.iter().any(|t| t == &tok) {
+                    self.pad.step_hand_tokens.push(tok);
+                }
             }
         }
     }
@@ -367,6 +458,7 @@ impl Game<'_> {
             && !self.pause
             && !self.pad_in_menu();
         if !in_gameplay {
+            self.pad.step_hand_tokens.clear();
             while let Some((name, down)) = self.pad.deferred_custom_events.pop_front() {
                 self.android_custom_token_edge(&name, down);
             }
@@ -379,6 +471,7 @@ impl Game<'_> {
                 .as_ref()
                 .is_some_and(|r| r.input.has_pending() || !r.pending_keys.is_empty());
         let mut hotbar_switched_this_tick = false;
+        let mut released_prev_step = false;
         while let Some((name, down)) = self.pad.deferred_custom_events.front().cloned() {
             let is_hotbar = down && self.is_hotbar_switch_token_resolved(&name);
             let is_hand = down && self.is_tick_deferred_hand_token(&name);
@@ -388,14 +481,24 @@ impl Game<'_> {
             {
                 break;
             }
+            if down && !released_prev_step {
+                released_prev_step = true;
+                self.android_release_step_hand_tokens();
+            }
             self.pad.deferred_custom_events.pop_front();
             self.android_custom_token_edge(&name, down);
             if is_hand {
                 hand_action_queued = true;
+                if !self.pad.step_hand_tokens.iter().any(|t| t == &name) {
+                    self.pad.step_hand_tokens.push(name);
+                }
             }
             if is_hotbar {
                 hotbar_switched_this_tick = true;
             }
+        }
+        if !self.pad.deferred_custom_events.iter().any(|(_, d)| *d) {
+            self.pad.step_hand_tokens.clear();
         }
     }
 
@@ -422,6 +525,8 @@ impl Game<'_> {
                 self.pad.late_custom_releases.push(token.to_owned());
             }
             return;
+        } else {
+            self.pad.step_hand_tokens.retain(|t| t != token);
         }
         self.android_dispatch_custom_token(token, down);
     }

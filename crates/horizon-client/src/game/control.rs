@@ -851,7 +851,6 @@ impl Game<'_> {
                     "packs" => Page::Packs,
                     "mods" => Page::Mods,
                     "shader-packs" => Page::ShaderPacks,
-                    "volt-shaders" => Page::VoltShaders,
                     "graphics" => Page::Graphics,
                     "graphics-advanced" => Page::GraphicsAdvanced,
                     "graphics-hdr" => Page::GraphicsHdr,

@@ -111,8 +111,8 @@ fn build_placement(
     p.stroke_color = stroke_abgr;
     p.on_click_color = on_click_abgr;
     p.on_click_stroke_color = on_click_stroke_abgr;
-    p.on_toggle_color = argb_to_abgr(0xCC543B94);
-    p.on_toggle_stroke_color = argb_to_abgr(0xFFEADDFF);
+    p.on_toggle_color = argb_to_abgr(0xCC121212);
+    p.on_toggle_stroke_color = argb_to_abgr(0xFFFFFFFF);
     p.passthrough = passthrough;
     p.toggleable = toggleable;
     p.swipeable = swipeable;
@@ -838,9 +838,9 @@ impl Default for ZalithStyle {
     fn default() -> Self {
         Self {
             bg_abgr: argb_to_abgr(0x8000_0000),
-            pressed_bg_abgr: argb_to_abgr(0xB387_4888),
+            pressed_bg_abgr: argb_to_abgr(0xB300_0000),
             stroke_abgr: argb_to_abgr(0xFFFFFFFF),
-            pressed_stroke_abgr: argb_to_abgr(0xFFEADDFF),
+            pressed_stroke_abgr: argb_to_abgr(0xFFFFFFFF),
             border_width: 0.0,
             roundness: 8.0,
             alpha: 1.0,

@@ -341,8 +341,6 @@ impl Game<'_> {
         let dev = DEV_PACK.get_or_init(|| std::env::var("HORIZON_SHADER_PACK").ok());
         let picked = if let Some(dev_name) = dev.as_deref() {
             dev_name
-        } else if self.settings.extras.volt_shaders.enabled {
-            super::native_shaders::VOLT_SHADERS_PICKED
         } else {
             active_pack(&self.settings.horizon.shader_pack, &self.settings.mods)
         };

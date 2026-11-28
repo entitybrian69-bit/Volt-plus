@@ -125,7 +125,8 @@ impl Game<'_> {
             || self.pad.touch_ui.presets_modal_open
             || self.pad.touch_ui.custom_input_picker != horizon_client::touch::PickerStep::None
             || self.pad.touch_ui.volt_key_picker.is_some()
-            || self.pad.touch_ui.volt_waypoint_manager;
+            || self.pad.touch_ui.volt_waypoint_manager
+            || self.pad.touch_ui.volt_block_outline_color_modal;
         #[cfg(not(target_os = "android"))]
         let android_hub_open = false;
         self.title.is_some()

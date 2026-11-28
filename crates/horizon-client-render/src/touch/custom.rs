@@ -723,6 +723,15 @@ impl TouchControls {
             .chain(self.latched_custom.iter())
             .map(String::as_str)
     }
+    pub fn custom_hold_count_for(&self, mut pred: impl FnMut(&str) -> bool) -> usize {
+        let finger_count = self
+            .custom_fingers
+            .values()
+            .filter(|tokens| tokens.iter().any(|t| pred(t)))
+            .count();
+        let latched = usize::from(self.latched_custom.iter().any(|t| pred(t)));
+        finger_count + latched
+    }
     pub fn custom_button_held(&self, index: usize) -> bool {
         self.custom_swipe_btn.values().any(|&idx| idx == index)
     }
@@ -976,6 +985,7 @@ mod tests {
 
         // Press 4-slot macro: all 4 slots fire in order, including duplicate mouse.right.
         t.update(1, [0.35, 0.50], true, false);
+        assert_eq!(t.custom_hold_count_for(|tok| tok == "key.mouse.right"), 1);
         assert_eq!(
             t.key_events(),
             [

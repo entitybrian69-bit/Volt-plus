@@ -1248,7 +1248,9 @@ impl Game<'_> {
                 self.settings.extras.volt.chunk_hitboxes.entity_hitboxes =
                     !self.settings.extras.volt.chunk_hitboxes.entity_hitboxes;
             }
-            VoltQuickAction::OpenModKeyPicker { .. } | VoltQuickAction::OpenWaypointManager => {}
+            VoltQuickAction::OpenModKeyPicker { .. }
+            | VoltQuickAction::OpenWaypointManager
+            | VoltQuickAction::OpenBlockOutlineColor => {}
             VoltQuickAction::DeleteWaypoint(idx) => {
                 if idx < self.extras.volt.waypoints.len() {
                     let removed = self.extras.volt.waypoints.remove(idx);

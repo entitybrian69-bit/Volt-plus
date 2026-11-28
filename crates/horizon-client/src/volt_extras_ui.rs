@@ -947,7 +947,7 @@ fn base_mod_setting_rows(v: &VoltExtras, idx: u8) -> Vec<SettingRow> {
                 r_tog("Compact Grid", "Tighter 5-column item tiles for smaller screens", c.compact_grid),
             ]
         }
-        _ => {
+        81 => {
             let c = &v.cinematic_timelapse;
             vec![
                 r_val("Start / Stop Time Lapse", "Launch or stop cinematic timelapse (countdown only shown here)", "Start / Stop".into()),
@@ -955,6 +955,34 @@ fn base_mod_setting_rows(v: &VoltExtras, idx: u8) -> Vec<SettingRow> {
                 r_val("Camera Path Mode", "Smooth camera motion path during timelapse", c.path_mode.label().to_owned()),
                 r_val("Motion Speed", "Camera orbit / pan speed degrees per sec", format!("{}°/s", c.orbit_speed_deg)),
                 r_tog("Hide HUD While Active", "Hide touch buttons & bars during timelapse", c.hide_hud),
+            ]
+        }
+        _ => {
+            let b = &v.blocks_outline;
+            let color_badge = if b.rainbow {
+                "Rainbow • Edit".to_owned()
+            } else {
+                format!("{} • Edit", crate::extras::BlocksOutlineConfig::hex_string(b.color_rgb))
+            };
+            let fill_badge = if b.fill_match_outline {
+                "Match Outline".to_owned()
+            } else {
+                crate::extras::BlocksOutlineConfig::hex_string(b.fill_color_rgb)
+            };
+            vec![
+                r_val("Customize Outline Color...", "Open Block Outline Color window (RGB sliders, swatches, preview & fill color)", color_badge),
+                r_val("Outline Opacity", "Transparency of the block outline lines", format!("{}%", b.alpha_pct)),
+                r_val("Outline Thickness", "Line width of the block outline in pixels", format!("{}px", b.line_width)),
+                r_tog("Rainbow / Chroma Mode", "Smoothly cycle the block outline through rainbow colors", b.rainbow),
+                r_val("Rainbow Speed", "Speed of rainbow color cycling", format!("{}x", b.rainbow_speed)),
+                r_tog("Breathing Pulse", "Gently pulse outline brightness and thickness", b.pulse),
+                r_tog("Block Fill Overlay", "Render a translucent colored highlight across targeted block faces", b.fill_overlay),
+                r_val("Fill Overlay Opacity", "Transparency of the block face fill overlay", format!("{}%", b.fill_alpha_pct)),
+                r_val("Fill Overlay Color Mode", "Use the outline color or pick a separate fill color in Color Window", fill_badge),
+                r_tog("Render Through Blocks", "Show the targeted block outline and fill through solid blocks", b.see_through),
+                r_tog("High-Contrast Backing", "Add a bold dark backing stroke behind the colored outline", b.high_contrast_backing),
+                r_val("Edge Expansion (Anti-Z-Fight)", "Expand outline slightly outward to prevent flickering", format!("+0.00{}", b.inflate_pct)),
+                r_val("Reset Blocks Outline", "Restore default Blocks Outline color and settings", "Reset".into()),
             ]
         }
     }
@@ -1701,6 +1729,62 @@ pub fn click_mod_setting_row(v: &mut VoltExtras, idx: u8, row: usize) -> Option<
             };
         }
         (81, 4) => v.cinematic_timelapse.hide_hud = !v.cinematic_timelapse.hide_hud,
+
+        (82, 0) => return Some(VoltQuickAction::OpenBlockOutlineColor),
+        (82, 1) => {
+            v.blocks_outline.alpha_pct = match v.blocks_outline.alpha_pct {
+                25 => 50,
+                50 => 75,
+                75 => 90,
+                90 => 100,
+                _ => 25,
+            };
+        }
+        (82, 2) => {
+            v.blocks_outline.line_width = match v.blocks_outline.line_width {
+                1 => 2,
+                2 => 3,
+                3 => 4,
+                4 => 6,
+                6 => 8,
+                8 => 10,
+                _ => 1,
+            };
+        }
+        (82, 3) => v.blocks_outline.rainbow = !v.blocks_outline.rainbow,
+        (82, 4) => {
+            v.blocks_outline.rainbow_speed = (v.blocks_outline.rainbow_speed % 5) + 1;
+        }
+        (82, 5) => v.blocks_outline.pulse = !v.blocks_outline.pulse,
+        (82, 6) => v.blocks_outline.fill_overlay = !v.blocks_outline.fill_overlay,
+        (82, 7) => {
+            v.blocks_outline.fill_alpha_pct = match v.blocks_outline.fill_alpha_pct {
+                10 => 22,
+                22 => 35,
+                35 => 50,
+                50 => 70,
+                _ => 10,
+            };
+        }
+        (82, 8) => v.blocks_outline.fill_match_outline = !v.blocks_outline.fill_match_outline,
+        (82, 9) => v.blocks_outline.see_through = !v.blocks_outline.see_through,
+        (82, 10) => {
+            v.blocks_outline.high_contrast_backing = !v.blocks_outline.high_contrast_backing;
+        }
+        (82, 11) => {
+            v.blocks_outline.inflate_pct = match v.blocks_outline.inflate_pct {
+                0 => 1,
+                1 => 2,
+                2 => 4,
+                4 => 6,
+                _ => 0,
+            };
+        }
+        (82, 12) => {
+            let was_enabled = v.blocks_outline.enabled;
+            v.blocks_outline = crate::extras::BlocksOutlineConfig::default();
+            v.blocks_outline.enabled = was_enabled;
+        }
         _ => {}
     }
     None

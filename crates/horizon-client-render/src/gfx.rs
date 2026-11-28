@@ -113,6 +113,13 @@ pub fn outline_width(width: u32) -> f32 {
     2.5f32.max(width as f32 / 1920.0 * 2.5)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OutlineStyle {
+    pub color: u32,
+    pub width: f32,
+    pub high_contrast: bool,
+}
+
 /// ScreenSize, stroke width and ProjectionType.PERSPECTIVE layering.
 pub fn outline_params(width: u32, height: u32) -> [f32; 4] {
     [
@@ -514,6 +521,8 @@ pub struct Frame<'a> {
     pub outline_after_terrain: bool,
     /// `BlockOutlineRenderState.highContrast`: a thick black outline under a bright one.
     pub outline_high_contrast: bool,
+    /// Optional Volt+ Extras `Blocks Outline` customization (color, width, backing).
+    pub outline_style: Option<OutlineStyle>,
     /// `lines` with a colour and pixel width (`gizmos::camera_relative`):
     /// the fishing line and debug gizmos, depth tested, then gizmos drawn
     /// over everything.
@@ -7277,26 +7286,47 @@ impl Renderer {
             frame.weather_time,
         );
         let outline_edges = frame.outline.len().min(MAX_OUTLINE_EDGES as usize);
+        let outline_hc = frame
+            .outline_style
+            .map_or(frame.outline_high_contrast, |s| s.high_contrast);
         if outline_edges > 0 {
             // The same per-line colour and pixel width layout as the gizmo lines. A high
             // contrast outline is two strokes: the black one first, the bright one after it.
             let edges = outline_vertices(&frame.outline[..outline_edges], camera);
-            let width = outline_width(self.config.width);
-            let stroke = |color: u32, width: f32| {
+            let default_w = outline_width(self.config.width);
+            let (color, width) = match frame.outline_style {
+                Some(s) => (
+                    s.color,
+                    if s.width > 0.0 {
+                        (s.width * (default_w / 2.5).max(1.0)).clamp(1.0, 20.0)
+                    } else {
+                        default_w
+                    },
+                ),
+                None => (
+                    if frame.outline_high_contrast {
+                        0xff57_ffe1
+                    } else {
+                        0x6600_0000
+                    },
+                    default_w,
+                ),
+            };
+            let stroke = |c: u32, w: f32| {
                 edges.iter().map(move |e| {
                     let mut line = [0.0; 8];
                     line[..6].copy_from_slice(e);
-                    line[6] = f32::from_bits(color);
-                    line[7] = width;
+                    line[6] = f32::from_bits(c);
+                    line[7] = w;
                     line
                 })
             };
-            let lines: Vec<[f32; 8]> = if frame.outline_high_contrast {
-                stroke(0xff00_0000, 7.0)
-                    .chain(stroke(0xff57_ffe1, width))
+            let lines: Vec<[f32; 8]> = if outline_hc {
+                stroke(0xff00_0000, (width + 4.0).max(7.0))
+                    .chain(stroke(color, width))
                     .collect()
             } else {
-                stroke(0x6600_0000, width).collect()
+                stroke(color, width).collect()
             };
             self.uploads
                 .buffer(&mut encoder, &self.outline, 0, bytemuck::cast_slice(&lines));
@@ -8410,7 +8440,7 @@ impl Renderer {
                 pass.set_bind_group(0, &self.group, &[]);
             }
             if outline_edges > 0 && !frame.outline_after_terrain {
-                self.draw_outline(&mut pass, outline_edges as u32, frame.outline_high_contrast);
+                self.draw_outline(&mut pass, outline_edges as u32, outline_hc);
             }
             if debug_depth > 0 {
                 pass.set_pipeline(&self.debug_lines);
@@ -8685,7 +8715,7 @@ impl Renderer {
             // LevelRenderer.executeClassicTransparency: translucent targets'
             // outlines follow terrain, so its blending cannot wash them out.
             if outline_edges > 0 && frame.outline_after_terrain {
-                self.draw_outline(&mut pass, outline_edges as u32, frame.outline_high_contrast);
+                self.draw_outline(&mut pass, outline_edges as u32, outline_hc);
             }
             if translucent_crumbling_quads > 0 && !oit_on {
                 pass.set_pipeline(&self.crumbling_pipeline);

@@ -872,19 +872,6 @@ pub enum Opt {
     TextureFiltering,
     /// `Options.maxAnisotropyBit`.
     MaxAnisotropy,
-    // Volt Shaders sliders
-    VoltShaderWindSpeed,
-    VoltShaderWindStrength,
-    VoltShaderShadowRichness,
-    VoltShaderTorchIntensity,
-    VoltShaderEmissiveGlow,
-    VoltShaderWaterReflection,
-    VoltShaderSunsetGlow,
-    VoltShaderVibrance,
-    VoltShaderSaturation,
-    VoltShaderContrast,
-    VoltShaderExposure,
-    VoltShaderWarmth,
 }
 
 #[cfg(test)]

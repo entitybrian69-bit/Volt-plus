@@ -6088,6 +6088,8 @@ impl Game<'_> {
         // Window callbacks only queue clicks, so an interaction cannot leak
         // between CLIENT_TICK_END and a later pong.
         if self.replay.is_none() {
+            #[cfg(target_os = "android")]
+            self.android_flush_late_custom_releases();
             self.remote_handle_input();
             #[cfg(target_os = "android")]
             self.android_drain_deferred_custom_events();
@@ -8922,7 +8924,7 @@ impl Game<'_> {
     /// runs the client half of `Item.releaseUsing` (a Riptide launch moves the
     /// player itself). Vanilla reaches it both when the use key is let go and,
     /// in the same tick, when a keybind opens a screen.
-    fn release_remote_use(&mut self) {
+    pub(super) fn release_remote_use(&mut self) {
         self.send(S::PlayerAction(play::PlayerAction {
             action: 6,
             pos: [0; 3],

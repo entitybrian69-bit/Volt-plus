@@ -3,7 +3,7 @@
 use crate::extras::Corner;
 use std::fmt::Write as _;
 
-pub const VOLT_MOD_COUNT: usize = 82;
+pub const VOLT_MOD_COUNT: usize = 83;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VoltKeybindMode {
@@ -2390,6 +2390,112 @@ impl Default for CinematicTimelapseConfig {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlocksOutlineConfig {
+    pub enabled: bool,
+    /// Outline RGB color (`0x00RRGGBB`).
+    pub color_rgb: u32,
+    /// Outline opacity percentage (`10..=100`).
+    pub alpha_pct: u8,
+    /// Line thickness in pixels (`1..=10`).
+    pub line_width: u8,
+    /// Smooth rainbow chroma cycling.
+    pub rainbow: bool,
+    /// Rainbow cycle speed (`1..=5`).
+    pub rainbow_speed: u8,
+    /// Breathing alpha/width pulse animation.
+    pub pulse: bool,
+    /// Translucent filled face overlay inside the targeted block box.
+    pub fill_overlay: bool,
+    /// Fill overlay opacity percentage (`5..=80`).
+    pub fill_alpha_pct: u8,
+    /// Whether the fill overlay uses the outline color or its own custom RGB.
+    pub fill_match_outline: bool,
+    /// Custom fill overlay RGB color (`0x00RRGGBB`) when `fill_match_outline` is false.
+    pub fill_color_rgb: u32,
+    /// Render the block outline through solid blocks (depth-less / always visible).
+    pub see_through: bool,
+    /// Draw a thick dark backing stroke behind the colored outline for contrast.
+    pub high_contrast_backing: bool,
+    /// Slight box inflation (`0..=6`, in thousandths of a block) to prevent Z-fighting.
+    pub inflate_pct: u8,
+}
+impl Default for BlocksOutlineConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            color_rgb: 0x00E5FF,
+            alpha_pct: 100,
+            line_width: 3,
+            rainbow: false,
+            rainbow_speed: 2,
+            pulse: false,
+            fill_overlay: false,
+            fill_alpha_pct: 22,
+            fill_match_outline: true,
+            fill_color_rgb: 0x00E5FF,
+            see_through: false,
+            high_contrast_backing: false,
+            inflate_pct: 1,
+        }
+    }
+}
+impl BlocksOutlineConfig {
+    pub fn rgb_bytes(rgb: u32) -> [u8; 3] {
+        [
+            ((rgb >> 16) & 0xFF) as u8,
+            ((rgb >> 8) & 0xFF) as u8,
+            (rgb & 0xFF) as u8,
+        ]
+    }
+    pub fn from_rgb(r: u8, g: u8, b: u8) -> u32 {
+        (u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)
+    }
+    pub fn hsv_to_rgb(h_deg: f32, s: f32, v: f32) -> u32 {
+        let h = (h_deg.rem_euclid(360.0)) / 60.0;
+        let c = v * s;
+        let x = c * (1.0 - ((h % 2.0) - 1.0).abs());
+        let m = v - c;
+        let (r1, g1, b1) = match h as u8 {
+            0 => (c, x, 0.0),
+            1 => (x, c, 0.0),
+            2 => (0.0, c, x),
+            3 => (0.0, x, c),
+            4 => (x, 0.0, c),
+            _ => (c, 0.0, x),
+        };
+        let r = ((r1 + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+        let g = ((g1 + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+        let b = ((b1 + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+        Self::from_rgb(r, g, b)
+    }
+    pub fn active_rgb(&self, time_secs: f32) -> u32 {
+        if self.rainbow {
+            let speed = f32::from(self.rainbow_speed.clamp(1, 5)) * 65.0;
+            Self::hsv_to_rgb(time_secs * speed, 0.92, 1.0)
+        } else {
+            self.color_rgb & 0x00FF_FFFF
+        }
+    }
+    pub fn active_fill_rgb(&self, time_secs: f32) -> u32 {
+        if self.fill_match_outline {
+            self.active_rgb(time_secs)
+        } else {
+            self.fill_color_rgb & 0x00FF_FFFF
+        }
+    }
+    pub fn to_argb(rgb: u32, alpha: u8) -> u32 {
+        (u32::from(alpha) << 24) | (rgb & 0x00FF_FFFF)
+    }
+    pub fn to_abgr(rgb: u32, alpha: u8) -> u32 {
+        let [r, g, b] = Self::rgb_bytes(rgb);
+        (u32::from(alpha) << 24) | (u32::from(b) << 16) | (u32::from(g) << 8) | u32::from(r)
+    }
+    pub fn hex_string(rgb: u32) -> String {
+        format!("#{:06X}", rgb & 0x00FF_FFFF)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VoltExtras {
     pub appleskin: AppleSkinConfig,
@@ -2474,6 +2580,7 @@ pub struct VoltExtras {
     pub photo_mode: PhotoModeConfig,
     pub jei: JeiConfig,
     pub cinematic_timelapse: CinematicTimelapseConfig,
+    pub blocks_outline: BlocksOutlineConfig,
     pub binds: VoltModKeybinds,
 }
 
@@ -2560,6 +2667,7 @@ pub const VOLT_MODS: [VoltModMeta; VOLT_MOD_COUNT] = [
     VoltModMeta { id: 79, key: "photo_mode", title: "Photo Mode & Clean Capture", summary: "Hides all HUD overlays & optionally adds framing composition guides", badge: "PM", category: VoltModCategory::Camera, modrinth_slugs: &["fabrishot", "screenshot-viewer"], search_query: "Fabrishot" },
     VoltModMeta { id: 80, key: "jei", title: "JEI (Just Enough Items)", summary: "Searchable item browser with live 3x3 crafting & furnace recipe viewer", badge: "JEI", category: VoltModCategory::Utility, modrinth_slugs: &["jei", "roughly-enough-items"], search_query: "Just Enough Items" },
     VoltModMeta { id: 81, key: "cinematic_timelapse", title: "Cinematic Time Lapse", summary: "Configurable start countdown (5s/10s+), smooth camera path & HUD hide", badge: "TL", category: VoltModCategory::Camera, modrinth_slugs: &["replaymod", "flashback"], search_query: "Replay Mod" },
+    VoltModMeta { id: 82, key: "blocks_outline", title: "Blocks Outline", summary: "Custom block outline color, thickness, rainbow chroma, pulse & block fill overlay", badge: "BO", category: VoltModCategory::World, modrinth_slugs: &["block-outline", "custom-block-outline", "better-block-outline"], search_query: "Block Outline" },
 ];
 
 pub fn volt_mod_enabled(v: &VoltExtras, idx: u8) -> bool {
@@ -2646,6 +2754,7 @@ pub fn volt_mod_enabled(v: &VoltExtras, idx: u8) -> bool {
         79 => v.photo_mode.enabled,
         80 => v.jei.enabled,
         81 => v.cinematic_timelapse.enabled,
+        82 => v.blocks_outline.enabled,
         _ => false,
     }
 }
@@ -2734,6 +2843,7 @@ pub fn set_volt_mod_enabled(v: &mut VoltExtras, idx: u8, on: bool) {
         79 => { v.photo_mode.enabled = on; if !on { v.photo_mode.active = false; } }
         80 => { v.jei.enabled = on; if !on { v.jei.overlay_open = false; } }
         81 => v.cinematic_timelapse.enabled = on,
+        82 => v.blocks_outline.enabled = on,
         _ => {}
     }
 }
@@ -3320,6 +3430,21 @@ impl VoltExtras {
             "timelapse.speed" => if let Ok(v) = value.parse::<u8>() { self.cinematic_timelapse.orbit_speed_deg = v.min(30); },
             "timelapse.hideHud" => self.cinematic_timelapse.hide_hud = flag(value, self.cinematic_timelapse.hide_hud),
             "timelapse.countdown" => self.cinematic_timelapse.show_countdown = flag(value, self.cinematic_timelapse.show_countdown),
+
+            "blocksOutline.enabled" => self.blocks_outline.enabled = flag(value, self.blocks_outline.enabled),
+            "blocksOutline.color" => if let Ok(v) = value.parse::<u32>() { self.blocks_outline.color_rgb = v & 0x00FF_FFFF; },
+            "blocksOutline.alpha" => if let Ok(v) = value.parse::<u8>() { self.blocks_outline.alpha_pct = v.clamp(10, 100); },
+            "blocksOutline.width" => if let Ok(v) = value.parse::<u8>() { self.blocks_outline.line_width = v.clamp(1, 10); },
+            "blocksOutline.rainbow" => self.blocks_outline.rainbow = flag(value, self.blocks_outline.rainbow),
+            "blocksOutline.rainbowSpeed" => if let Ok(v) = value.parse::<u8>() { self.blocks_outline.rainbow_speed = v.clamp(1, 5); },
+            "blocksOutline.pulse" => self.blocks_outline.pulse = flag(value, self.blocks_outline.pulse),
+            "blocksOutline.fill" => self.blocks_outline.fill_overlay = flag(value, self.blocks_outline.fill_overlay),
+            "blocksOutline.fillAlpha" => if let Ok(v) = value.parse::<u8>() { self.blocks_outline.fill_alpha_pct = v.clamp(5, 80); },
+            "blocksOutline.fillMatch" => self.blocks_outline.fill_match_outline = flag(value, self.blocks_outline.fill_match_outline),
+            "blocksOutline.fillColor" => if let Ok(v) = value.parse::<u32>() { self.blocks_outline.fill_color_rgb = v & 0x00FF_FFFF; },
+            "blocksOutline.seeThrough" => self.blocks_outline.see_through = flag(value, self.blocks_outline.see_through),
+            "blocksOutline.highContrast" => self.blocks_outline.high_contrast_backing = flag(value, self.blocks_outline.high_contrast_backing),
+            "blocksOutline.inflate" => if let Ok(v) = value.parse::<u8>() { self.blocks_outline.inflate_pct = v.min(6); },
             _ => {}
         }
     }
@@ -3679,6 +3804,27 @@ impl VoltExtras {
             let x = &self.cinematic_timelapse;
             let _ = writeln!(s, "volt.timelapse.enabled:{}\nvolt.timelapse.delay:{}\nvolt.timelapse.path:{}\nvolt.timelapse.speed:{}\nvolt.timelapse.hideHud:{}\nvolt.timelapse.countdown:{}", bool_s(x.enabled), x.start_delay_secs, x.path_mode.name(), x.orbit_speed_deg, bool_s(x.hide_hud), bool_s(x.show_countdown));
         }
+        if self.blocks_outline != BlocksOutlineConfig::default() {
+            let x = &self.blocks_outline;
+            let _ = writeln!(
+                s,
+                "volt.blocksOutline.enabled:{}\nvolt.blocksOutline.color:{}\nvolt.blocksOutline.alpha:{}\nvolt.blocksOutline.width:{}\nvolt.blocksOutline.rainbow:{}\nvolt.blocksOutline.rainbowSpeed:{}\nvolt.blocksOutline.pulse:{}\nvolt.blocksOutline.fill:{}\nvolt.blocksOutline.fillAlpha:{}\nvolt.blocksOutline.fillMatch:{}\nvolt.blocksOutline.fillColor:{}\nvolt.blocksOutline.seeThrough:{}\nvolt.blocksOutline.highContrast:{}\nvolt.blocksOutline.inflate:{}",
+                bool_s(x.enabled),
+                x.color_rgb & 0x00FF_FFFF,
+                x.alpha_pct,
+                x.line_width,
+                bool_s(x.rainbow),
+                x.rainbow_speed,
+                bool_s(x.pulse),
+                bool_s(x.fill_overlay),
+                x.fill_alpha_pct,
+                bool_s(x.fill_match_outline),
+                x.fill_color_rgb & 0x00FF_FFFF,
+                bool_s(x.see_through),
+                bool_s(x.high_contrast_backing),
+                x.inflate_pct,
+            );
+        }
         for (i, meta) in VOLT_MODS.iter().enumerate() {
             let b = &self.binds.0[i];
             if !b.toggle_key.is_empty() {
@@ -3723,5 +3869,6 @@ pub enum VoltQuickAction {
     SetHomeWaypoint,
     ResetSessionStats,
     TogglePhotoMode,
+    OpenBlockOutlineColor,
 }
 

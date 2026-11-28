@@ -948,54 +948,108 @@ impl Wardrobe {
         let h = ui.h;
 
         // 1. Header & Segmented Skins / Capes Switcher
+        let compact = w < 430.0;
+        let header_title = if compact {
+            ui.fit_text(Face::SemiBold, 17.5, "Skins & Capes Studio", w)
+        } else {
+            ui.fit_text(
+                Face::SemiBold,
+                19.0,
+                "Skins & Capes Studio",
+                (w - 224.0).max(80.0),
+            )
+        };
         ui.text(
             Face::SemiBold,
-            19.0,
+            if compact { 17.5 } else { 19.0 },
             x,
             top,
             theme.text_primary,
-            "Skins & Capes Studio",
+            &header_title,
         );
-        let online_w = 104.0;
-        let wavey_w = 104.0;
-        button(
-            ui,
-            targets,
-            [x + w - online_w, top, online_w, 28.0],
-            "Skin Online",
-            Action::OpenSkinOnline,
-            true,
-        );
-        button(
-            ui,
-            targets,
-            [x + w - online_w - wavey_w - 6.0, top, wavey_w, 28.0],
-            if self.library.wavey_capes {
-                "Wavey: ON"
-            } else {
-                "Wavey: OFF"
-            },
-            Action::SkinOnlineToggleWavey,
-            self.library.wavey_capes,
-        );
-        let subtitle = ui.fit_text(
-            Face::Regular,
-            11.5,
-            if self.capes {
-                "Preview 3D capes, manage local cape overrides, or activate cloud account capes."
-            } else {
-                "Inspect your 3D character model, switch arm styles, and manage local or cloud skins."
-            },
-            w,
-        );
-        ui.text(
-            Face::Regular,
-            11.5,
-            x,
-            top + 24.0,
-            theme.text_muted,
-            &subtitle,
-        );
+        if compact {
+            let subtitle = ui.fit_text(
+                Face::Regular,
+                11.0,
+                if self.capes {
+                    "Preview 3D capes & cloud capes."
+                } else {
+                    "Preview 3D character & skins."
+                },
+                w,
+            );
+            ui.text(
+                Face::Regular,
+                11.0,
+                x,
+                top + 22.0,
+                theme.text_muted,
+                &subtitle,
+            );
+            let btn_y = top + 39.0;
+            let half_w = ((w - 6.0) * 0.5).max(76.0);
+            button(
+                ui,
+                targets,
+                [x, btn_y, half_w, 28.0],
+                if self.library.wavey_capes {
+                    "Wavey: ON"
+                } else {
+                    "Wavey: OFF"
+                },
+                Action::SkinOnlineToggleWavey,
+                self.library.wavey_capes,
+            );
+            button(
+                ui,
+                targets,
+                [x + half_w + 6.0, btn_y, half_w, 28.0],
+                "Skin Online",
+                Action::OpenSkinOnline,
+                true,
+            );
+        } else {
+            let online_w = 104.0;
+            let wavey_w = 104.0;
+            button(
+                ui,
+                targets,
+                [x + w - online_w, top, online_w, 28.0],
+                "Skin Online",
+                Action::OpenSkinOnline,
+                true,
+            );
+            button(
+                ui,
+                targets,
+                [x + w - online_w - wavey_w - 6.0, top, wavey_w, 28.0],
+                if self.library.wavey_capes {
+                    "Wavey: ON"
+                } else {
+                    "Wavey: OFF"
+                },
+                Action::SkinOnlineToggleWavey,
+                self.library.wavey_capes,
+            );
+            let subtitle = ui.fit_text(
+                Face::Regular,
+                11.5,
+                if self.capes {
+                    "Preview 3D capes, manage local cape overrides, or activate cloud account capes."
+                } else {
+                    "Inspect your 3D character model, switch arm styles, and manage local or cloud skins."
+                },
+                w,
+            );
+            ui.text(
+                Face::Regular,
+                11.5,
+                x,
+                top + 24.0,
+                theme.text_muted,
+                &subtitle,
+            );
+        }
 
         let skin_count = self
             .library
@@ -1015,7 +1069,7 @@ impl Wardrobe {
                 0
             };
 
-        let tabs_y = top + 46.0;
+        let tabs_y = if compact { top + 73.0 } else { top + 46.0 };
         ui.rounded(x, tabs_y, w, 38.0, 8.0, theme.surface_dim);
         ui.border(x, tabs_y, w, 38.0, 8.0, theme.border);
         let tw = (w - 8.0) * 0.5;
@@ -1095,7 +1149,7 @@ impl Wardrobe {
         let detail_h = 46.0;
         ui.rounded(lx, listtop, lw, detail_h, 12.0, theme.surface);
         ui.border(lx, listtop, lw, detail_h, 12.0, theme.border);
-        let import_w = (lw * 0.42).clamp(118.0, 168.0);
+        let import_w = (lw * 0.44).clamp(88.0, 168.0);
         let info_w = (lw - import_w - 24.0).max(60.0);
         let fitted_active = ui.fit_text(Face::SemiBold, 11.5, &active_title, info_w);
         ui.text(
