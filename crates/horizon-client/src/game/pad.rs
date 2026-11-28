@@ -54,6 +54,12 @@ pub(super) struct Pads {
     #[cfg(target_os = "android")]
     pub(super) hotbar_finger: Option<u64>,
     #[cfg(target_os = "android")]
+    pub(super) hotbar_finger_slot: Option<usize>,
+    #[cfg(target_os = "android")]
+    pub(super) hotbar_finger_moved: bool,
+    #[cfg(target_os = "android")]
+    pub(super) last_hotbar_tap: Option<(usize, Instant)>,
+    #[cfg(target_os = "android")]
     pub(super) physical_cursor: Option<(f32, f32)>,
     #[cfg(target_os = "android")]
     pub(super) touch_ui: horizon_client::touch_ui::TouchUi,

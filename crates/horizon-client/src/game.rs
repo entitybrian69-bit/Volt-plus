@@ -17209,6 +17209,9 @@ impl Game<'_> {
             }
             if touch.phase == TouchPhase::Cancelled {
                 self.pad.hotbar_finger = None;
+                self.pad.hotbar_finger_slot = None;
+                self.pad.hotbar_finger_moved = false;
+                self.pad.last_hotbar_tap = None;
                 self.pad.touch.clear();
                 self.pad.touch_ui.replay_look_finger = None;
                 self.pad.touch_ui.replay_fly_pad = None;
@@ -17232,6 +17235,9 @@ impl Game<'_> {
                 && self.pad.touch.editor.is_none();
             if in_menu {
                 self.pad.hotbar_finger = None;
+                self.pad.hotbar_finger_slot = None;
+                self.pad.hotbar_finger_moved = false;
+                self.pad.last_hotbar_tap = None;
             }
             if !self.pad_in_menu() {
                 if self.replay.is_none()
@@ -17246,7 +17252,15 @@ impl Game<'_> {
                 }
                 if self.pad.hotbar_finger == Some(touch.id) {
                     if matches!(touch.phase, TouchPhase::Ended | TouchPhase::Cancelled) {
+                        if touch.phase == TouchPhase::Ended && !self.pad.hotbar_finger_moved {
+                            self.pad.last_hotbar_tap =
+                                self.pad.hotbar_finger_slot.map(|slot| (slot, Instant::now()));
+                        } else {
+                            self.pad.last_hotbar_tap = None;
+                        }
                         self.pad.hotbar_finger = None;
+                        self.pad.hotbar_finger_slot = None;
+                        self.pad.hotbar_finger_moved = false;
                         return;
                     }
                     let batch = HudBatch::new([size.width, size.height]);
@@ -17259,7 +17273,12 @@ impl Game<'_> {
                         && let Some(slot) =
                             horizon_client::touch::hotbar_slot(batch.width, batch.height, clamped)
                     {
+                        if self.pad.hotbar_finger_slot != Some(slot) {
+                            self.pad.hotbar_finger_moved = true;
+                        }
                         self.selected = slot;
+                    } else {
+                        self.pad.hotbar_finger_moved = true;
                     }
                     return;
                 }
@@ -17281,6 +17300,20 @@ impl Game<'_> {
                     {
                         self.selected = slot;
                         self.pad.hotbar_finger = Some(touch.id);
+                        self.pad.hotbar_finger_slot = Some(slot);
+                        let is_double_tap = self.pad.last_hotbar_tap.is_some_and(|(prev, at)| {
+                            prev == slot && at.elapsed() <= std::time::Duration::from_millis(350)
+                        });
+                        if is_double_tap {
+                            self.pad.last_hotbar_tap = None;
+                            self.pad.hotbar_finger_moved = true;
+                            if self.stack_in(slot).is_some() || self.offhand.is_some() {
+                                let _ = self.key_pressed(KeyCode::KeyF);
+                                self.android_touch_haptic(12);
+                            }
+                        } else {
+                            self.pad.hotbar_finger_moved = false;
+                        }
                         return;
                     }
                 }
