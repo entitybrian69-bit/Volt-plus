@@ -120,6 +120,8 @@ pub struct Config {
     pub custom_wallpaper_is_video: bool,
     #[serde(default)]
     pub volt_fullscreen_default_v1: bool,
+    #[serde(default)]
+    pub dashboard_tutorial_done: bool,
 }
 
 fn default_scene_gyro() -> u32 { 150 }
@@ -168,8 +170,24 @@ impl Default for Config {
             custom_wallpaper_path: None,
             custom_wallpaper_is_video: false,
             volt_fullscreen_default_v1: true,
+            dashboard_tutorial_done: false,
         }
     }
+}
+
+pub fn tutorial_sentinel_path(home: &Path) -> PathBuf {
+    home.join(".volt_dashboard_tutorial_done")
+}
+
+pub fn is_dashboard_tutorial_done(home: &Path, config: &Config) -> bool {
+    config.dashboard_tutorial_done || tutorial_sentinel_path(home).is_file()
+}
+
+pub fn mark_dashboard_tutorial_done(home: &Path, config: &mut Config) {
+    config.dashboard_tutorial_done = true;
+    let _ = std::fs::create_dir_all(home);
+    let _ = std::fs::write(tutorial_sentinel_path(home), b"1\n");
+    let _ = config.save(home);
 }
 
 pub use horizon_client::android_gamepad::InputMode as InputHost;

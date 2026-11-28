@@ -268,6 +268,104 @@ impl AnimState {
     }
 }
 
+pub(crate) struct DashboardTutorial {
+    pub active: bool,
+    pub started: bool,
+    pub closing: bool,
+    pub step: usize,
+    pub alpha: f32,
+    pub card_t: f32,
+    pub card_vel: f32,
+    pub spot_rect: [f32; 4],
+    pub spot_vel: [f32; 4],
+    pub pulse_t: f32,
+    pub skip_rect: [f32; 4],
+    pub last_tick: std::time::Instant,
+}
+
+impl Default for DashboardTutorial {
+    fn default() -> Self {
+        Self {
+            active: false,
+            started: false,
+            closing: false,
+            step: 0,
+            alpha: 0.0,
+            card_t: 0.0,
+            card_vel: 0.0,
+            spot_rect: [0.0; 4],
+            spot_vel: [0.0; 4],
+            pulse_t: 0.0,
+            skip_rect: [0.0; 4],
+            last_tick: std::time::Instant::now(),
+        }
+    }
+}
+
+impl DashboardTutorial {
+    pub const STEP_COUNT: usize = 15;
+
+    pub fn is_animating(&self) -> bool {
+        self.active
+    }
+
+    pub fn start(&mut self, initial_spot: [f32; 4]) {
+        self.active = true;
+        self.started = true;
+        self.closing = false;
+        self.step = 0;
+        self.alpha = if horizon_client::ui_theme::motion::reduced_motion() { 1.0 } else { 0.02 };
+        self.card_t = if horizon_client::ui_theme::motion::reduced_motion() { 1.0 } else { 0.0 };
+        self.card_vel = 0.0;
+        self.spot_rect = initial_spot;
+        self.spot_vel = [0.0; 4];
+        self.pulse_t = 0.0;
+        self.last_tick = std::time::Instant::now();
+    }
+
+    pub fn step_motion(&mut self, target_spot: [f32; 4]) {
+        let now = std::time::Instant::now();
+        let dt = now.duration_since(self.last_tick).as_secs_f32().clamp(0.001, 0.05);
+        self.last_tick = now;
+        if horizon_client::ui_theme::motion::reduced_motion() {
+            self.spot_rect = target_spot;
+            self.spot_vel = [0.0; 4];
+            self.card_t = 1.0;
+            self.card_vel = 0.0;
+            if self.closing {
+                self.alpha = 0.0;
+                self.active = false;
+                self.closing = false;
+            } else {
+                self.alpha = 1.0;
+            }
+            return;
+        }
+        self.pulse_t = (self.pulse_t + dt) % 62.8318;
+        if self.closing {
+            self.alpha = (self.alpha - dt * 5.2).max(0.0);
+            if self.alpha <= 0.005 {
+                self.alpha = 0.0;
+                self.active = false;
+                self.closing = false;
+            }
+        } else {
+            self.alpha = (self.alpha + dt * 4.4).min(1.0);
+        }
+        self.card_t = (self.card_t + dt * 3.8).min(1.0);
+        for i in 0..4 {
+            horizon_client::ui_theme::motion::step_spring_damper(
+                &mut self.spot_rect[i],
+                &mut self.spot_vel[i],
+                target_spot[i],
+                260.0,
+                24.0,
+                dt,
+            );
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Action {
     Page(Page),
@@ -2610,7 +2708,24 @@ impl Launcher {
         }
         if let Some(result) = self.wallpaper_worker.as_ref().and_then(|worker| worker.try_recv().ok()) {
             self.wallpaper_worker = None;
-            self.wallpaper_status = result.unwrap_or_else(|e| format!("Download failed: {e}"));
+            match result {
+                Ok((idx, msg)) => {
+                    self.catalog.config.custom_wallpaper_path = None;
+                    self.catalog.config.custom_wallpaper_is_video = false;
+                    self.custom_photo_rgba = None;
+                    self.custom_photo_loaded_path = None;
+                    self.custom_photo_dirty = false;
+                    self.catalog.config.wallpaper_index = Some(idx);
+                    self.wallpaper_has_frame = false;
+                    self.wallpaper_color = None;
+                    let _ = self.catalog.config.save(&self.home);
+                    self.wallpaper_status = msg;
+                    self.start_wallpaper();
+                }
+                Err(e) => {
+                    self.wallpaper_status = format!("Download failed: {e}");
+                }
+            }
         }
         if self.wallpapers_open {
             self.targets.clear();
@@ -2652,6 +2767,16 @@ impl Launcher {
             let grid_y = my + 48.0 + custom_banner_h;
             let footer_h = 84.0;
             let row_h = ((mh - 48.0 - custom_banner_h - footer_h) / crate::wallpapers::WALLPAPERS.len() as f32).clamp(22.0, 40.0);
+            let (dl_done, dl_total) = if self.wallpaper_worker.is_some() {
+                crate::wallpapers::download_progress()
+            } else {
+                (0, 0)
+            };
+            let dl_pct_str = if self.wallpaper_worker.is_some() && dl_total > 0 {
+                format!("{:.0}%", (dl_done as f64 / dl_total as f64 * 100.0).clamp(0.0, 99.0))
+            } else {
+                "Busy".to_owned()
+            };
             for (i, item) in crate::wallpapers::WALLPAPERS.iter().enumerate() {
                 let y = grid_y + i as f32 * row_h;
                 let label = format!("{}  ·  {}  ·  {:.1} MB", item.name, item.resolution, item.size as f64 / 1_000_000.0);
@@ -2661,7 +2786,7 @@ impl Launcher {
                     .and_then(|p| std::fs::metadata(p).ok()).is_some_and(|m| m.len() == item.size);
                 let selected = self.catalog.config.custom_wallpaper_path.is_none()
                     && crate::wallpapers::effective_index(self.catalog.config.wallpaper_index) == i;
-                let title = if self.wallpaper_worker.is_some() { "Busy" } else if selected { "Equipped" } else if downloaded { "Equip" } else { "Download" };
+                let title = if self.wallpaper_worker.is_some() { dl_pct_str.as_str() } else if selected { "Equipped" } else if downloaded { "Equip" } else { "Download" };
                 let action = if downloaded { Action::EquipWallpaper(i) } else { Action::DownloadWallpaper(i) };
                 button(&mut ui, &mut self.targets, [mx + mw - 108.0, y, 92.0, row_h - 2.0], title, action, selected);
             }
@@ -2689,7 +2814,25 @@ impl Launcher {
             button(&mut ui, &mut self.targets, plus_r, "+", Action::UiOpacityDelta(1), true);
 
             let playback = crate::native_ime::wallpaper_status().unwrap_or_default();
-            let message = if self.catalog.config.custom_wallpaper_path.is_some()
+            let live_dl_msg = if self.wallpaper_worker.is_some() {
+                if dl_total > 0 {
+                    let pct = (dl_done as f64 / dl_total as f64 * 100.0).clamp(0.0, 99.0);
+                    Some(format!(
+                        "{}  ({:.0}%  ·  {:.1} / {:.1} MB)",
+                        self.wallpaper_status,
+                        pct,
+                        dl_done as f64 / 1_000_000.0,
+                        dl_total as f64 / 1_000_000.0
+                    ))
+                } else {
+                    Some(self.wallpaper_status.clone())
+                }
+            } else {
+                None
+            };
+            let message = if let Some(ref dl_msg) = live_dl_msg {
+                dl_msg.as_str()
+            } else if self.catalog.config.custom_wallpaper_path.is_some()
                 && !self.catalog.config.custom_wallpaper_is_video
             {
                 &self.wallpaper_status
@@ -2837,6 +2980,7 @@ impl Launcher {
             self.targets.clear();
             self.list_targets.clear();
         }
+        self.draw_dashboard_tutorial(&mut ui, w, full_h, h, reveal);
         let pointer_density = ui.density;
         ui.finish();
         if crate::keyboard_mouse_input() {
@@ -9444,6 +9588,10 @@ impl Launcher {
             ],
             |([x, y, w, h], _)| [x + w / 2.0, y + h / 2.0],
         );
+        if self.tutorial.active && !self.tutorial.closing {
+            self.handle_tutorial_tap(p[0], p[1]);
+            return Ok(());
+        }
         let action = self
             .targets
             .iter()
@@ -10920,7 +11068,9 @@ impl Launcher {
                     let (sender, receiver) = std::sync::mpsc::channel();
                     self.wallpaper_worker = Some(receiver);
                     self.wallpaper_status = format!("Downloading {}...", crate::wallpapers::WALLPAPERS[i].name);
-                    std::thread::spawn(move || { let _ = sender.send(crate::wallpapers::download(&home, i)); });
+                    std::thread::spawn(move || {
+                        let _ = sender.send(crate::wallpapers::download(&home, i).map(|msg| (i, msg)));
+                    });
                 }
             }
             Some(Action::SceneGyro(direction)) => {
@@ -12069,6 +12219,28 @@ impl Launcher {
 
     pub(super) fn touch_event(&mut self, events: &ActiveEventLoop, t: Touch) -> Result<()> {
         let point = [t.location.x as f32 / self.ui_density(), t.location.y as f32 / self.ui_density()];
+        if self.tutorial.active && !self.tutorial.closing {
+            self.focus = None;
+            self.pending_focus = None;
+            self.cursor = (t.location.x, t.location.y);
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+            match t.phase {
+                TouchPhase::Started => {
+                    self.drag = Some(super::gesture::Drag::new(t.location.x, t.location.y));
+                }
+                TouchPhase::Ended => {
+                    let _ = self.drag.take();
+                    self.handle_tutorial_tap(point[0], point[1]);
+                }
+                TouchPhase::Cancelled => {
+                    self.drag = None;
+                }
+                TouchPhase::Moved => {}
+            }
+            return Ok(());
+        }
         let on_control = t.phase == winit::event::TouchPhase::Started && self.targets.iter().any(|(r, _)|
             point[0] >= r[0] && point[0] < r[0] + r[2] && point[1] >= r[1] && point[1] < r[1] + r[3]);
         if !on_control && !self.login.visible
@@ -12258,6 +12430,428 @@ impl Launcher {
         if let Some(out) = out {
             self.edit_text(out);
         }
+    }
+
+    pub(super) fn dismiss_dashboard_tutorial(&mut self) {
+        if !self.tutorial.active {
+            return;
+        }
+        self.tutorial.closing = true;
+        self.tutorial.last_tick = std::time::Instant::now();
+        crate::catalog::mark_dashboard_tutorial_done(&self.home, &mut self.catalog.config);
+        if self.catalog.page != Page::Play {
+            self.catalog.page = Page::Play;
+            self.catalog.scroll = 0.0;
+            self.catalog.editing = None;
+            self.anim.trigger_page_transition();
+        }
+    }
+
+    fn tutorial_apply_step_page(&mut self, step: usize) {
+        let target_page = match step {
+            4 => Page::Worlds,
+            5 => Page::Mods,
+            6 => Page::Packs,
+            7 => Page::ControlsStudio,
+            8 => Page::Shaders,
+            9 => Page::Installed,
+            10 => Page::Replays,
+            11 => Page::Skins,
+            12 => Page::Settings,
+            _ => Page::Play,
+        };
+        if target_page == Page::Settings {
+            self.catalog.settings_category = SettingsCategory::Overview;
+        }
+        if self.catalog.page != target_page {
+            self.catalog.page = target_page;
+            self.catalog.scroll = 0.0;
+            self.catalog.editing = None;
+            self.anim.trigger_page_transition();
+            self.sync_discord_presence();
+        }
+    }
+
+    pub(super) fn handle_tutorial_tap(&mut self, px: f32, py: f32) {
+        if !self.tutorial.active || self.tutorial.closing {
+            return;
+        }
+        let [sx, sy, sw, sh] = self.tutorial.skip_rect;
+        let pad = 10.0_f32;
+        if px >= sx - pad && px <= sx + sw + pad && py >= sy - pad && py <= sy + sh + pad {
+            self.dismiss_dashboard_tutorial();
+            return;
+        }
+        if self.tutorial.step + 1 >= DashboardTutorial::STEP_COUNT {
+            self.dismiss_dashboard_tutorial();
+            return;
+        }
+        self.tutorial.step += 1;
+        self.tutorial.card_t = 0.0;
+        self.tutorial.card_vel = 0.0;
+        self.tutorial.last_tick = std::time::Instant::now();
+        self.tutorial_apply_step_page(self.tutorial.step);
+    }
+
+    fn tutorial_step_spec(
+        step: usize,
+        w: f32,
+        full_h: f32,
+        h: f32,
+    ) -> (Icon, &'static str, &'static str, [f32; 4]) {
+        let nav_w = (w - 24.0).min(760.0);
+        let nav_x = (w - nav_w) * 0.5;
+        let nav_y = full_h - 49.0;
+        let nav_h = 42.0;
+        let nav_step = nav_w / 10.0;
+        let content_x = (w * 0.25).max(176.0);
+        let content_w = (w - content_x - 22.0).max(160.0);
+        let content_rect = [
+            content_x - 12.0,
+            54.0,
+            content_w + 22.0,
+            (h - 58.0).max(100.0),
+        ];
+        let play_w = (w * 0.34).clamp(210.0, 310.0);
+        let play_rect = [(w - play_w) * 0.5, h - 46.0, play_w, 40.0];
+        let top_compact = w < 596.0;
+        let utility_rect = if top_compact {
+            let rx2 = (w - 12.0 - 72.0 - 6.0 - 72.0 - 6.0 - 62.0).max(74.0);
+            [rx2 - 4.0, 8.0, (w - 8.0 - rx2 + 4.0).max(120.0), 42.0]
+        } else {
+            [w - 384.0, 8.0, 376.0, 42.0]
+        };
+
+        match step {
+            0 => (
+                Icon::HorizonLogo,
+                "Welcome to Volt Launcher Plus",
+                "Here is a quick interactive tour of every tab and option on your dashboard. Tap anywhere to continue, or tap Skip anytime.",
+                [8.0, 4.0, 206.0, 48.0],
+            ),
+            1 => (
+                Icon::Skins,
+                "Account & Skin Online",
+                "Tap your avatar badge to sign in with Microsoft or Offline mode, and tap Skin Online to browse community skins and capes in 3D.",
+                [8.0, 50.0, 224.0, 44.0],
+            ),
+            2 => (
+                Icon::Music,
+                "Musics, Inventory & Wallpapers",
+                "Stream built-in music playlists, open your Worlds/Servers/Screenshots Inventory, or equip 4K video and custom photo backgrounds.",
+                utility_rect,
+            ),
+            3 => (
+                Icon::Play,
+                "Play & Quick Controls",
+                "Spin your 3D character on the left, adjust Touch layout, Profile, Renderer, Gyroscope, or Keep screen on, then tap Play to launch.",
+                [8.0, h - 86.0, w - 16.0, 82.0],
+            ),
+            4 => (
+                Icon::Folder,
+                "Worlds & Multiplayer Servers",
+                "Jump straight into singleplayer worlds, join featured servers, or save your favorite multiplayer server addresses.",
+                content_rect,
+            ),
+            5 => (
+                Icon::Mods,
+                "Mods Browser",
+                "Search, preview, and install Horizon & Modrinth mods directly in the launcher with automatic version compatibility.",
+                content_rect,
+            ),
+            6 => (
+                Icon::Packs,
+                "Resource Packs",
+                "Discover texture packs, UI overhauls, and audio packs — inspect galleries and install in one tap.",
+                content_rect,
+            ),
+            7 => (
+                Icon::Gamepad,
+                "Controls Studio",
+                "Switch between MCPE and GoyControl layouts, customize touch HUD buttons, and tune virtual mouse or gyro aiming.",
+                content_rect,
+            ),
+            8 => (
+                Icon::Shaders,
+                "Shaders",
+                "Browse and install shader packs tailored for Android Vulkan and OpenGL ES rendering pipelines.",
+                content_rect,
+            ),
+            9 => (
+                Icon::Installed,
+                "Installed & File Manager",
+                "Toggle installed mods, packs, shaders, and bundled Volt+ extras, or manage files directly in the built-in File Manager.",
+                content_rect,
+            ),
+            10 => (
+                Icon::Play,
+                "Replays & Video Export",
+                "Rewatch recorded gameplay in free-cam and render smooth MP4 clips directly on your device.",
+                content_rect,
+            ),
+            11 => (
+                Icon::Skins,
+                "Skins & Capes Wardrobe",
+                "Import local skin files, equip capes, toggle slim or classic arms, and inspect your 3D character from every angle.",
+                content_rect,
+            ),
+            12 => (
+                Icon::Settings,
+                "Settings & Optimization",
+                "Fine-tune Video resolution & Max FPS, Theme presets, Launcher animations, Diagnostics logs, and Experimental performance boosts.",
+                content_rect,
+            ),
+            13 => (
+                Icon::HorizonLogo,
+                "Floating Navigation Dock",
+                "All 10 dashboard tabs live in this responsive bottom dock — switch between Play, Mods, Controls, Replays, and Settings in one tap.",
+                [nav_x - 4.0, nav_y - 3.0, nav_w + 8.0, nav_h + 6.0],
+            ),
+            _ => {
+                let _ = nav_step;
+                (
+                    Icon::Check,
+                    "You Are Ready to Play!",
+                    "That covers every tab and option on your Volt+ dashboard. Tap anywhere to close this guide and jump into Minecraft 26.3.",
+                    [
+                        play_rect[0] - 6.0,
+                        play_rect[1] - 6.0,
+                        play_rect[2] + 12.0,
+                        play_rect[3] + 12.0,
+                    ],
+                )
+            }
+        }
+    }
+
+    fn draw_dashboard_tutorial(
+        &mut self,
+        ui: &mut Ui,
+        w: f32,
+        full_h: f32,
+        h: f32,
+        reveal: f32,
+    ) {
+        if self.catalog.page == Page::Music || self.catalog.page == Page::SkinOnline {
+            return;
+        }
+        if !self.tutorial.started
+            && !crate::catalog::is_dashboard_tutorial_done(&self.home, &self.catalog.config)
+            && self.anim.intro_done
+            && reveal >= 0.98
+            && !self.login.visible
+            && self.chooser.is_none()
+            && !self.exit_confirmation
+            && !self.wallpapers_open
+            && !self.diagnostics_modal_open
+            && self.worker.is_none()
+            && self.road_game.is_none()
+            && self.catalog.project_modal.is_none()
+            && self.catalog.fm_modal.is_none()
+            && self.control_editor.is_none()
+        {
+            let (_, _, _, initial_spot) = Self::tutorial_step_spec(0, w, full_h, h);
+            self.tutorial.start(initial_spot);
+        }
+        if !self.tutorial.active {
+            return;
+        }
+        let (icon, title, body, target_spot) =
+            Self::tutorial_step_spec(self.tutorial.step, w, full_h, h);
+        self.tutorial.step_motion(target_spot);
+        if !self.tutorial.active {
+            return;
+        }
+        if !self.tutorial.closing {
+            self.targets.clear();
+            self.list_targets.clear();
+            self.list_view = None;
+        }
+
+        let alpha = self.tutorial.alpha.clamp(0.0, 1.0);
+        let sx = self.tutorial.spot_rect[0].clamp(4.0, (w - 24.0).max(4.0));
+        let sy = self.tutorial.spot_rect[1].clamp(4.0, (full_h - 24.0).max(4.0));
+        let sw = self.tutorial.spot_rect[2].clamp(20.0, (w - sx - 4.0).max(20.0));
+        let sh = self.tutorial.spot_rect[3].clamp(20.0, (full_h - sy - 4.0).max(20.0));
+        let right = sx + sw;
+        let bottom = sy + sh;
+
+        // 4-quad scrim framing the spotlighted dashboard element cleanly.
+        let scrim = horizon_client::hud::rgba(6, 8, 16, (176.0 * alpha).round() as u8);
+        if sy > 0.0 {
+            ui.fill(0.0, 0.0, w, sy, scrim);
+        }
+        if bottom < full_h {
+            ui.fill(0.0, bottom, w, (full_h - bottom).max(0.0), scrim);
+        }
+        if sx > 0.0 {
+            ui.fill(0.0, sy, sx, sh, scrim);
+        }
+        if right < w {
+            ui.fill(right, sy, (w - right).max(0.0), sh, scrim);
+        }
+
+        // Animated pulsing spotlight halo around the active feature/tab.
+        let pulse = 0.5 + 0.5 * (self.tutorial.pulse_t * 3.4).sin();
+        let outer_pad = 3.0 + pulse * 4.5;
+        let accent = my3_accent();
+        ui.stroke_rounded(
+            (sx - outer_pad).max(1.0),
+            (sy - outer_pad).max(1.0),
+            (sw + outer_pad * 2.0).min(w - 2.0),
+            (sh + outer_pad * 2.0).min(full_h - 2.0),
+            18.0,
+            1.6,
+            color::with_alpha(accent, (0.28 + 0.34 * (1.0 - pulse)) * alpha),
+        );
+        ui.stroke_rounded(
+            sx,
+            sy,
+            sw,
+            sh,
+            14.0,
+            2.2,
+            color::with_alpha(accent, 0.92 * alpha),
+        );
+
+        // Smooth spring-animated floating tooltip card.
+        let card_ease = horizon_client::ui_theme::motion::spring_expressive_spatial(self.tutorial.card_t);
+        let card_w = (w - 28.0).clamp(250.0, 416.0);
+        let body_lines = wrap_text_lines(ui, Face::Regular, 11.5, body, card_w - 36.0);
+        let body_h = (body_lines.len().max(1) as f32) * 16.0;
+        let card_h = (118.0 + body_h).min(full_h - 24.0);
+
+        let room_above = sy - 16.0;
+        let room_below = full_h - bottom - 16.0;
+        let base_y = if sy > full_h * 0.48 && room_above >= card_h {
+            (sy - card_h - 14.0).max(12.0)
+        } else if room_below >= card_h {
+            (bottom + 14.0).min(full_h - card_h - 12.0)
+        } else if room_above >= card_h {
+            (sy - card_h - 14.0).max(12.0)
+        } else {
+            (full_h - card_h - 60.0).max(12.0)
+        };
+        let cx_ideal = sx + sw * 0.5 - card_w * 0.5;
+        let card_x = cx_ideal.clamp(14.0, (w - card_w - 14.0).max(14.0));
+        let lift_y = (1.0 - card_ease) * 16.0 + (1.0 - alpha) * 10.0;
+        let card_y = (base_y + lift_y).clamp(10.0, (full_h - card_h - 10.0).max(10.0));
+
+        let card_bg = color::with_alpha(my3_surface(), 0.97 * alpha);
+        let card_border = color::with_alpha(accent, 0.55 * alpha);
+        let text_col = color::with_alpha(my3_text(), alpha);
+        let muted_col = color::with_alpha(my3_muted(), alpha);
+
+        // Soft shadow + card body + top accent bar.
+        ui.rounded(
+            card_x + 2.0,
+            card_y + 6.0,
+            card_w,
+            card_h,
+            20.0,
+            horizon_client::hud::rgba(0, 0, 0, (110.0 * alpha).round() as u8),
+        );
+        ui.rounded(card_x, card_y, card_w, card_h, 20.0, card_bg);
+        ui.stroke_rounded(card_x, card_y, card_w, card_h, 20.0, 1.4, card_border);
+
+        // Header row: icon badge + step pill + Skip button.
+        let badge_r = [card_x + 16.0, card_y + 14.0, 32.0, 32.0];
+        ui.rounded(
+            badge_r[0],
+            badge_r[1],
+            badge_r[2],
+            badge_r[3],
+            11.0,
+            color::with_alpha(accent, 0.18 * alpha),
+        );
+        ui.stroke_rounded(
+            badge_r[0],
+            badge_r[1],
+            badge_r[2],
+            badge_r[3],
+            11.0,
+            1.1,
+            color::with_alpha(accent, 0.65 * alpha),
+        );
+        ui.icon(icon, badge_r[0] + 7.5, badge_r[1] + 7.5, 17.0, color::with_alpha(accent, alpha));
+
+        let step_lbl = format!("TOUR  •  {} / {}", self.tutorial.step + 1, DashboardTutorial::STEP_COUNT);
+        ui.text(Face::SemiBold, 10.5, card_x + 58.0, card_y + 22.0, color::with_alpha(accent, alpha), &step_lbl);
+
+        let skip_w = 72.0_f32;
+        let skip_h = 28.0_f32;
+        let skip_rect = [card_x + card_w - skip_w - 14.0, card_y + 16.0, skip_w, skip_h];
+        self.tutorial.skip_rect = skip_rect;
+        ui.rounded(
+            skip_rect[0],
+            skip_rect[1],
+            skip_rect[2],
+            skip_rect[3],
+            14.0,
+            color::with_alpha(my3_surface_high(), 0.92 * alpha),
+        );
+        ui.stroke_rounded(
+            skip_rect[0],
+            skip_rect[1],
+            skip_rect[2],
+            skip_rect[3],
+            14.0,
+            1.0,
+            color::with_alpha(my3_border(), 0.85 * alpha),
+        );
+        ui.centered_fit(Face::SemiBold, 11.0, skip_rect, text_col, "Skip");
+
+        // Title + wrapped description.
+        let fitted_title = ui.fit_text(Face::SemiBold, 15.5, title, card_w - 36.0);
+        ui.text(Face::SemiBold, 15.5, card_x + 18.0, card_y + 54.0, text_col, &fitted_title);
+        for (idx, line) in body_lines.iter().enumerate() {
+            ui.text(
+                Face::Regular,
+                11.5,
+                card_x + 18.0,
+                card_y + 78.0 + idx as f32 * 16.0,
+                muted_col,
+                line,
+            );
+        }
+
+        // Animated progress dots + pulsing tap-anywhere footer.
+        let footer_y = card_y + card_h - 32.0;
+        let total = DashboardTutorial::STEP_COUNT;
+        let mut dot_x = card_x + 18.0;
+        for i in 0..total {
+            let active = i == self.tutorial.step;
+            let passed = i < self.tutorial.step;
+            let dw = if active { 14.0 + 4.0 * card_ease } else { 5.0 };
+            let col = if active {
+                color::with_alpha(accent, alpha)
+            } else if passed {
+                color::with_alpha(accent, 0.45 * alpha)
+            } else {
+                color::with_alpha(my3_border(), 0.65 * alpha)
+            };
+            ui.rounded(dot_x, footer_y + 8.0, dw, 5.0, 2.5, col);
+            dot_x += dw + 4.0;
+        }
+
+        let is_last = self.tutorial.step + 1 >= total;
+        let hint = if is_last {
+            "Tap anywhere to finish"
+        } else {
+            "Tap anywhere for next"
+        };
+        let hint_alpha = (0.68 + 0.32 * pulse) * alpha;
+        let hint_col = color::with_alpha(accent, hint_alpha);
+        let hint_w = ui.measure(Face::SemiBold, 11.0, hint);
+        let hint_x = (card_x + card_w - 34.0 - hint_w).max(dot_x + 6.0);
+        ui.text(Face::SemiBold, 11.0, hint_x, footer_y + 3.0, hint_col, hint);
+        ui.icon(
+            if is_last { Icon::Check } else { Icon::ArrowRight },
+            card_x + card_w - 28.0,
+            footer_y + 4.0,
+            13.0,
+            hint_col,
+        );
     }
 }
 

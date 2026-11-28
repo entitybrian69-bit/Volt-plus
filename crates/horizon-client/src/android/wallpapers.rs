@@ -1,7 +1,34 @@
 //! Original-quality wallpaper catalog and bounded, verified downloads.
 //! The original H.264 files are decoded on Android without recompressing them.
 use sha2::{Digest, Sha256};
-use std::{io::{Read, Write}, path::{Path, PathBuf}, time::Duration};
+use std::{
+    io::{Read, Write},
+    net::ToSocketAddrs,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
+
+static DOWNLOAD_DONE_BYTES: AtomicU64 = AtomicU64::new(0);
+static DOWNLOAD_TOTAL_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// Returns `(downloaded_bytes, total_bytes)` for an in-flight preset wallpaper download.
+pub fn download_progress() -> (u64, u64) {
+    (
+        DOWNLOAD_DONE_BYTES.load(Ordering::Relaxed),
+        DOWNLOAD_TOTAL_BYTES.load(Ordering::Relaxed),
+    )
+}
+
+struct PreferIpv4Resolver;
+impl ureq::Resolver for PreferIpv4Resolver {
+    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        let mut addrs: Vec<_> = netloc.to_socket_addrs()?.collect();
+        // Many mobile networks hang on IPv6 AAAA records; try IPv4 addresses first.
+        addrs.sort_by_key(|a| u8::from(!a.is_ipv4()));
+        Ok(addrs)
+    }
+}
 
 pub struct Wallpaper {
     pub name: &'static str,
@@ -72,36 +99,117 @@ pub fn download(home: &Path, index: usize) -> Result<String, String> {
     let dir = target.parent().ok_or("Invalid wallpaper path")?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     if digest_file(&target, item.size).is_ok_and(|v| v == item.sha256) {
+        DOWNLOAD_DONE_BYTES.store(item.size, Ordering::Relaxed);
+        DOWNLOAD_TOTAL_BYTES.store(item.size, Ordering::Relaxed);
         return Ok(format!("{} is already downloaded", item.name));
     }
+    DOWNLOAD_DONE_BYTES.store(0, Ordering::Relaxed);
+    DOWNLOAD_TOTAL_BYTES.store(item.size, Ordering::Relaxed);
     let tmp = target.with_extension("mp4.part");
-    let result = (|| -> Result<(), String> {
-        let url = format!("https://raw.githubusercontent.com/entitybrian69-bit/volt-plus/arena/e973ac10-volt-plus/wallpapers/{}", item.filename);
-        let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(20)).timeout_read(Duration::from_secs(45)).build();
-        let response = agent.get(&url).call().map_err(|e| format!("Download failed: {e}"))?;
-        let mut input = response.into_reader().take(item.size + 1);
-        let mut output = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
-        std::io::copy(&mut input, &mut output).map_err(|e| e.to_string())?;
-        output.flush().map_err(|e| e.to_string())?;
-        drop(output);
-        if digest_file(&tmp, item.size)? != item.sha256 {
-            return Err("Downloaded video failed its integrity check".into());
+    let urls = [
+        format!(
+            "https://raw.githubusercontent.com/entitybrian69-bit/volt-plus/android/wallpapers/{}",
+            item.filename
+        ),
+        format!(
+            "https://raw.githubusercontent.com/entitybrian69-bit/volt-plus/arena/16c8aaea-volt-plus/wallpapers/{}",
+            item.filename
+        ),
+        format!(
+            "https://cdn.jsdelivr.net/gh/entitybrian69-bit/volt-plus@android/wallpapers/{}",
+            item.filename
+        ),
+        format!(
+            "https://github.com/entitybrian69-bit/volt-plus/raw/android/wallpapers/{}",
+            item.filename
+        ),
+    ];
+    let agent = ureq::AgentBuilder::new()
+        .resolver(PreferIpv4Resolver)
+        .user_agent("VoltPlus-Android/1.0")
+        .timeout_connect(Duration::from_secs(15))
+        .timeout_read(Duration::from_secs(45))
+        .build();
+
+    let mut last_err = String::from("Download failed");
+    let mut succeeded = false;
+    'mirrors: for url in &urls {
+        for attempt in 0..2 {
+            let _ = std::fs::remove_file(&tmp);
+            DOWNLOAD_DONE_BYTES.store(0, Ordering::Relaxed);
+            let resp = match agent.get(url).call() {
+                Ok(r) => r,
+                Err(e) => {
+                    last_err = format!("Network error ({e})");
+                    if attempt == 0 {
+                        std::thread::sleep(Duration::from_millis(350));
+                    }
+                    continue;
+                }
+            };
+            let copy_res = (|| -> Result<(), String> {
+                let mut input = resp.into_reader().take(item.size + 1);
+                let mut output = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
+                let mut buf = [0u8; 64 * 1024];
+                let mut written = 0u64;
+                loop {
+                    let n = input.read(&mut buf).map_err(|e| e.to_string())?;
+                    if n == 0 {
+                        break;
+                    }
+                    output.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+                    written = written.saturating_add(n as u64);
+                    DOWNLOAD_DONE_BYTES.store(written.min(item.size), Ordering::Relaxed);
+                }
+                output.flush().map_err(|e| e.to_string())?;
+                drop(output);
+                if digest_file(&tmp, item.size)? != item.sha256 {
+                    return Err("Downloaded video failed its integrity check".into());
+                }
+                std::fs::rename(&tmp, &target).map_err(|e| e.to_string())?;
+                Ok(())
+            })();
+            match copy_res {
+                Ok(()) => {
+                    succeeded = true;
+                    break 'mirrors;
+                }
+                Err(e) => {
+                    last_err = e;
+                    if attempt == 0 {
+                        std::thread::sleep(Duration::from_millis(350));
+                    }
+                }
+            }
         }
-        std::fs::rename(&tmp, &target).map_err(|e| e.to_string())?;
-        Ok(())
-    })();
-    if result.is_err() { let _ = std::fs::remove_file(&tmp); }
-    result.map(|()| format!("{} downloaded in original quality", item.name))
+    }
+    if !succeeded {
+        let _ = std::fs::remove_file(&tmp);
+        DOWNLOAD_DONE_BYTES.store(0, Ordering::Relaxed);
+        DOWNLOAD_TOTAL_BYTES.store(0, Ordering::Relaxed);
+        return Err(last_err);
+    }
+    Ok(format!("{} downloaded and equipped", item.name))
 }
 
 /// Match the display's physical resolution including parallax overscan, never
-/// resample above the original. The downloaded MP4 is never modified.
+/// resample above the original or above 1080p for universal GPU/MediaCodec stability.
 pub fn frame_size(source: [u32; 2], viewport: [u32; 2]) -> [u32; 2] {
-    if source.contains(&0) || viewport.contains(&0) { return source; }
+    if source.contains(&0) || viewport.contains(&0) {
+        return [source[0].min(1920) & !1, source[1].min(1080) & !1];
+    }
     let scale = ((viewport[0] as f64 / source[0] as f64)
-        .max(viewport[1] as f64 / source[1] as f64) * 1.30).clamp(0.01, 1.0);
-    [((source[0] as f64 * scale).ceil() as u32).min(source[0]),
-     ((source[1] as f64 * scale).ceil() as u32).min(source[1])]
+        .max(viewport[1] as f64 / source[1] as f64)
+        * 1.30)
+        .clamp(0.01, 1.0);
+    let mut w = ((source[0] as f64 * scale).ceil() as u32).min(source[0]);
+    let mut h = ((source[1] as f64 * scale).ceil() as u32).min(source[1]);
+    if w > 1920 || h > 1080 {
+        let cap = (1920.0 / w as f64).min(1080.0 / h as f64);
+        w = ((w as f64 * cap).floor() as u32).max(2);
+        h = ((h as f64 * cap).floor() as u32).max(2);
+    }
+    [(w & !1).max(2), (h & !1).max(2)]
 }
 
 /// Sample a bounded number of decoded pixels for a scene-matching glass tint.

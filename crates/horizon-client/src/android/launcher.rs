@@ -58,13 +58,14 @@ pub(super) struct Launcher {
     road_game: Option<cross_road::RoadGame>,
     auto_launch_after_install: bool,
     pub(super) anim: pages::AnimState,
+    pub(super) tutorial: pages::DashboardTutorial,
     pub(super) control_editor: Option<horizon_client::touch::TouchControls>,
     pub(super) mouse_touch: horizon_client::touch::Settings,
     worker: Option<mpsc::Receiver<std::result::Result<(), String>>>,
     error: Option<String>,
     catalog: Catalog,
     wallpapers_open: bool,
-    wallpaper_worker: Option<mpsc::Receiver<std::result::Result<String, String>>>,
+    wallpaper_worker: Option<mpsc::Receiver<std::result::Result<(usize, String), String>>>,
     wallpaper_status: String,
     wallpaper_has_frame: bool,
     wallpaper_frame_size: [u32; 2],
@@ -433,6 +434,7 @@ impl Launcher {
             road_game: None,
             auto_launch_after_install: false,
             anim: Default::default(),
+            tutorial: Default::default(),
             control_editor: None,
             mouse_touch,
             worker: None,
@@ -689,6 +691,10 @@ impl Launcher {
         }
         if !self.anim.intro_done {
             self.anim.intro_done = true;
+            return;
+        }
+        if self.tutorial.active && !self.tutorial.closing {
+            self.dismiss_dashboard_tutorial();
             return;
         }
         if self.diagnostics_modal_open {
@@ -1407,6 +1413,8 @@ impl ApplicationHandler for Launcher {
             events.set_control_flow(ControlFlow::Poll);
         } else {
             let frame_ms = if self.worker.is_some()
+                || self.wallpaper_worker.is_some()
+                || self.tutorial.is_animating()
                 || self.launching
                 || self.session_worker.is_some()
                 || self.catalog.busy()
